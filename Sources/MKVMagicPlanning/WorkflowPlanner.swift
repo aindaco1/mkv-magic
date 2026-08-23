@@ -21,7 +21,7 @@ public struct WorkflowPlanner: Sendable {
 
         for operation in workflow.operations {
             switch operation {
-            case .editSegmentTitle, .setTrackLanguage:
+            case .editSegmentTitle, .editTrackMetadata, .setTrackLanguage:
                 needsPropertyEdit = true
             case .removeTracks, .muxSubtitle:
                 needsRemux = true

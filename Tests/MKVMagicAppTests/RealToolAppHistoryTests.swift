@@ -24,6 +24,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
         let source = fixtureRoot.appendingPathComponent("source.mkv")
         let output = fixtureRoot.appendingPathComponent("source — Edited.mkv")
+        let trackOutput = fixtureRoot.appendingPathComponent("source — Track Edited.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
 
         let createResult = try await runner.run(
@@ -65,14 +66,50 @@ final class RealToolAppHistoryTests: XCTestCase {
 
         XCTAssertEqual(outputAsset.metadata["title"], "Verified Title")
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+        let track = try XCTUnwrap(outputAsset.tracks.first)
+        let trackUID = try XCTUnwrap(track.uid)
+        let trackEdit = TrackMetadataEdit(
+            trackUID: trackUID,
+            name: "English Commentary",
+            language: "en",
+            isDefault: track.isDefault,
+            isForced: true,
+            isEnabled: track.isEnabled,
+            isCommentary: true,
+            isHearingImpaired: track.isHearingImpaired,
+            isVisualImpaired: track.isVisualImpaired,
+            isOriginal: true,
+            isTextDescription: track.isTextDescription
+        )
+        let trackOutputAsset = try await model.editTrackMetadata(
+            in: outputAsset,
+            edit: trackEdit,
+            destinationURL: trackOutput
+        )
+        let editedTrack = try XCTUnwrap(trackOutputAsset.tracks.first)
+        XCTAssertEqual(editedTrack.title, "English Commentary")
+        XCTAssertEqual(editedTrack.language, "en")
+        XCTAssertTrue(editedTrack.isForced)
+        XCTAssertTrue(editedTrack.isCommentary)
+        XCTAssertTrue(editedTrack.isOriginal)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.count, 2)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
         XCTAssertEqual(
             record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let trackRecord = records[1]
+        XCTAssertEqual(trackRecord.workflowName, "Edit track metadata")
+        XCTAssertEqual(trackRecord.inputDisplayNames, ["source — Edited.mkv"])
+        XCTAssertEqual(trackRecord.outputDisplayName, "source — Track Edited.mkv")
+        XCTAssertEqual(
+            trackRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
 

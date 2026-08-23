@@ -21,6 +21,20 @@ final class MediaModelTests: XCTestCase {
             name: "Library cleanup",
             operations: [
                 .editSegmentTitle(nil),
+                .editTrackMetadata(
+                    TrackMetadataEdit(
+                        trackUID: 42,
+                        name: "English Commentary",
+                        language: "en",
+                        isDefault: false,
+                        isForced: false,
+                        isEnabled: true,
+                        isCommentary: true,
+                        isHearingImpaired: false,
+                        isVisualImpaired: false,
+                        isOriginal: true,
+                        isTextDescription: false
+                    )),
                 .setTrackLanguage(trackID: 2, language: "eng"),
                 .removeTracks([7, 8]),
             ]

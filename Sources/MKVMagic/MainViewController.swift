@@ -6,6 +6,11 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+    private enum PendingMetadataChange {
+        case segmentTitle(String?)
+        case track(TrackMetadataEdit)
+    }
+
     private let model: AppModel
     private let tableView = NSTableView()
     private let inspectorText = NSTextView()
@@ -13,12 +18,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let statusLabel = NSTextField(labelWithString: "Ready")
     private let impactLabel = NSTextField(labelWithString: "No pending plan")
     private let previewButton = NSButton(title: "Preview Change", target: nil, action: nil)
+    private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
-    private var pendingTitleChange: String?
-    private var hasPendingTitleChange = false
+    private var pendingMetadataChange: PendingMetadataChange?
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
     private var historyWindowController: HistoryWindowController?
+    private var trackEditorWindowController: TrackEditorWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -185,9 +191,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         previewButton.target = self
         previewButton.action = #selector(previewChange)
         previewButton.isEnabled = false
+        editTrackButton.target = self
+        editTrackButton.action = #selector(editTrack)
+        editTrackButton.isEnabled = false
+        let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
+        metadataButtons.orientation = .horizontal
+        metadataButtons.spacing = 8
 
         let stack = NSStackView(views: [
-            heading, scroll, titleLabel, segmentTitleField, previewButton,
+            heading, scroll, titleLabel, segmentTitleField, metadataButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -292,8 +304,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             let plan = try WorkflowPlanner().plan(asset: asset, workflow: workflow)
             let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
             impactLabel.stringValue = "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
-            pendingTitleChange = title
-            hasPendingTitleChange = true
+            pendingMetadataChange = .segmentTitle(title)
             pendingAssetID = asset.id
             runButton.isEnabled = true
             runButton.toolTip =
@@ -304,8 +315,37 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func editTrack() {
+        guard let asset = selectedAsset, let parentWindow = view.window else { return }
+        let controller = TrackEditorWindowController(asset: asset)
+        trackEditorWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] edit in
+            guard let self else { return }
+            self.trackEditorWindowController = nil
+            guard let edit else { return }
+            let workflow = WorkflowDefinition(
+                name: "Edit track metadata",
+                operations: [.editTrackMetadata(edit)]
+            )
+            do {
+                let plan = try WorkflowPlanner().plan(asset: asset, workflow: workflow)
+                let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
+                self.impactLabel.stringValue =
+                    "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
+                self.pendingMetadataChange = .track(edit)
+                self.pendingAssetID = asset.id
+                self.runButton.isEnabled = true
+                self.runButton.toolTip =
+                    "Create a new MKV from a temporary clone, verify it, then commit it."
+            } catch {
+                self.impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+                self.clearPendingChange()
+            }
+        }
+    }
+
     @objc private func runChange() {
-        guard hasPendingTitleChange,
+        guard let pendingMetadataChange,
             let asset = selectedAsset,
             pendingAssetID == asset.id
         else {
@@ -325,22 +365,37 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.isExtensionHidden = false
         guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
 
-        let title = pendingTitleChange
         previewButton.isEnabled = false
+        editTrackButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
-                let output = try await model.editSegmentTitle(
-                    in: asset,
-                    title: title,
-                    destinationURL: destinationURL
-                )
+                let output: MediaAsset
+                switch pendingMetadataChange {
+                case .segmentTitle(let title):
+                    output = try await model.editSegmentTitle(
+                        in: asset,
+                        title: title,
+                        destinationURL: destinationURL
+                    )
+                case .track(let edit):
+                    output = try await model.editTrackMetadata(
+                        in: asset,
+                        edit: edit,
+                        destinationURL: destinationURL
+                    )
+                }
                 preferredSelectionURL = output.sourceURL
                 clearPendingChange()
                 refresh()
             } catch {
                 previewButton.isEnabled = true
-                runButton.isEnabled = hasPendingTitleChange && pendingAssetID == asset.id
+                editTrackButton.isEnabled = asset.tracks.contains {
+                    $0.kind != .attachment && $0.uid != nil
+                }
+                runButton.isEnabled =
+                    self.pendingMetadataChange != nil
+                    && pendingAssetID == asset.id
             }
         }
     }
@@ -379,6 +434,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         renderInspector()
         if case .executing = model.state {
             previewButton.isEnabled = false
+            editTrackButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -395,6 +451,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             inspectorText.string = "Select an inspected file to see its tracks."
             segmentTitleField.stringValue = ""
             previewButton.isEnabled = false
+            editTrackButton.isEnabled = false
             return
         }
         var lines = [
@@ -439,6 +496,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         previewButton.isEnabled = MatroskaEditingPolicy.supports(asset)
         previewButton.toolTip =
             previewButton.isEnabled ? nil : "Segment-title editing currently requires Matroska."
+        editTrackButton.isEnabled =
+            MatroskaEditingPolicy.supports(asset)
+            && asset.tracks.contains { $0.kind != .attachment && $0.uid != nil }
+        editTrackButton.toolTip =
+            editTrackButton.isEnabled
+            ? "Edit track names, languages, roles, and playback flags without encoding."
+            : "Track editing requires a Matroska track with a stable UID."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -526,8 +590,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func clearPendingChange() {
-        pendingTitleChange = nil
-        hasPendingTitleChange = false
+        pendingMetadataChange = nil
         pendingAssetID = nil
         runButton.isEnabled = false
     }

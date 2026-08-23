@@ -4,6 +4,7 @@ import MKVMagicCore
 public enum OutputVerificationError: Error, Equatable, Sendable {
     case emptyOutput
     case titleMismatch
+    case trackMetadataMismatch
     case containerChanged
     case durationChanged
     case tracksChanged
@@ -18,6 +19,7 @@ extension OutputVerificationError: LocalizedError {
         switch self {
         case .emptyOutput: "The output is empty."
         case .titleMismatch: "The output segment title does not match the preview."
+        case .trackMetadataMismatch: "The edited track metadata does not match the preview."
         case .containerChanged: "The output container changed unexpectedly."
         case .durationChanged: "The output duration changed during a metadata-only edit."
         case .tracksChanged: "One or more tracks changed during a metadata-only edit."
@@ -33,26 +35,11 @@ public struct SegmentTitleOutputVerifier: Sendable {
     public init() {}
 
     public func verify(original: MediaAsset, output: MediaAsset, expectedTitle: String?) throws {
-        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.metadata.titleValue == expectedTitle else {
             throw OutputVerificationError.titleMismatch
         }
-        guard output.container == original.container else {
-            throw OutputVerificationError.containerChanged
-        }
-        guard Self.durationsMatch(original.duration, output.duration) else {
-            throw OutputVerificationError.durationChanged
-        }
         guard output.tracks == original.tracks else {
             throw OutputVerificationError.tracksChanged
-        }
-        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
-            output.chapterEntryCount == original.chapterEntryCount
-        else {
-            throw OutputVerificationError.chaptersChanged
-        }
-        guard output.attachments == original.attachments else {
-            throw OutputVerificationError.attachmentsChanged
         }
         guard output.metadata.removingTitle == original.metadata.removingTitle,
             output.globalTagCount == original.globalTagCount,
@@ -60,18 +47,130 @@ public struct SegmentTitleOutputVerifier: Sendable {
         else {
             throw OutputVerificationError.tagsChanged
         }
-        guard output.segmentUID == original.segmentUID else {
-            throw OutputVerificationError.segmentIdentityChanged
-        }
+        try verifyPreservedStructure(original: original, output: output)
     }
+}
 
-    private static func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
-        switch (lhs, rhs) {
-        case (nil, nil): true
-        case (.some(let lhs), .some(let rhs)):
-            abs(lhs.nanoseconds - rhs.nanoseconds) <= 1_000_000
-        default: false
+public struct TrackMetadataOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        expectedEdit edit: TrackMetadataEdit
+    ) throws {
+        guard output.metadata == original.metadata,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
         }
+        guard let originalTrack = original.tracks.first(where: { $0.uid == edit.trackUID }),
+            let outputTrack = output.tracks.first(where: { $0.uid == edit.trackUID }),
+            original.tracks.filter({ $0.uid == edit.trackUID }).count == 1,
+            output.tracks.filter({ $0.uid == edit.trackUID }).count == 1
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+        let unchangedOriginal = original.tracks.filter { $0.uid != edit.trackUID }
+        let unchangedOutput = output.tracks.filter { $0.uid != edit.trackUID }
+        guard unchangedOutput == unchangedOriginal,
+            TrackTechnicalSnapshot(originalTrack) == TrackTechnicalSnapshot(outputTrack)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+        let expectedLanguage = try TrackLanguageTag.canonical(edit.language)
+        let outputLanguage = try TrackLanguageTag.canonical(outputTrack.language ?? "und")
+        guard outputTrack.title == edit.name,
+            outputLanguage == expectedLanguage,
+            outputTrack.isDefault == edit.isDefault,
+            outputTrack.isForced == edit.isForced,
+            outputTrack.isEnabled == edit.isEnabled,
+            outputTrack.isCommentary == edit.isCommentary,
+            outputTrack.isHearingImpaired == edit.isHearingImpaired,
+            outputTrack.isVisualImpaired == edit.isVisualImpaired,
+            outputTrack.isOriginal == edit.isOriginal,
+            outputTrack.isTextDescription == edit.isTextDescription
+        else {
+            throw OutputVerificationError.trackMetadataMismatch
+        }
+        try verifyPreservedStructure(original: original, output: output)
+    }
+}
+
+private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) throws {
+    guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+    guard output.container == original.container else {
+        throw OutputVerificationError.containerChanged
+    }
+    guard durationsMatch(original.duration, output.duration) else {
+        throw OutputVerificationError.durationChanged
+    }
+    guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+        output.chapterEntryCount == original.chapterEntryCount
+    else {
+        throw OutputVerificationError.chaptersChanged
+    }
+    guard output.attachments == original.attachments else {
+        throw OutputVerificationError.attachmentsChanged
+    }
+    guard output.segmentUID == original.segmentUID else {
+        throw OutputVerificationError.segmentIdentityChanged
+    }
+}
+
+private func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): true
+    case (.some(let lhs), .some(let rhs)):
+        abs(lhs.nanoseconds - rhs.nanoseconds) <= 1_000_000
+    default: false
+    }
+}
+
+private struct TrackTechnicalSnapshot: Equatable {
+    let id: Int
+    let kind: MediaTrackKind
+    let codec: String
+    let codecLongName: String?
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let uid: UInt64?
+    let bitrate: Int64?
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+    let dimensions: MediaDimensions?
+    let displayDimensions: MediaDimensions?
+    let pixelFormat: String?
+    let bitDepth: Int?
+    let frameRate: String?
+    let colorInfo: MediaColorInfo?
+    let hdrFormats: [String]
+    let tags: [String: String]
+
+    init(_ track: MediaTrack) {
+        id = track.id
+        kind = track.kind
+        codec = track.codec
+        codecLongName = track.codecLongName
+        codecID = track.codecID
+        profile = track.profile
+        level = track.level
+        uid = track.uid
+        bitrate = track.bitrate
+        channels = track.channels
+        channelLayout = track.channelLayout
+        sampleRate = track.sampleRate
+        dimensions = track.dimensions
+        displayDimensions = track.displayDimensions
+        pixelFormat = track.pixelFormat
+        bitDepth = track.bitDepth
+        frameRate = track.frameRate
+        colorInfo = track.colorInfo
+        hdrFormats = track.hdrFormats
+        tags = track.tags.removingEditableTrackMetadata
     }
 }
 
@@ -104,5 +203,12 @@ extension Dictionary where Key == String, Value == String {
 
     fileprivate var removingTitle: [String: String] {
         filter { $0.key.caseInsensitiveCompare("title") != .orderedSame }
+    }
+
+    fileprivate var removingEditableTrackMetadata: [String: String] {
+        filter {
+            $0.key.caseInsensitiveCompare("title") != .orderedSame
+                && $0.key.caseInsensitiveCompare("language") != .orderedSame
+        }
     }
 }

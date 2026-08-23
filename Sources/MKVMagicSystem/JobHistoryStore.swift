@@ -129,7 +129,7 @@ public actor JSONJobHistoryStore: JobHistoryRecording {
         guard data.count <= Self.maximumDocumentBytes else {
             throw JobHistoryStoreError.oversizedDocument
         }
-        try data.write(to: fileURL, options: [.atomic, .completeFileProtection])
+        try data.write(to: fileURL, options: [.atomic])
         try FileManager.default.setAttributes(
             [.posixPermissions: 0o600], ofItemAtPath: fileURL.path)
     }

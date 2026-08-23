@@ -30,6 +30,7 @@ public enum VideoPreset: String, Codable, CaseIterable, Hashable, Sendable {
 
 public enum WorkflowOperation: Codable, Hashable, Sendable {
     case editSegmentTitle(String?)
+    case editTrackMetadata(TrackMetadataEdit)
     case setTrackLanguage(trackID: Int, language: String)
     case removeTracks(Set<Int>)
     case muxSubtitle(url: URL, language: String?, forced: Bool)

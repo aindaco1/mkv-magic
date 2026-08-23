@@ -1,7 +1,7 @@
-# M2 segment-title editing slice
+# M2 metadata editing slice
 
-This records engineering acceptance of the first M2 executable action. It is
-not acceptance of the complete track editor or Clean MKV milestone, and it is
+This records engineering acceptance of the first M2 executable actions. It is
+not acceptance of track removal, bulk editing, or the Clean MKV milestone, and it is
 not a public release.
 
 ## Safety contract
@@ -17,7 +17,7 @@ not a public release.
    filename.
 5. The temporary output is re-inspected and must preserve container, duration,
    every track fact, chapter structure, attachments, unrelated tags, and segment
-   identity while matching the previewed title.
+   identity while matching the previewed title or selected track properties.
 6. Only a verified nonempty output can enter the exclusive commit state.
 7. Any pre-commit error removes the working copy and leaves both the original
    bytes and destination untouched.
@@ -30,6 +30,10 @@ not a public release.
 - A real-tool integration creates an MKV with bundled FFmpeg, edits only a clone
   with bundled `mkvpropedit`, verifies with bundled FFprobe and MKVToolNix, and
   confirms the original SHA-256 digest and title are unchanged.
+- A second real-tool integration addresses an audio track by Matroska UID,
+  changes its name, canonical language, forced flag, and commentary role, then
+  proves the intended header changes, preserved technical facts, complete
+  verify/commit stages, and an unchanged source SHA-256 digest.
 - The inspection and edit integrations run sequentially after replacing a
   Foundation `waitUntilExit` hang with a race-safe termination callback. A
   32-command regression covers repeated process completion.
@@ -45,10 +49,11 @@ not a public release.
 - The accepted UI state was visually inspected, and the relevant unified-log
   window contained no Auto Layout, error, or fault messages from MKV Magic.
 - A real-tool app integration persists the complete queued, inspected, planned,
-  ready, running, verifying, committing, and succeeded lifecycle through atomic
-  history updates. The document has private file and directory permissions,
-  stores display names and sanitized messages instead of full paths, and leaves
-  the bookmark reference empty until an actual security bookmark exists.
+  ready, running, verifying, committing, and succeeded lifecycle for both title
+  and track edits through atomic history updates. The document has private file
+  and directory permissions, stores display names and sanitized messages instead
+  of full paths, and leaves the bookmark reference empty until an actual security
+  bookmark exists.
 - A fault test refuses the committing transition from the progress observer and
   proves that failed progress persistence before commit removes the working copy
   while preserving the source and leaving no destination.
@@ -60,6 +65,6 @@ not a public release.
 
 ## Still pending in M2
 
-- Track language/role editing, track removal, bulk matching, `mkvmerge` remuxing,
-  Clean MKV previews, optional verified-original Trash behavior, cancellation UI,
-  and privacy-safe command/details reports.
+- Track removal, bulk matching/editing, `mkvmerge` remuxing, Clean MKV previews,
+  optional verified-original Trash behavior, cancellation UI, and privacy-safe
+  command/details reports.

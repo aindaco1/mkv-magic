@@ -116,6 +116,37 @@ final class AppModel {
         title: String?,
         destinationURL: URL
     ) async throws -> MediaAsset {
+        try await executeMetadataEdit(
+            in: asset,
+            edit: .segmentTitle(title),
+            destinationURL: destinationURL,
+            workflowID: Self.segmentTitleWorkflowID,
+            workflowName: "Edit segment title"
+        )
+    }
+
+    @discardableResult
+    func editTrackMetadata(
+        in asset: MediaAsset,
+        edit: TrackMetadataEdit,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeMetadataEdit(
+            in: asset,
+            edit: .track(edit),
+            destinationURL: destinationURL,
+            workflowID: Self.trackMetadataWorkflowID,
+            workflowName: "Edit track metadata"
+        )
+    }
+
+    private func executeMetadataEdit(
+        in asset: MediaAsset,
+        edit: MatroskaMetadataEdit,
+        destinationURL: URL,
+        workflowID: UUID,
+        workflowName: String
+    ) async throws -> MediaAsset {
         let scopedURLs = [asset.sourceURL, destinationURL].map {
             ($0, $0.startAccessingSecurityScopedResource())
         }
@@ -132,9 +163,11 @@ final class AppModel {
         do {
             let recorder = try historyRecorderFactory()
             historyRecorder = recorder
-            var historyJob = makeReadySegmentTitleJob(
+            var historyJob = makeReadyMetadataJob(
                 asset: asset,
-                destinationURL: destinationURL
+                destinationURL: destinationURL,
+                workflowID: workflowID,
+                workflowName: workflowName
             )
             try historyJob.transition(
                 to: .inspecting,
@@ -168,14 +201,14 @@ final class AppModel {
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 runner: runner
             )
-            let executor = SegmentTitleEditExecutor(
+            let executor = MatroskaMetadataEditExecutor(
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
                 inspector: inspector
             )
             let output = try await executor.execute(
                 source: asset,
-                title: title,
+                edit: edit,
                 destinationURL: destinationURL,
                 onStage: { stage in
                     switch stage {
@@ -240,21 +273,23 @@ final class AppModel {
         }
     }
 
-    private func makeReadySegmentTitleJob(
+    private func makeReadyMetadataJob(
         asset: MediaAsset,
-        destinationURL: URL
+        destinationURL: URL,
+        workflowID: UUID,
+        workflowName: String
     ) -> MediaJobRecord {
         MediaJobRecord(
             createdAt: Date(),
-            workflowID: Self.segmentTitleWorkflowID,
-            workflowName: "Edit segment title",
+            workflowID: workflowID,
+            workflowName: workflowName,
             inputs: [MediaJobInput(displayName: asset.sourceURL.lastPathComponent)],
             outputDisplayName: destinationURL.lastPathComponent
         )
     }
 
     private static func sanitizedFailureMessage(for error: Error) -> String {
-        if let executionError = error as? SegmentTitleExecutionError,
+        if let executionError = error as? MatroskaMetadataExecutionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."
@@ -264,6 +299,9 @@ final class AppModel {
 
     private static let segmentTitleWorkflowID = UUID(
         uuidString: "6A2D7635-AB6D-4C7A-AE02-1561631121F0"
+    )!
+    private static let trackMetadataWorkflowID = UUID(
+        uuidString: "842C095A-A70A-4B81-BD33-E2857F9B87CD"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

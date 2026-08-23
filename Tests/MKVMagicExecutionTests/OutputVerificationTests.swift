@@ -34,6 +34,78 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTrackMetadataVerifierAcceptsOnlyTheSelectedSemanticChanges() throws {
+        let originalTrack = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "en",
+            title: "Main",
+            isDefault: true
+        )
+        let outputTrack = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "es",
+            title: "Spanish",
+            isForced: true,
+            isCommentary: true
+        )
+        let edit = TrackMetadataEdit(
+            trackUID: 42,
+            name: "Spanish",
+            language: "spa",
+            isDefault: false,
+            isForced: true,
+            isEnabled: true,
+            isCommentary: true,
+            isHearingImpaired: false,
+            isVisualImpaired: false,
+            isOriginal: false,
+            isTextDescription: false
+        )
+
+        XCTAssertNoThrow(
+            try TrackMetadataOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [originalTrack]),
+                output: asset(title: "Movie", tracks: [outputTrack]),
+                expectedEdit: edit
+            ))
+    }
+
+    func testTrackMetadataVerifierRejectsUnrelatedCodecChange() throws {
+        let originalTrack = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 42, language: "en", title: "Main")
+        let outputTrack = MediaTrack(
+            id: 0, kind: .audio, codec: "opus", uid: 42, language: "es", title: "Spanish")
+        let edit = TrackMetadataEdit(
+            trackUID: 42,
+            name: "Spanish",
+            language: "es",
+            isDefault: false,
+            isForced: false,
+            isEnabled: true,
+            isCommentary: false,
+            isHearingImpaired: false,
+            isVisualImpaired: false,
+            isOriginal: false,
+            isTextDescription: false
+        )
+
+        XCTAssertThrowsError(
+            try TrackMetadataOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [originalTrack]),
+                output: asset(title: "Movie", tracks: [outputTrack]),
+                expectedEdit: edit
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+        }
+    }
+
     private func asset(
         title: String,
         tracks: [MediaTrack] = [

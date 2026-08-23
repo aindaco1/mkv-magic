@@ -62,6 +62,34 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(InspectorPresentationPolicy.displayedBitDepth(for: video), 10)
     }
 
+    func testTrackEditorUsesHumanReadableOneBasedTrackLabels() {
+        let track = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "en",
+            title: "Main Audio"
+        )
+        XCTAssertEqual(
+            TrackEditorPresentation.label(track),
+            "#1 Audio — AAC — en — Main Audio"
+        )
+    }
+
+    func testTrackEditorTreatsLegacyAndCanonicalLanguageCodesAsEquivalent() throws {
+        let track = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "eng",
+            title: "Main Audio"
+        )
+
+        XCTAssertEqual(try TrackEditorPresentation.normalizedEdit(for: track).language, "en")
+    }
+
     func testHistoryLocationCreatesPrivateAppSupportDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-history-\(UUID().uuidString)",
@@ -146,6 +174,24 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 620)
         XCTAssertEqual(window.minSize.height, 420)
+    }
+
+    @MainActor
+    func testTrackEditorWindowUsesCompactNativeLayout() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .audio, codec: "aac", uid: 42)]
+        )
+        let controller = TrackEditorWindowController(asset: asset)
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertTrue(window.contentViewController is TrackEditorViewController)
+        XCTAssertEqual(contentView.frame.size.width, 560, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 510, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 520)
+        XCTAssertEqual(window.minSize.height, 480)
     }
 
     @MainActor

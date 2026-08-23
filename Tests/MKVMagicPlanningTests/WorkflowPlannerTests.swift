@@ -34,6 +34,33 @@ final class WorkflowPlannerTests: XCTestCase {
         XCTAssertEqual(plan.impact.videoEncodeCount, 0)
     }
 
+    func testFullTrackMetadataEditUsesPropEditWithoutEncoding() throws {
+        let edit = TrackMetadataEdit(
+            trackUID: 42,
+            name: "English Commentary",
+            language: "en",
+            isDefault: false,
+            isForced: false,
+            isEnabled: true,
+            isCommentary: true,
+            isHearingImpaired: false,
+            isVisualImpaired: false,
+            isOriginal: true,
+            isTextDescription: false
+        )
+        let plan = try WorkflowPlanner().plan(
+            asset: asset,
+            workflow: WorkflowDefinition(
+                name: "Edit commentary track",
+                operations: [.editTrackMetadata(edit)]
+            )
+        )
+
+        XCTAssertEqual(plan.stages.map(\.mechanism), [.mkvPropEdit, .verify, .commit])
+        XCTAssertEqual(plan.impact.videoEncodeCount, 0)
+        XCTAssertTrue(plan.impact.copiesVideo)
+    }
+
     func testMultipleVideoOperationsFuseIntoOneEncode() throws {
         let plan = try WorkflowPlanner().plan(
             asset: asset,

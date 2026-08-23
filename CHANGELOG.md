@@ -26,3 +26,11 @@ semantic versioning; public release tags are immutable and signed.
   bookmark or full media path.
 - Make History a lightweight native report with recent-job columns and the
   selected job's complete sanitized lifecycle.
+- Add a zero-transcode track editor for names, canonical language tags, default,
+  forced, enabled, commentary, accessibility, and original-language flags. It
+  addresses tracks by stable Matroska UID and shares the same verified-clone
+  transaction and durable history path as segment-title edits.
+- Keep macOS history writes atomic and private while removing Foundation's
+  unsupported iOS file-protection option after a regression reproduced `EPERM`.
+- Keep the AppKit entry point synchronous on the process main thread while the
+  command-line bundled-tool verifier runs in its own detached task.
