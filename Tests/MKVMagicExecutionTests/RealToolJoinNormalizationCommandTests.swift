@@ -316,6 +316,8 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             let chapters = try JoinedChapterComposer().compose(chapterSources)
             let finalURL = root.appendingPathComponent("assembled-video-and-audio.mkv")
             let finalExecutor = JoinFinalAssemblyExecutor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,

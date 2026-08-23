@@ -308,6 +308,8 @@ final class AppModel {
                 try await chapterExecutor.validateCurrent(preview)
             }
             let executor = LosslessJoinExecutor(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
@@ -465,6 +467,7 @@ final class AppModel {
             )
             let output = try await CommonFormatJoinExecutor(
                 ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
@@ -511,7 +514,7 @@ final class AppModel {
                 execution,
                 destinationURL: destinationURL,
                 successMessage:
-                    "Verified the one-pass normalized lanes, packet-copy lanes, metadata, attachments, and exact nested chapters; committed and reopened output."
+                    "Verified the one-pass normalized lanes, exact copied packet payloads, every join boundary, metadata, attachments, and nested chapters; committed and reopened output."
             )
             return output
         } catch {
@@ -564,6 +567,8 @@ final class AppModel {
                 runner: runner
             )
             let executor = LosslessJoinExecutor(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
@@ -579,7 +584,7 @@ final class AppModel {
                         switch stage {
                         case .verifying:
                             self.state = .executing(
-                                "Verifying joined tracks, duration, tags, and nested chapters…"
+                                "Verifying copied packet payloads, every join boundary, tracks, and chapters…"
                             )
                         case .committing:
                             self.state = .executing(
@@ -604,7 +609,7 @@ final class AppModel {
                 execution,
                 destinationURL: destinationURL,
                 successMessage:
-                    "Verified joined tracks and exact nested chapters; committed and reopened output."
+                    "Verified exact copied packet payloads, every join boundary, tracks, and nested chapters; committed and reopened output."
             )
             return output
         } catch {

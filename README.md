@@ -81,8 +81,10 @@ issue; and continue only when the group is a zero-encode candidate with stable
 track identities. The app revalidates every exact source chapter document,
 prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
-the temporary and committed results and compares the exact nested chapter XML.
-Manual ambiguity mapping and decode spot checks remain pending. When a reviewed group
+the temporary and committed results, compares the exact nested chapter XML,
+decodes a bounded window spanning every join, and fingerprints the ordered
+encoded packet payloads of every lane promised as a direct copy. Manual
+ambiguity mapping remains pending. When a reviewed group
 needs normalization, the same window previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
@@ -108,8 +110,10 @@ exact nested joined chapters. It refuses overwrite, changed chapters/bundles,
 unsafe paths or text, unpreserved tags, subtitle conversion, and subtitle gaps.
 The revision-bound final executor compiles that command again inside a
 verified-output transaction, semantically audits the temporary MKV, re-extracts
-and canonically compares its full nested chapter XML, commits atomically, then
-repeats the complete audit after reopening the saved path. A real mixed-lane
+and canonically compares its full nested chapter XML, decodes every join
+boundary, fingerprints direct packet-copy lanes without retaining film-length
+packet listings in memory, commits atomically, then repeats the complete audit
+after reopening the saved path. A real mixed-lane
 fixture passes this transaction without changing either original. The native
 review now enables **Review Common Format…** only when those exact contracts are
 executable. A compact second sheet lists the resolved targets, nested chapter

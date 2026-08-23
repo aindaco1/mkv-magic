@@ -182,14 +182,20 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
     }
 }
 
-public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
+public struct LosslessJoinExecutor<
+    Runner: CommandRunning & CommandLineDigesting,
+    Inspector: MediaInspecting
+>: Sendable {
     private let joiner: MKVLosslessJoiner<Runner>
     private let inspector: Inspector
     private let codec = MatroskaChapterXMLCodec()
     private let verifier = LosslessJoinOutputVerifier()
     private let chapterAuditor: MatroskaChapterOutputAuditor<Runner>
+    private let outputAuditor: JoinOutputAuditor<Runner>
 
     public init(
+        ffmpegURL: URL,
+        ffprobeURL: URL,
         mkvmergeURL: URL,
         mkvextractURL: URL,
         runner: Runner,
@@ -199,6 +205,11 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
         self.inspector = inspector
         chapterAuditor = MatroskaChapterOutputAuditor(
             mkvextractURL: mkvextractURL,
+            runner: runner
+        )
+        outputAuditor = JoinOutputAuditor(
+            ffmpegURL: ffmpegURL,
+            ffprobeURL: ffprobeURL,
             runner: runner
         )
     }
@@ -285,6 +296,7 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
                 output: temporaryAsset
             )
             try await verifyChapters(in: output, expectedCanonical: expectedChapters)
+            try await verifyPayload(in: temporaryAsset, preview: preview)
             try Task.checkCancellation()
             try validateCurrent(preview)
             try await transaction.markVerified()
@@ -303,6 +315,7 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
                     in: committedURL,
                     expectedCanonical: expectedChapters
                 )
+                try await verifyPayload(in: committedAsset, preview: preview)
                 try validateCurrent(preview)
                 return committedAsset
             } catch {
@@ -350,6 +363,42 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
                 throw LosslessJoinExecutionError.chapterVerificationFailed
             }
         }
+    }
+
+    private func verifyPayload(
+        in output: MediaAsset,
+        preview: LosslessJoinPreview
+    ) async throws {
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == preview.mapping.lanes.count else {
+            throw JoinOutputAuditError.invalidLanePlan
+        }
+        let lanes = try zip(preview.mapping.lanes.indices, preview.mapping.lanes).map {
+            laneIndex, lane -> JoinPacketAuditLane in
+            let expectedInputs = try preview.sources.indices.map {
+                sourceIndex -> JoinPacketFingerprintInput in
+                guard lane.trackIDsBySource.indices.contains(sourceIndex),
+                    let trackID = lane.trackIDsBySource[sourceIndex]
+                else {
+                    throw JoinOutputAuditError.invalidLanePlan
+                }
+                return JoinPacketFingerprintInput(
+                    fileURL: preview.sources[sourceIndex].sourceURL,
+                    trackID: trackID
+                )
+            }
+            return JoinPacketAuditLane(
+                laneIndex: laneIndex,
+                kind: lane.kind,
+                outputTrackID: outputTracks[laneIndex].id,
+                expectedInputs: expectedInputs
+            )
+        }
+        try await outputAuditor.audit(
+            sources: preview.sources,
+            output: output,
+            lanes: lanes
+        )
     }
 
     private func withPrivateDirectory<T: Sendable>(

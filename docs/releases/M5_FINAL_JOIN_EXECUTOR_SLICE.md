@@ -82,3 +82,7 @@ The native exact-choice review, private one-pass orchestration, final-output
 progress, and single sanitized History lifecycle were completed in
 `M5_NATIVE_COMMON_FORMAT_JOIN_SLICE.md`. The remaining preservation, decode,
 beta, and Intel limitations above still apply.
+
+Boundary decode and direct copied-payload fingerprints were subsequently
+completed in `M5_JOIN_OUTPUT_AUDIT_SLICE.md`. Preservation, beta, and physical
+Intel limitations remain current.

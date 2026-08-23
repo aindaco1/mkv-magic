@@ -80,3 +80,10 @@ the private temporary output.
   `M5_JOIN_NORMALIZATION_PLANNER_SLICE.md` and
   `M5_FUSED_NORMALIZATION_COMMAND_SLICE.md`.
 - Private-library beta acceptance and physical Intel smoke testing.
+
+## Subsequent update
+
+Fast and Exact Trim, native common-format Join, and strict boundary/payload
+auditing were subsequently completed. The current output-audit contract and
+evidence are recorded in `M5_JOIN_OUTPUT_AUDIT_SLICE.md`; manual mapping, beta,
+and physical Intel acceptance remain pending.

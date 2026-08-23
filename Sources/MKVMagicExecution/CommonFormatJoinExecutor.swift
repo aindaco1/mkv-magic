@@ -14,10 +14,12 @@ public enum CommonFormatJoinExecutionStage: Equatable, Sendable {
 /// Runs the reviewed common-format join as one private pipeline. Encoded lanes
 /// are created once in a verified temporary stream bundle, compatible lanes are
 /// packet-copied during final assembly, and the private bundle is always removed.
-public struct CommonFormatJoinExecutor<Runner: CommandRunning, Inspector: MediaInspecting>:
-    Sendable
-{
+public struct CommonFormatJoinExecutor<
+    Runner: CommandRunning & CommandLineDigesting,
+    Inspector: MediaInspecting
+>: Sendable {
     private let ffmpegURL: URL
+    private let ffprobeURL: URL
     private let mkvmergeURL: URL
     private let mkvextractURL: URL
     private let runner: Runner
@@ -25,12 +27,14 @@ public struct CommonFormatJoinExecutor<Runner: CommandRunning, Inspector: MediaI
 
     public init(
         ffmpegURL: URL,
+        ffprobeURL: URL,
         mkvmergeURL: URL,
         mkvextractURL: URL,
         runner: Runner,
         inspector: Inspector
     ) {
         self.ffmpegURL = ffmpegURL
+        self.ffprobeURL = ffprobeURL
         self.mkvmergeURL = mkvmergeURL
         self.mkvextractURL = mkvextractURL
         self.runner = runner
@@ -67,6 +71,8 @@ public struct CommonFormatJoinExecutor<Runner: CommandRunning, Inspector: MediaI
             try Task.checkCancellation()
             try await onStage(.assembling)
             let finalExecutor = JoinFinalAssemblyExecutor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: ffprobeURL,
                 mkvmergeURL: mkvmergeURL,
                 mkvextractURL: mkvextractURL,
                 runner: runner,

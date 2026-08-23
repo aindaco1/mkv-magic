@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import XCTest
 
@@ -49,6 +50,98 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertTrue(result.standardOutput.wasTruncated)
         XCTAssertEqual(result.standardOutput.data.count, 1_024)
         XCTAssertTrue(result.standardOutput.text.allSatisfy { $0 == "z" })
+    }
+
+    func testStreamsAndCanonicalizesDigestLinesAcrossCommandsWithoutOutputLimit() async throws {
+        let firstHash = String(repeating: "a", count: 64)
+        let secondHash = String(repeating: "B", count: 64)
+        let repeated = Array(repeating: "SHA256:\(firstHash),ignored side data\n", count: 2_000)
+            .joined()
+        let runner = FoundationCommandRunner()
+
+        let digest = try await runner.digestLines(
+            [
+                CommandRequest(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                    arguments: ["%s", repeated],
+                    outputLimit: 1_024
+                ),
+                CommandRequest(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                    arguments: ["%s", "SHA256:\(secondHash)\n"],
+                    outputLimit: 1_024
+                ),
+            ],
+            policy: CommandLineDigestPolicy(
+                requiredPrefix: "SHA256:",
+                hexDigestByteCount: 64,
+                allowedSuffixSeparator: Character(",").asciiValue
+            )
+        )
+
+        let canonical =
+            Array(repeating: "SHA256:\(firstHash)\n", count: 2_000).joined()
+            + "SHA256:\(secondHash)\n"
+        XCTAssertEqual(digest.lineCount, 2_001)
+        XCTAssertEqual(digest.sha256, Data(SHA256.hash(data: Data(canonical.utf8))))
+    }
+
+    func testStreamingDigestRejectsMalformedAndEmptyOutput() async throws {
+        let runner = FoundationCommandRunner()
+        let policy = CommandLineDigestPolicy(
+            requiredPrefix: "SHA256:",
+            hexDigestByteCount: 64,
+            allowedSuffixSeparator: Character(",").asciiValue
+        )
+        for (output, expected) in [
+            ("SHA256:not-a-complete-hash\n", CommandLineDigestError.malformedOutput),
+            ("", CommandLineDigestError.emptyOutput),
+        ] {
+            do {
+                _ = try await runner.digestLines(
+                    [
+                        CommandRequest(
+                            executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                            arguments: ["%s", output]
+                        )
+                    ],
+                    policy: policy
+                )
+                XCTFail("Expected streaming digest refusal")
+            } catch {
+                XCTAssertEqual(error as? CommandLineDigestError, expected)
+            }
+        }
+    }
+
+    func testStreamsTrailingFrameHashesWhileIgnoringBoundedHeaders() async throws {
+        let firstHash = String(repeating: "1", count: 64)
+        let secondHash = String(repeating: "f", count: 64)
+        let frameHash = """
+            #format: frame checksums
+            #hash: SHA256
+            0, 0, 0, 41, 109, \(firstHash)
+            0, 41, 41, 41, 72, \(secondHash)
+
+            """
+
+        let digest = try await FoundationCommandRunner().digestTrailingHexLines(
+            [
+                CommandRequest(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                    arguments: ["%s", frameHash]
+                )
+            ],
+            policy: CommandTrailingHexDigestPolicy(
+                commentPrefix: 35,
+                fieldSeparator: 44,
+                hexDigestByteCount: 64
+            )
+        )
+
+        let canonical = "\(firstHash)\n\(secondHash)\n"
+        XCTAssertEqual(digest.lineCount, 2)
+        XCTAssertEqual(digest.sha256, Data(SHA256.hash(data: Data(canonical.utf8))))
     }
 
     func testTimeoutTerminatesProcess() async {

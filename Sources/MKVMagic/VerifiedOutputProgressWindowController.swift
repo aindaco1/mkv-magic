@@ -66,7 +66,8 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         VerifiedOutputProgressWindowController(
             title: "Joining MKV Files",
             initialMessage: "Joining complete files…",
-            verifyingMessage: "Reopening the temporary MKV and verifying tracks and chapters…",
+            verifyingMessage:
+                "Verifying copied packet payloads, every join boundary, tracks, and chapters…",
             committingMessage: "Verification passed. Saving and auditing the final MKV…",
             cancellingMessage: "Cancelling and removing the temporary output…"
         )
@@ -91,7 +92,7 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
             title: "Joining MKV Files",
             initialMessage: "Normalizing only the incompatible lanes once…",
             verifyingMessage:
-                "Reopening the final MKV and verifying streams, metadata, attachments, and chapters…",
+                "Verifying copied packet payloads, every join boundary, streams, and chapters…",
             committingMessage: "Verification passed. Saving and auditing the final MKV…",
             cancellingMessage:
                 "Cancelling and removing the private stream bundle and temporary output…"

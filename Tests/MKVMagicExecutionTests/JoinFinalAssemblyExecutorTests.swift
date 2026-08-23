@@ -6,7 +6,7 @@ import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
-private actor JoinFinalToolRunner: CommandRunning {
+private actor JoinFinalToolRunner: CommandRunning, CommandLineDigesting {
     private let exitCode: Int32
     private let wrongChapters: Bool
     private let sourceToMutate: URL?
@@ -58,9 +58,27 @@ private actor JoinFinalToolRunner: CommandRunning {
                 : chapterData
             try data.write(to: URL(fileURLWithPath: request.arguments[2]))
             return result(exitCode: 0)
+        case "ffmpeg":
+            return result(exitCode: 0)
         default:
             return result(exitCode: 2)
         }
+    }
+
+    func digestLines(
+        _ requests: [CommandRequest],
+        policy: CommandLineDigestPolicy
+    ) async throws -> CommandLineDigest {
+        self.requests.append(contentsOf: requests)
+        return CommandLineDigest(sha256: Data(repeating: 9, count: 32), lineCount: 12)
+    }
+
+    func digestTrailingHexLines(
+        _ requests: [CommandRequest],
+        policy: CommandTrailingHexDigestPolicy
+    ) async throws -> CommandLineDigest {
+        self.requests.append(contentsOf: requests)
+        return CommandLineDigest(sha256: Data(repeating: 9, count: 32), lineCount: 12)
     }
 
     func capturedRequests() -> [CommandRequest] { requests }
@@ -535,6 +553,8 @@ final class JoinFinalAssemblyExecutorTests: XCTestCase {
         inspector: JoinFinalInspector
     ) -> JoinFinalAssemblyExecutor<JoinFinalToolRunner, JoinFinalInspector> {
         JoinFinalAssemblyExecutor(
+            ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
             mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
             mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
             runner: runner,

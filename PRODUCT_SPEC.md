@@ -918,8 +918,14 @@ attachments, metadata source, and nested chapter output; requires one explicit
 approval; binds that approval to unchanged source and chapter revisions; creates
 the verified normalized stream bundle only in private temporary storage; and
 persists one final-output History lifecycle through final assembly, verification,
-commit, and reopen. Manual join mapping and join-boundary decode spot checks
-remain before the M5 gate is complete.
+commit, and reopen. Both lossless and common-format final outputs now decode a
+bounded window spanning every source boundary before commit and again after
+reopen. Direct packet-copy lanes also receive streaming ordered payload
+fingerprints: audio, subtitles, and other codecs use exact FFprobe packet hashes;
+H.264/HEVC video removes only muxer-managed parameter-set units before hashing
+the retained encoded packet bodies. This remains memory-bounded for long media
+and fails on packet loss, reordering, or payload changes. Manual join mapping
+remains before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

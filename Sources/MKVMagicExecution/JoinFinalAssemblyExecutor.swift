@@ -76,17 +76,21 @@ public struct JoinFinalAssemblyPreview: Equatable, Sendable {
     }
 }
 
-public struct JoinFinalAssemblyExecutor<Runner: CommandRunning, Inspector: MediaInspecting>:
-    Sendable
-{
+public struct JoinFinalAssemblyExecutor<
+    Runner: CommandRunning & CommandLineDigesting,
+    Inspector: MediaInspecting
+>: Sendable {
     private let mkvmergeURL: URL
     private let runner: Runner
     private let inspector: Inspector
     private let commandBuilder = JoinFinalAssemblyCommandBuilder()
     private let verifier = JoinFinalAssemblyOutputVerifier()
     private let chapterAuditor: MatroskaChapterOutputAuditor<Runner>
+    private let outputAuditor: JoinOutputAuditor<Runner>
 
     public init(
+        ffmpegURL: URL,
+        ffprobeURL: URL,
         mkvmergeURL: URL,
         mkvextractURL: URL,
         runner: Runner,
@@ -97,6 +101,11 @@ public struct JoinFinalAssemblyExecutor<Runner: CommandRunning, Inspector: Media
         self.inspector = inspector
         chapterAuditor = MatroskaChapterOutputAuditor(
             mkvextractURL: mkvextractURL,
+            runner: runner
+        )
+        outputAuditor = JoinOutputAuditor(
+            ffmpegURL: ffmpegURL,
+            ffprobeURL: ffprobeURL,
             runner: runner
         )
     }
@@ -237,6 +246,7 @@ public struct JoinFinalAssemblyExecutor<Runner: CommandRunning, Inspector: Media
                     in: output.sourceURL,
                     expectedCanonical: expectedChapters
                 )
+                try await verifyPayload(in: output, preview: preview)
                 try validateCurrent(preview)
             },
             committedAuditError: { outputURL, reason in
@@ -313,6 +323,48 @@ public struct JoinFinalAssemblyExecutor<Runner: CommandRunning, Inspector: Media
                 throw JoinFinalAssemblyExecutionError.chapterVerificationFailed
             }
         }
+    }
+
+    private func verifyPayload(
+        in output: MediaAsset,
+        preview: JoinFinalAssemblyPreview
+    ) async throws {
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == preview.commandLanes.count else {
+            throw JoinOutputAuditError.invalidLanePlan
+        }
+        let lanes = try zip(preview.commandLanes, outputTracks).compactMap {
+            lane, outputTrack -> JoinPacketAuditLane? in
+            switch lane.mechanism {
+            case .normalized:
+                return nil
+            case .packetCopy:
+                guard lane.sourceTrackIDs.count == preview.sources.count else {
+                    throw JoinOutputAuditError.invalidLanePlan
+                }
+                let inputs = try zip(preview.sources, lane.sourceTrackIDs).map {
+                    source, trackID -> JoinPacketFingerprintInput in
+                    guard let trackID else {
+                        throw JoinOutputAuditError.invalidLanePlan
+                    }
+                    return JoinPacketFingerprintInput(
+                        fileURL: source.sourceURL,
+                        trackID: trackID
+                    )
+                }
+                return JoinPacketAuditLane(
+                    laneIndex: lane.laneIndex,
+                    kind: lane.kind,
+                    outputTrackID: outputTrack.id,
+                    expectedInputs: inputs
+                )
+            }
+        }
+        try await outputAuditor.audit(
+            sources: preview.sources,
+            output: output,
+            lanes: lanes
+        )
     }
 
     private func conciseMessage(_ result: CommandResult) -> String {

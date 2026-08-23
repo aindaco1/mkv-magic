@@ -5,7 +5,7 @@ import MKVMagicMedia
 import MKVMagicSystem
 import XCTest
 
-private actor LosslessJoinToolRunner: CommandRunning {
+private actor LosslessJoinToolRunner: CommandRunning, CommandLineDigesting {
     private let wrongChapters: Bool
     private let toolExitCode: Int32
     private let sourceToMutate: URL?
@@ -57,9 +57,27 @@ private actor LosslessJoinToolRunner: CommandRunning {
                 : expectedChapterData
             try data.write(to: URL(fileURLWithPath: request.arguments[2]))
             return result(exitCode: 0)
+        case "ffmpeg":
+            return result(exitCode: 0)
         default:
             return result(exitCode: 2)
         }
+    }
+
+    func digestLines(
+        _ requests: [CommandRequest],
+        policy: CommandLineDigestPolicy
+    ) async throws -> CommandLineDigest {
+        self.requests.append(contentsOf: requests)
+        return CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 8)
+    }
+
+    func digestTrailingHexLines(
+        _ requests: [CommandRequest],
+        policy: CommandTrailingHexDigestPolicy
+    ) async throws -> CommandLineDigest {
+        self.requests.append(contentsOf: requests)
+        return CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 8)
     }
 
     func capturedRequests() -> [CommandRequest] { requests }
@@ -324,6 +342,8 @@ final class LosslessJoinExecutorTests: XCTestCase {
             defer { try? FileManager.default.removeItem(at: fixture.directory) }
             let runner = LosslessJoinToolRunner(wrongChapters: !wrongDuration)
             let executor = LosslessJoinExecutor(
+                ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+                ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
                 mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
                 mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
                 runner: runner,
@@ -418,6 +438,8 @@ final class LosslessJoinExecutorTests: XCTestCase {
         chapters: JoinedChapterComposition
     ) -> LosslessJoinExecutor<LosslessJoinToolRunner, LosslessJoinInspector> {
         LosslessJoinExecutor(
+            ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
             mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
             mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
             runner: runner,
