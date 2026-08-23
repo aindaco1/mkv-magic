@@ -107,3 +107,7 @@ semantic versioning; public release tags are immutable and signed.
   selected edition. New core policy skips duplicate timestamps and boundaries
   inside explicitly closed chapter ranges, preserving manual nesting and exact
   validation for future workflow and batch reuse.
+- Add lazy per-chapter frame previews at the exact displayed numeric time and
+  five seconds before and after where available. Extract one bounded local JPEG
+  at a time with bundled FFmpeg, reject stale or malformed results, and require
+  an explicit native choice before changing the in-memory chapter start.

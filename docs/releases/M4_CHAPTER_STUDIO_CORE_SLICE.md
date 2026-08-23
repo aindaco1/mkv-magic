@@ -86,8 +86,9 @@ signed/notarized release.
 
 ## Still pending in M4
 
-- Lazy thumbnail timeline and frame/keyframe snapping.
-- Reviewed scene-change, black-frame, and silence-boundary suggestions.
+- Lazy thumbnail previews and reviewed scene-change, black-frame, and
+  silence-boundary suggestions were delivered in later M4 slices. Synchronized
+  timeline dragging and frame/keyframe snapping remain pending.
 - Synchronized timeline dragging and explicit chronological reorder controls.
 - Saved-workflow and batch chapter actions.
 - Full keyboard-only and VoiceOver acceptance.

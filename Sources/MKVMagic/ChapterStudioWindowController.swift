@@ -9,6 +9,9 @@ typealias ChapterSuggestionProvider =
         _ existingChapterStarts: [MediaTime]
     ) async throws -> [ChapterSuggestion]
 
+typealias ChapterThumbnailProvider =
+    @MainActor (_ times: [MediaTime]) async throws -> [ChapterThumbnail]
+
 @MainActor
 final class ChapterStudioWindowController: NSWindowController {
     private let studioViewController: ChapterStudioViewController
@@ -16,11 +19,13 @@ final class ChapterStudioWindowController: NSWindowController {
 
     init(
         preview: ChapterEditPreview,
-        suggestionProvider: ChapterSuggestionProvider? = nil
+        suggestionProvider: ChapterSuggestionProvider? = nil,
+        thumbnailProvider: ChapterThumbnailProvider? = nil
     ) {
         studioViewController = ChapterStudioViewController(
             preview: preview,
-            suggestionProvider: suggestionProvider
+            suggestionProvider: suggestionProvider,
+            thumbnailProvider: thumbnailProvider
         )
         let window = NSPanel(contentViewController: studioViewController)
         window.title = "Chapter Studio"
@@ -93,11 +98,14 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
 
     private let preview: ChapterEditPreview
     private let suggestionProvider: ChapterSuggestionProvider?
+    private let thumbnailProvider: ChapterThumbnailProvider?
     private var document: MatroskaChapterDocument
     private var roots = [ChapterOutlineItem]()
     private var selectedDisplayIndex = 0
     private var analysisTask: Task<Void, Never>?
     private var suggestionReviewController: ChapterSuggestionReviewWindowController?
+    private var thumbnailTask: Task<Void, Never>?
+    private var thumbnailWindowController: ChapterThumbnailWindowController?
 
     private let outlineView = NSOutlineView()
     private let selectionHeading = NSTextField(labelWithString: "Select an edition or chapter")
@@ -121,13 +129,19 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private let nestButton = NSButton(title: "Nest", target: nil, action: nil)
     private let unnestButton = NSButton(title: "Unnest", target: nil, action: nil)
     private let suggestButton = NSButton(title: "Suggest…", target: nil, action: nil)
+    private let thumbnailsButton = NSButton(title: "Thumbnails…", target: nil, action: nil)
     private let addDisplayButton = NSButton(title: "+", target: nil, action: nil)
     private let removeDisplayButton = NSButton(title: "−", target: nil, action: nil)
     private let useChangesButton = NSButton(title: "Use Changes", target: nil, action: nil)
 
-    init(preview: ChapterEditPreview, suggestionProvider: ChapterSuggestionProvider?) {
+    init(
+        preview: ChapterEditPreview,
+        suggestionProvider: ChapterSuggestionProvider?,
+        thumbnailProvider: ChapterThumbnailProvider?
+    ) {
         self.preview = preview
         self.suggestionProvider = suggestionProvider
+        self.thumbnailProvider = thumbnailProvider
         document = preview.original
         super.init(nibName: nil, bundle: nil)
     }
@@ -236,11 +250,15 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         suggestButton.toolTip =
             "Analyze scene changes, black frames, and silence locally, then review suggestions."
         suggestButton.isEnabled = suggestionProvider != nil
+        thumbnailsButton.target = self
+        thumbnailsButton.action = #selector(showThumbnails)
+        thumbnailsButton.toolTip =
+            "Preview local frames before, at, and after the selected chapter's numeric start time."
         let flattenButton = NSButton(
             title: "Flatten for Jellyfin", target: self, action: #selector(flattenForJellyfin))
         flattenButton.toolTip = "Explicitly replace nesting with one flat, chronological edition."
         let secondTools = NSStackView(views: [
-            nestButton, unnestButton, everyButton, suggestButton,
+            nestButton, unnestButton, everyButton, suggestButton, thumbnailsButton,
         ])
         secondTools.orientation = .horizontal
         secondTools.spacing = 6
@@ -258,8 +276,8 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         fileTools.spacing = 8
         for button in [
             addEdition, addChapter, addChildButton, duplicateButton, removeButton,
-            nestButton, unnestButton, everyButton, suggestButton, importButton, exportButton,
-            flattenButton,
+            nestButton, unnestButton, everyButton, suggestButton, thumbnailsButton, importButton,
+            exportButton, flattenButton,
         ] {
             button.controlSize = .small
         }
@@ -890,6 +908,94 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         }
     }
 
+    @objc private func showThumbnails() {
+        guard let thumbnailProvider, let window = view.window,
+            let selection = selectedItem, case .chapter(let chapterID) = selection.kind,
+            let chapter = findChapter(chapterID),
+            let duration = preview.source.duration, duration > .zero
+        else {
+            showError("Choose a chapter in a video with a known positive duration.")
+            return
+        }
+        let originalStart = chapter.start
+        let times = thumbnailTimes(around: originalStart, duration: duration)
+        guard !times.isEmpty else {
+            showError("No safe thumbnail times are available for this chapter.")
+            return
+        }
+
+        thumbnailTask?.cancel()
+        thumbnailsButton.isEnabled = false
+        showInfo("Loading local thumbnails…")
+        thumbnailTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let thumbnails = try await thumbnailProvider(times)
+                try Task.checkCancellation()
+                self.thumbnailTask = nil
+                self.updateActionAvailability()
+                guard let currentSelection = self.selectedItem,
+                    case .chapter(chapterID) = currentSelection.kind,
+                    self.findChapter(chapterID)?.start == originalStart
+                else {
+                    self.showInfo("Selection changed; discarded the thumbnail preview.")
+                    return
+                }
+                guard
+                    let controller = ChapterThumbnailWindowController(
+                        thumbnails: thumbnails,
+                        currentTime: originalStart
+                    )
+                else {
+                    self.showError("FFmpeg returned an unreadable thumbnail preview.")
+                    return
+                }
+                self.thumbnailWindowController = controller
+                controller.beginSheet(for: window) { [weak self] selectedTime in
+                    guard let self else { return }
+                    self.thumbnailWindowController = nil
+                    guard let selectedTime else { return }
+                    guard self.findChapter(chapterID)?.start == originalStart else {
+                        self.showInfo("The chapter changed; no thumbnail time was applied.")
+                        return
+                    }
+                    do {
+                        try self.applyMutation(selecting: chapterID) { candidate in
+                            self.mutateChapter(chapterID, in: &candidate) {
+                                $0.start = selectedTime
+                            }
+                        }
+                        self.showInfo(
+                            "Set chapter start to \(ChapterTimestamp.format(selectedTime, digits: 3))."
+                        )
+                    } catch {
+                        self.showError(error.localizedDescription)
+                    }
+                }
+            } catch is CancellationError {
+                self.thumbnailTask = nil
+                self.updateActionAvailability()
+            } catch {
+                self.thumbnailTask = nil
+                self.updateActionAvailability()
+                self.showError("Thumbnail preview failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func thumbnailTimes(around start: MediaTime, duration: MediaTime) -> [MediaTime] {
+        let offset: Int64 = 5_000_000_000
+        let beforeResult = start.nanoseconds.subtractingReportingOverflow(offset)
+        let before = MediaTime(
+            nanoseconds: beforeResult.overflow ? 0 : max(0, beforeResult.partialValue))
+        let lastNanosecond = max(0, duration.nanoseconds - 1)
+        let afterResult = start.nanoseconds.addingReportingOverflow(offset)
+        let after = MediaTime(
+            nanoseconds: afterResult.overflow
+                ? lastNanosecond : min(lastNanosecond, afterResult.partialValue))
+        return Array(Set([before, start, after])).filter { $0 >= .zero && $0 < duration }.sorted()
+    }
+
     @objc private func flattenForJellyfin() {
         guard let window = view.window else { return }
         let flattened = document.flattenedForJellyfin()
@@ -1007,6 +1113,10 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         analysisTask = nil
         suggestionReviewController?.cancel()
         suggestionReviewController = nil
+        thumbnailTask?.cancel()
+        thumbnailTask = nil
+        thumbnailWindowController?.cancel()
+        thumbnailWindowController = nil
     }
 
     private var selectedItem: ChapterOutlineItem? {
@@ -1080,6 +1190,10 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         removeButton.isEnabled = selectedItem != nil
         nestButton.isEnabled = isChapter
         unnestButton.isEnabled = isChapter
+        thumbnailsButton.isEnabled =
+            isChapter && thumbnailProvider != nil && thumbnailTask == nil
+            && preview.source.tracks.contains { $0.kind == .video }
+            && preview.source.duration.map { $0 > .zero } == true
         useChangesButton.isEnabled = true
     }
 

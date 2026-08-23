@@ -526,6 +526,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                             existingChapterStarts: existingStarts,
                             options: options
                         )
+                    },
+                    thumbnailProvider: { [weak model] times in
+                        guard let model else { return [] }
+                        return try await model.chapterThumbnails(
+                            in: preview.source,
+                            at: times,
+                            expectedSourceRevision: preview.sourceRevision
+                        )
                     }
                 )
                 chapterStudioWindowController = controller

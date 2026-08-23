@@ -2,8 +2,9 @@
 
 This records engineering acceptance of deterministic, local chapter-boundary
 analysis and review. It extends the Chapter Studio core without claiming the
-remaining thumbnail timeline, frame/keyframe snapping, physical Intel testing,
-real-library beta acceptance, or a public signed/notarized release.
+then-remaining thumbnail preview, synchronized timeline, frame/keyframe
+snapping, physical Intel testing, real-library beta acceptance, or a public
+signed/notarized release.
 
 ## User-facing scope
 
@@ -77,7 +78,8 @@ real-library beta acceptance, or a public signed/notarized release.
 
 ## Still pending in M4
 
-- Lazy thumbnail timeline and frame/keyframe snapping.
+- Lazy per-chapter thumbnail previews were delivered in the next M4 slice.
+  Synchronized timeline dragging and frame/keyframe snapping remain pending.
 - Synchronized timeline dragging and explicit chronological reorder controls.
 - Saved-workflow and batch chapter actions.
 - Full keyboard-only and VoiceOver acceptance.

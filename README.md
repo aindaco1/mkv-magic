@@ -56,12 +56,13 @@ For inspected Matroska files, **Chapters…** now opens a native nested Chapter
 Studio. It can add, remove, duplicate, nest, and unnest editions and atoms; edit
 nanosecond start/end values, flags, and localized display names; generate fixed
 interval chapters; analyze scene changes, black frames, and silence locally;
-review each suggested boundary; explicitly flatten leaf chapters for Jellyfin;
-and import or export Matroska XML and simple chapter text. The reviewed tree is
-written only to a temporary clone with `mkvpropedit`, then re-extracted for exact
-hierarchy, UID, timestamp, language, and flag comparison before commit and after
-reopen.
-The lazy thumbnail timeline and frame/keyframe snapping remain M4 work.
+review each suggested boundary; lazily preview bounded local frames before, at,
+and after a selected start and adopt an exact displayed timestamp; explicitly
+flatten leaf chapters for Jellyfin; and import or export Matroska XML and simple
+chapter text. The reviewed tree is written only to a temporary clone with
+`mkvpropedit`, then re-extracted for exact hierarchy, UID, timestamp, language,
+and flag comparison before commit and after reopen. Synchronized timeline
+dragging and frame/keyframe snapping remain M4 work.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

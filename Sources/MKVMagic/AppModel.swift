@@ -209,6 +209,26 @@ final class AppModel {
         )
     }
 
+    func chapterThumbnails(
+        in source: MediaAsset,
+        at times: [MediaTime],
+        expectedSourceRevision: ChapterSourceRevision
+    ) async throws -> [ChapterThumbnail] {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        return try await FFmpegChapterThumbnailGenerator(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: FoundationCommandRunner()
+        ).generate(
+            source: source,
+            times: times,
+            expectedSourceRevision: expectedSourceRevision
+        )
+    }
+
     func addFiles(_ urls: [URL]) async {
         let uniqueRoots = Array(Set(urls.map(\.standardizedFileURL))).sorted {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending

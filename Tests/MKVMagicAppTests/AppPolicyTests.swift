@@ -876,7 +876,8 @@ final class AppPolicyTests: XCTestCase {
         let source = MediaAsset(
             sourceURL: sourceURL,
             container: "matroska,webm",
-            duration: MediaTime(nanoseconds: 60_000_000_000)
+            duration: MediaTime(nanoseconds: 60_000_000_000),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1")]
         )
         let original = MatroskaChapterDocument(
             editions: [
@@ -902,7 +903,8 @@ final class AppPolicyTests: XCTestCase {
                 ),
                 canonicalSHA256: Data(repeating: 0, count: 32)
             ),
-            suggestionProvider: { _, _ in [] }
+            suggestionProvider: { _, _ in [] },
+            thumbnailProvider: { _ in [] }
         )
         let content = try XCTUnwrap(controller.window?.contentView)
         controller.window?.setContentSize(NSSize(width: 820, height: 580))
@@ -911,13 +913,14 @@ final class AppPolicyTests: XCTestCase {
 
         for expected in [
             "Add Edition", "Add Chapter", "Add Child", "Duplicate", "Remove", "Nest",
-            "Unnest", "Every…", "Suggest…", "Flatten for Jellyfin", "Import…", "Export…",
-            "Use Changes",
+            "Unnest", "Every…", "Suggest…", "Thumbnails…", "Flatten for Jellyfin", "Import…",
+            "Export…", "Use Changes",
         ] {
             XCTAssertTrue(titles.contains(expected), "Missing Chapter Studio action \(expected)")
         }
         let chapterButtons = buttons(in: content)
         XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Suggest…" }).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Thumbnails…" }).isEnabled)
         for button in chapterButtons where !button.isHidden {
             let frame = button.convert(button.bounds, to: content)
             XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
@@ -931,6 +934,63 @@ final class AppPolicyTests: XCTestCase {
         {
             controller.showWindow(nil)
             controller.window?.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+            content.cacheDisplay(in: bounds, to: representation)
+            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    @MainActor
+    func testChapterThumbnailChooserShowsLocalFramesAndExactTimesAtMinimumSize() throws {
+        let jpeg = try makeThumbnailJPEG()
+        let controller = try XCTUnwrap(
+            ChapterThumbnailWindowController(
+                thumbnails: [
+                    ChapterThumbnail(
+                        time: MediaTime(nanoseconds: 5_000_000_000), imageData: jpeg),
+                    ChapterThumbnail(
+                        time: MediaTime(nanoseconds: 10_000_000_000), imageData: jpeg),
+                    ChapterThumbnail(
+                        time: MediaTime(nanoseconds: 15_000_000_000), imageData: jpeg),
+                ],
+                currentTime: MediaTime(nanoseconds: 10_000_000_000)
+            )
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(NSSize(width: 560, height: 300))
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Chapter Start Preview")
+        XCTAssertEqual(window.minSize, NSSize(width: 560, height: 300))
+        let controls = buttons(in: content)
+        XCTAssertEqual(controls.filter { $0.title == "Use This Time" }.count, 3)
+        XCTAssertTrue(controls.contains { $0.title == "Cancel" })
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        for expected in [
+            "Before", "Current", "After", "00:00:05.000", "00:00:10.000",
+            "00:00:15.000",
+        ] {
+            XCTAssertTrue(labels.contains(expected), "Missing thumbnail label \(expected)")
+        }
+        XCTAssertEqual(descendants(in: content).compactMap { $0 as? NSImageView }.count, 3)
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_THUMBNAIL_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            controller.showWindow(nil)
+            window.displayIfNeeded()
             RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
             content.layoutSubtreeIfNeeded()
             let bounds = content.bounds
@@ -1042,6 +1102,26 @@ final class AppPolicyTests: XCTestCase {
     @MainActor
     private func descendants(in view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    @MainActor
+    private func makeThumbnailJPEG() throws -> Data {
+        let bitmap = try XCTUnwrap(
+            NSBitmapImageRep(
+                bitmapDataPlanes: nil,
+                pixelsWide: 160,
+                pixelsHigh: 90,
+                bitsPerSample: 8,
+                samplesPerPixel: 3,
+                hasAlpha: false,
+                isPlanar: false,
+                colorSpaceName: .deviceRGB,
+                bytesPerRow: 0,
+                bitsPerPixel: 0
+            )
+        )
+        return try XCTUnwrap(
+            bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]))
     }
 }
 
