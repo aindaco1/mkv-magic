@@ -318,6 +318,108 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertFalse(historyText.contains(fixtureRoot.path))
         XCTAssertFalse(historyText.contains(rawAudio.path))
     }
+
+    @MainActor
+    func testRealLosslessJoinUsesNativeReviewAndRecordsEveryInput() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-app-join-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: fixtureRoot,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawOne = fixtureRoot.appendingPathComponent("one.pcm")
+        let rawTwo = fixtureRoot.appendingPathComponent("two.pcm")
+        let sourceOne = fixtureRoot.appendingPathComponent("Part One.mkv")
+        let sourceTwo = fixtureRoot.appendingPathComponent("Part Two.mkv")
+        let destination = fixtureRoot.appendingPathComponent("Joined.mkv")
+        try Data(repeating: 0, count: 96_000).write(to: rawOne)
+        try Data(repeating: 1, count: 96_000).write(to: rawTwo)
+        for (raw, output) in [(rawOne, sourceOne), (rawTwo, sourceTwo)] {
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .ffmpeg),
+                    arguments: [
+                        "-hide_banner", "-loglevel", "error",
+                        "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", raw.path,
+                        "-c:a", "aac",
+                        "-metadata", "title=Native Join Fixture",
+                        "-metadata:s:a:0", "language=eng",
+                        "-metadata:s:a:0", "title=Main Audio",
+                        output.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+        }
+        let sourceURLs = [sourceOne, sourceTwo]
+        let sourceDigests = try sourceURLs.map {
+            SHA256.hash(data: try Data(contentsOf: $0))
+        }
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { store })
+        await model.addFiles(sourceURLs)
+        XCTAssertEqual(model.assets.count, 2)
+        let options = try await model.loadLosslessJoinSourceOptions(model.assets)
+        let review = LosslessJoinReviewBuilder.make(
+            selections: options.map {
+                LosslessJoinSourceSelection(
+                    option: $0,
+                    editionID: $0.editions.count == 1 ? $0.editions[0].id : nil
+                )
+            }
+        )
+        let candidate = try XCTUnwrap(review.candidate)
+        let preview = try await model.previewLosslessJoin(candidate)
+        let output = try await model.executeLosslessJoin(
+            preview: preview,
+            destinationURL: destination
+        )
+
+        XCTAssertEqual(output.sourceURL, destination)
+        XCTAssertEqual(output.tracks.count, 1)
+        XCTAssertEqual(output.metadata["title"], "Native Join Fixture")
+        XCTAssertEqual(output.chapterEntryCount, 2)
+        XCTAssertEqual(
+            try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+            sourceDigests
+        )
+        let records = try await store.load()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowName, "Join MKV files losslessly")
+        XCTAssertEqual(record.inputDisplayNames, ["Part One.mkv", "Part Two.mkv"])
+        XCTAssertEqual(record.outputDisplayName, "Joined.mkv")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let serialized = record.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertFalse(serialized.contains(fixtureRoot.path))
+        XCTAssertTrue(serialized.contains("Zero encodes"))
+    }
 }
 
 extension MediaJobRecord {

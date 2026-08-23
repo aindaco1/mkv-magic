@@ -127,3 +127,8 @@ semantic versioning; public release tags are immutable and signed.
   nested chapter document, suppress later-source structural metadata, bind all
   sources to filesystem revisions, and inspect plus re-extract the result before
   commit and after reopen without changing any source.
+- Add the native strict **Join Files…** flow. Include/exclude and reorder complete
+  inspected MKVs, explicitly select one source chapter edition, inspect proposed
+  track lanes and every compatibility blocker, choose a deterministic MKV output,
+  cancel the temporary append before commit, and record every source in sanitized
+  History. Revalidate exact chapter documents before revision-bound execution.

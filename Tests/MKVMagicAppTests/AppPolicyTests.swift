@@ -106,6 +106,145 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testJoinedOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.joinedFilename(
+                for: URL(fileURLWithPath: "/Media/Part One.WEBM")),
+            "Part One — Joined.mkv"
+        )
+    }
+
+    func testLosslessJoinReviewBuildsStrictNestedPartPlan() throws {
+        let first = losslessJoinOption(
+            part: 1,
+            duration: 10,
+            chapters: [
+                MatroskaChapterEdition(
+                    chapters: [
+                        MatroskaChapterAtom(
+                            start: .zero,
+                            displays: [ChapterDisplay(title: "Opening")]
+                        )
+                    ]
+                )
+            ]
+        )
+        let second = losslessJoinOption(part: 2, duration: 12)
+
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: first,
+                    editionID: try XCTUnwrap(first.editions.first?.id)
+                ),
+                LosslessJoinSourceSelection(option: second, editionID: nil),
+            ]
+        )
+
+        let candidate = try XCTUnwrap(snapshot.candidate)
+        XCTAssertTrue(snapshot.blockerSummaries.isEmpty)
+        XCTAssertTrue(snapshot.issueSummaries.isEmpty)
+        XCTAssertEqual(snapshot.laneSummaries.count, 1)
+        XCTAssertTrue(snapshot.laneSummaries[0].contains("Part 1: #0 AAC"))
+        XCTAssertEqual(candidate.report.disposition, .losslessCandidate)
+        XCTAssertEqual(candidate.chapters.duration, MediaTime(nanoseconds: 22_000_000_000))
+        XCTAssertEqual(candidate.chapters.document.chapterCount, 4)
+        let parents = try XCTUnwrap(candidate.chapters.document.editions.first).chapters
+        XCTAssertEqual(parents.map(\.primaryTitle), ["Part 1 — Part 1", "Part 2 — Part 2"])
+        XCTAssertEqual(parents[0].children.first?.primaryTitle, "Opening")
+        XCTAssertEqual(parents[1].children.first?.primaryTitle, "Chapter 02")
+    }
+
+    func testLosslessJoinReviewBlocksOnePassNormalizationMismatch() throws {
+        let first = losslessJoinOption(part: 1, duration: 10, sampleRate: 48_000)
+        let second = losslessJoinOption(part: 2, duration: 10, sampleRate: 44_100)
+
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(option: first, editionID: nil),
+                LosslessJoinSourceSelection(option: second, editionID: nil),
+            ]
+        )
+
+        XCTAssertNil(snapshot.candidate)
+        XCTAssertTrue(snapshot.issueSummaries.contains { $0.contains("sample rate") })
+        XCTAssertTrue(snapshot.blockerSummaries.contains { $0.contains("normalization") })
+    }
+
+    func testLosslessJoinReviewRequiresExplicitChoiceForMultipleEditions() throws {
+        let option = losslessJoinOption(
+            part: 1,
+            duration: 10,
+            chapters: [
+                MatroskaChapterEdition(chapters: []),
+                MatroskaChapterEdition(isDefault: false, chapters: []),
+            ]
+        )
+        let second = losslessJoinOption(part: 2, duration: 10)
+        let blocked = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(option: option, editionID: nil),
+                LosslessJoinSourceSelection(option: second, editionID: nil),
+            ]
+        )
+        XCTAssertNil(blocked.candidate)
+        XCTAssertTrue(blocked.blockerSummaries.contains { $0.contains("Choose") })
+
+        let reviewed = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: option,
+                    editionID: try XCTUnwrap(option.editions.last?.id)
+                ),
+                LosslessJoinSourceSelection(option: second, editionID: nil),
+            ]
+        )
+        XCTAssertNotNil(reviewed.candidate)
+    }
+
+    @MainActor
+    func testLosslessJoinWindowKeepsNativeReviewActionsVisibleAtMinimumSize() throws {
+        let first = losslessJoinOption(part: 1, duration: 10)
+        let second = losslessJoinOption(part: 2, duration: 10)
+        let controller = LosslessJoinWindowController(options: [first, second])
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Join MKV Files")
+        XCTAssertEqual(window.minSize, NSSize(width: 720, height: 560))
+        let table = try XCTUnwrap(descendants(in: content).compactMap { $0 as? NSTableView }.first)
+        XCTAssertEqual(table.numberOfRows, 2)
+        let controls = buttons(in: content)
+        for title in ["Move Up", "Move Down", "Cancel", "Continue to Save…"] {
+            XCTAssertTrue(controls.contains { $0.title == title }, "Missing join action \(title)")
+        }
+        XCTAssertTrue(
+            try XCTUnwrap(controls.first { $0.title == "Continue to Save…" }).isEnabled
+        )
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_JOIN_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            controller.showWindow(nil)
+            window.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+            content.cacheDisplay(in: bounds, to: representation)
+            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
     func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {
         XCTAssertEqual(
             try ExternalSubtitleMuxPresentation.metadata(
@@ -1069,6 +1208,44 @@ final class AppPolicyTests: XCTestCase {
             )
         }
         return record
+    }
+
+    private func losslessJoinOption(
+        part: Int,
+        duration seconds: Int64,
+        sampleRate: Int = 48_000,
+        chapters: [MatroskaChapterEdition] = []
+    ) -> LosslessJoinSourceOption {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Part \(part).mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: seconds * 1_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    codecID: "A_AAC",
+                    profile: "LC",
+                    uid: UInt64(part),
+                    isDefault: true,
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: sampleRate
+                )
+            ]
+        )
+        return LosslessJoinSourceOption(
+            chapterPreview: ChapterEditPreview(
+                source: source,
+                original: MatroskaChapterDocument(editions: chapters),
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 1)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
     }
 
     private func advancedSubtitlePreview(

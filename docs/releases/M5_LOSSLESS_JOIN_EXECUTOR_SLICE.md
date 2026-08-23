@@ -1,8 +1,9 @@
 # M5 verified lossless join executor slice
 
-This records engineering acceptance of the non-UI, full-file hard-join executor
-for a narrow class of already inspected Matroska sources. It does not claim the
-native joined-group UI, trimming, missing-track handling, attachment selection,
+This records engineering acceptance of the original non-UI, full-file hard-join
+executor for a narrow class of already inspected Matroska sources. The later
+native flow is recorded in `M5_NATIVE_LOSSLESS_JOIN_SLICE.md`. This executor
+slice does not claim trimming, missing-track handling, attachment selection,
 normalization/transcoding, decode spot checks, physical Intel acceptance, or a
 public signed/notarized release.
 
@@ -79,18 +80,20 @@ It observes one retained audio lane, the first source's stable track UID and
 metadata, three nested source-part chapters, canonical chapter XML equality, and
 unchanged SHA-256 digests for all inputs.
 
-The complete bundled-tool suite passes all 245 tests with zero skips and zero
-failures.
+The current complete bundled-tool suite, including the later native app-model
+join integration, passes all 252 tests with zero skips and zero failures.
 
-The isolated complete local gate also passes all 245 tests with 13 intentional
+The current isolated complete local gate passes all 252 tests with 14 intentional
 real-tool skips in source-only and sanitizer runs, both Universal architectures,
-AddressSanitizer, ThreadSanitizer, inside-out package signatures, entitlements,
-SBOM/checksums, ZIP/appcast assembly, and verified DMG packaging.
+coverage collection, AddressSanitizer, ThreadSanitizer, inside-out package
+signatures, entitlements, SBOM/checksums, ZIP/appcast assembly, and verified DMG
+packaging.
 
 ## Still pending in M5
 
-- Native source ordering, mapping/ambiguity review, chapter-edition selection,
-  output naming, progress, cancellation, and retry UI.
+- Manual lane editing for ambiguous mappings and retry-from-History UI. Native
+  include/order review, chapter-edition selection, output naming, progress, and
+  pre-commit cancellation are implemented in the later native slice.
 - Keyframe-aware fast trim and exact trim, including truthful adjusted-boundary
   disclosure and joined chapter recomposition for retained ranges.
 - Explicit attachment selection and user-confirmed metadata/gap policies.

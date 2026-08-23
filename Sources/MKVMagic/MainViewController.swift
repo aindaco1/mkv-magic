@@ -86,6 +86,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
+    private let joinButton = NSButton(title: "Join Files…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
@@ -99,6 +100,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
     private var chapterStudioWindowController: ChapterStudioWindowController?
+    private var losslessJoinWindowController: LosslessJoinWindowController?
+    private var losslessJoinProgressWindowController: LosslessJoinProgressWindowController?
+    private var losslessJoinTask: Task<Void, Never>?
 
     init(model: AppModel) {
         self.model = model
@@ -152,6 +156,17 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private func makeSidebar() -> NSView {
         let title = NSTextField(labelWithString: "MKV Magic")
         title.font = .systemFont(ofSize: 18, weight: .semibold)
+        joinButton.target = self
+        joinButton.action = #selector(joinFiles)
+        joinButton.image = NSImage(
+            systemSymbolName: "rectangle.stack.badge.plus",
+            accessibilityDescription: "Join Files"
+        )
+        joinButton.imagePosition = .imageLeading
+        joinButton.alignment = .left
+        joinButton.isBordered = false
+        joinButton.font = .systemFont(ofSize: NSFont.systemFontSize)
+        joinButton.isEnabled = false
         let stack = NSStackView(views: [
             title,
             sidebarLabel("Quick Actions", symbol: "wand.and.stars"),
@@ -160,6 +175,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 symbol: "square.stack.3d.up",
                 action: #selector(showWorkflows)
             ),
+            joinButton,
             sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
             sidebarButton(
                 "History",
@@ -406,6 +422,115 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue = "Could not load workflows: \(error.localizedDescription)"
             }
         }
+    }
+
+    @objc private func joinFiles() {
+        guard let parentWindow = view.window else { return }
+        let sources = model.assets.filter { MatroskaEditingPolicy.supports($0) }
+        guard sources.count >= 2 else {
+            statusLabel.stringValue = "Inspect at least two Matroska files to join."
+            return
+        }
+        joinButton.isEnabled = false
+        statusLabel.stringValue = "Reading exact nested chapters for join setup…"
+        Task {
+            do {
+                let options = try await model.loadLosslessJoinSourceOptions(sources)
+                guard view.window === parentWindow else { return }
+                let controller = LosslessJoinWindowController(options: options)
+                losslessJoinWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] candidate in
+                    guard let self else { return }
+                    self.losslessJoinWindowController = nil
+                    guard let candidate else {
+                        self.refresh()
+                        return
+                    }
+                    self.confirmLosslessJoin(candidate, parentWindow: parentWindow)
+                }
+                statusLabel.stringValue = "Review source order, track lanes, and chapters."
+            } catch {
+                statusLabel.stringValue = "Could not open Join: \(error.localizedDescription)"
+                refresh()
+            }
+        }
+    }
+
+    private func confirmLosslessJoin(
+        _ candidate: LosslessJoinCandidate,
+        parentWindow: NSWindow
+    ) {
+        statusLabel.stringValue = "Confirming every reviewed source is unchanged…"
+        Task {
+            do {
+                let preview = try await model.previewLosslessJoin(candidate)
+                guard view.window === parentWindow else { return }
+                chooseLosslessJoinDestination(preview, parentWindow: parentWindow)
+            } catch {
+                statusLabel.stringValue =
+                    "Join review must be reopened: \(error.localizedDescription)"
+                refresh()
+            }
+        }
+    }
+
+    private func chooseLosslessJoinDestination(
+        _ preview: LosslessJoinPreview,
+        parentWindow: NSWindow
+    ) {
+        guard let firstSource = preview.sources.first else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save Verified Joined MKV"
+        panel.prompt = "Join & Save"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        panel.directoryURL = firstSource.sourceURL.deletingLastPathComponent()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
+        panel.allowsOtherFileTypes = false
+        panel.isExtensionHidden = false
+        panel.beginSheetModal(for: parentWindow) { [weak self] response in
+            guard let self, response == .OK, let destinationURL = panel.url else {
+                self?.refresh()
+                return
+            }
+            self.runLosslessJoin(
+                preview,
+                destinationURL: destinationURL,
+                parentWindow: parentWindow
+            )
+        }
+    }
+
+    private func runLosslessJoin(
+        _ preview: LosslessJoinPreview,
+        destinationURL: URL,
+        parentWindow: NSWindow
+    ) {
+        let progress = LosslessJoinProgressWindowController()
+        losslessJoinProgressWindowController = progress
+        progress.beginSheet(for: parentWindow)
+        let task = Task { [weak self, weak progress] in
+            guard let self else { return }
+            do {
+                let output = try await model.executeLosslessJoin(
+                    preview: preview,
+                    destinationURL: destinationURL,
+                    onStage: { stage in progress?.update(stage: stage) }
+                )
+                preferredSelectionURL = output.sourceURL
+                progress?.finish()
+                losslessJoinProgressWindowController = nil
+                losslessJoinTask = nil
+                refresh()
+            } catch {
+                progress?.finish()
+                losslessJoinProgressWindowController = nil
+                losslessJoinTask = nil
+                refresh()
+            }
+        }
+        losslessJoinTask = task
+        progress.onCancel = { [weak self] in self?.losslessJoinTask?.cancel() }
     }
 
     private func previewSavedWorkflow(_ workflow: SavedWorkflow) {
@@ -1085,6 +1210,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         renderInspector()
+        joinButton.isEnabled = model.assets.filter { MatroskaEditingPolicy.supports($0) }.count >= 2
         if case .executing = model.state {
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
@@ -1093,6 +1219,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanSubtitleButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
+            joinButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -1358,5 +1485,9 @@ enum OutputNamingPolicy {
 
     static func cleanedMKVFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Cleaned.mkv"
+    }
+
+    static func joinedFilename(for firstSourceURL: URL) -> String {
+        "\(firstSourceURL.deletingPathExtension().lastPathComponent) — Joined.mkv"
     }
 }

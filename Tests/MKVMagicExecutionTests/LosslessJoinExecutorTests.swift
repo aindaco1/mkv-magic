@@ -241,6 +241,52 @@ final class LosslessJoinExecutorTests: XCTestCase {
         XCTAssertTrue(requests.isEmpty)
     }
 
+    func testCancellationAtCommitBoundaryRemovesVerifiedTemporaryOutput() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let runner = LosslessJoinToolRunner()
+        let executor = makeExecutor(
+            runner: runner,
+            sources: fixture.sources,
+            chapters: fixture.chapters
+        )
+        let preview = try executor.preview(
+            sources: fixture.sources,
+            mapping: fixture.mapping,
+            chapters: fixture.chapters
+        )
+        let destination = fixture.directory.appendingPathComponent("cancelled.mkv")
+
+        let result = await Task {
+            try await executor.execute(
+                preview: preview,
+                destinationURL: destination,
+                onStage: { stage in
+                    if stage == .committing {
+                        withUnsafeCurrentTask { $0?.cancel() }
+                    }
+                }
+            )
+        }.result
+
+        switch result {
+        case .success:
+            XCTFail("A cancelled verified output must not commit")
+        case .failure(let error):
+            XCTAssertTrue(error is CancellationError)
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+        let requests = await runner.capturedRequests()
+        XCTAssertEqual(
+            requests.filter { $0.executableURL.lastPathComponent == "mkvmerge" }.count,
+            1
+        )
+        XCTAssertEqual(
+            requests.filter { $0.executableURL.lastPathComponent == "mkvextract" }.count,
+            1
+        )
+    }
+
     func testSourceChangedWhileMkvmergeRunsCannotCommit() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.directory) }

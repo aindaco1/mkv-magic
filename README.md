@@ -63,21 +63,27 @@ chapter text. The reviewed tree is written only to a temporary clone with
 `mkvpropedit`, then re-extracted for exact hierarchy, UID, timestamp, language,
 and flag comparison before commit and after reopen. Synchronized timeline
 dragging and frame/keyframe snapping remain M4 work.
-The first M5 policy foundation can also compose explicitly selected source
-chapter trees for a future hard join: it intersects retained ranges, rebases
-nested timestamps, creates source-part parents and missing boundary children,
-regenerates identities, and validates one final default edition. This core
-policy is tested but is not yet exposed as a join UI or file executor.
-M5 also has a bounded joined-track mapping foundation. It proposes only unique
+The first M5 slice can compose explicitly selected source chapter trees for a
+hard join: it intersects retained ranges, rebases nested timestamps, creates
+source-part parents and missing boundary children, regenerates identities, and
+validates one final default edition. M5 also has a bounded joined-track mapping
+foundation. It proposes only unique
 codec/parameter or language/role matches, leaves indistinguishable tracks in
 separate visible lanes, requires every appendable track exactly once, and
 classifies gaps or stream differences before work begins. A static
 `losslessCandidate` is not an execution guarantee: bundled `mkvmerge` and final
-output verification remain mandatory. The first non-UI executor can now hard
-join full, gap-free lossless candidates with explicit track mappings and the
-reviewed nested chapter composition through the verified-output transaction.
-Native mapping/ordering controls, trim execution, decode spot checks, attachment
-selection, and normalization remain pending.
+output verification remain mandatory.
+
+With at least two inspected MKVs, **Join Files…** now opens a native strict
+review. Users can include, exclude, and reorder sources; explicitly choose among
+multiple chapter editions; inspect every proposed track lane and compatibility
+issue; and continue only when the group is a zero-encode candidate with stable
+track identities. The app revalidates every exact source chapter document,
+prompts for one MKV destination, shows cancellable progress, records every input
+in History, and hard-joins through the verified-output transaction. It reopens
+the temporary and committed results and compares the exact nested chapter XML.
+Manual ambiguity mapping, trim execution, decode spot checks, attachment
+selection, and one-pass normalization remain pending.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

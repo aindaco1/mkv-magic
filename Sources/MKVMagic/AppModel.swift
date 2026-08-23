@@ -189,6 +189,229 @@ final class AppModel {
         ).preview(source: source)
     }
 
+    func loadLosslessJoinSourceOptions(
+        _ sources: [MediaAsset]
+    ) async throws -> [LosslessJoinSourceOption] {
+        guard sources.count >= 2 else { throw JoinTrackMappingError.invalidSourceCount }
+        let scopedURLs = sources.map {
+            ($0.sourceURL, $0.sourceURL.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Reading exact nested chapters for the join review…")
+        didChange?()
+        do {
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let executor = ChapterEditExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            var options = [LosslessJoinSourceOption]()
+            options.reserveCapacity(sources.count)
+            for source in sources {
+                state = .executing(
+                    "Reading chapters from \(source.sourceURL.lastPathComponent)…"
+                )
+                didChange?()
+                options.append(
+                    LosslessJoinSourceOption(
+                        chapterPreview: try await executor.preview(source: source)
+                    )
+                )
+            }
+            state = .ready
+            didChange?()
+            return options
+        } catch {
+            state = .failed("Could not prepare the join review: \(error.localizedDescription)")
+            didChange?()
+            throw error
+        }
+    }
+
+    func previewLosslessJoin(
+        _ candidate: LosslessJoinCandidate
+    ) async throws -> LosslessJoinPreview {
+        let scopedURLs = candidate.sources.map {
+            ($0.sourceURL, $0.sourceURL.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Confirming that every reviewed source is unchanged…")
+        didChange?()
+        do {
+            guard candidate.sources.count == candidate.chapterPreviews.count else {
+                throw LosslessJoinExecutionError.staleSource
+            }
+            let currentReport = try JoinCompatibilityAnalyzer().analyze(
+                sources: candidate.sources,
+                mapping: candidate.mapping
+            )
+            guard currentReport == candidate.report,
+                currentReport.disposition == .losslessCandidate
+            else {
+                throw LosslessJoinExecutionError.requiresReview(currentReport.disposition)
+            }
+
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let chapterExecutor = ChapterEditExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            for preview in candidate.chapterPreviews {
+                try await chapterExecutor.validateCurrent(preview)
+            }
+            let executor = LosslessJoinExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                sources: candidate.sources,
+                mapping: candidate.mapping,
+                chapters: candidate.chapters
+            )
+            for (joinRevision, chapterPreview) in zip(
+                preview.sourceRevisions,
+                candidate.chapterPreviews
+            ) {
+                let chapterRevision = chapterPreview.sourceRevision
+                guard joinRevision.fileSize == chapterRevision.fileSize,
+                    joinRevision.modificationDate == chapterRevision.modificationDate,
+                    joinRevision.fileNumber == chapterRevision.fileNumber,
+                    joinRevision.systemNumber == chapterRevision.systemNumber
+                else {
+                    throw LosslessJoinExecutionError.staleSource
+                }
+            }
+            state = .ready
+            didChange?()
+            return preview
+        } catch {
+            state = .failed("Join review is stale or incomplete: \(error.localizedDescription)")
+            didChange?()
+            throw error
+        }
+    }
+
+    @discardableResult
+    func executeLosslessJoin(
+        preview: LosslessJoinPreview,
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
+    ) async throws -> MediaAsset {
+        let scopedURLs = (preview.sources.map(\.sourceURL) + [destinationURL]).map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Joining complete files without re-encoding…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let execution = try await beginHistory(
+                inputDisplayNames: preview.sources.map { $0.sourceURL.lastPathComponent },
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: Self.losslessJoinWorkflowID,
+                workflowName: "Join MKV files losslessly",
+                inspectionMessage:
+                    "Used exact completed inspections and extracted nested chapter documents.",
+                planningMessage:
+                    "Zero encodes; every complete source track maps to one reviewed append lane.",
+                runningMessage:
+                    "Appending complete MKV files to one temporary output with reviewed chapters."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let executor = LosslessJoinExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            )
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await onStage(stage)
+                    await MainActor.run {
+                        guard let self else { return }
+                        switch stage {
+                        case .verifying:
+                            self.state = .executing(
+                                "Verifying joined tracks, duration, tags, and nested chapters…"
+                            )
+                        case .committing:
+                            self.state = .executing(
+                                "Saving and reopening the verified joined MKV…"
+                            )
+                        }
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
+                assets[existing] = output
+            } else {
+                assets.append(output)
+            }
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage:
+                    "Verified joined tracks and exact nested chapters; committed and reopened output."
+            )
+            return output
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     func suggestChapters(
         in source: MediaAsset,
         existingChapterStarts: [MediaTime],
@@ -818,6 +1041,23 @@ final class AppModel {
         didChange?()
     }
 
+    private func cancelHistory(_ execution: HistoryExecution?) async {
+        if let execution {
+            _ = try? await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .cancelled,
+                at: Date(),
+                message: "User cancelled; temporary output removed and originals unchanged."
+            )
+        }
+        state = .failed("Join cancelled. Temporary output removed; originals unchanged.")
+        didChange?()
+    }
+
+    private static func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? CommandRunnerError) == .cancelled
+    }
+
     private static func sanitizedFailureMessage(for error: Error) -> String {
         if let executionError = error as? MatroskaMetadataExecutionError,
             case .committedOutputAuditFailed = executionError
@@ -855,6 +1095,11 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? ChapterEditExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? LosslessJoinExecutionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."
@@ -911,6 +1156,9 @@ final class AppModel {
     )!
     nonisolated private static let chapterEditWorkflowID = UUID(
         uuidString: "01898D29-C2C9-44C4-A87D-B72A3AB90FF8"
+    )!
+    nonisolated private static let losslessJoinWorkflowID = UUID(
+        uuidString: "1329034D-8DA4-4D8F-82B6-C3BC42A4E4FA"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

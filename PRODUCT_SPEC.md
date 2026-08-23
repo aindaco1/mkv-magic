@@ -852,6 +852,13 @@ Deliverables:
 
 Gate: compatible joins and fast trims use zero video encode; incompatible joins compile to a maximum of one video encoding stage.
 
+Current implementation: complete full-file, gap-free `losslessCandidate` joins
+have a native include/order/chapter-edition/track-lane review, deterministic MKV
+output naming, cancellable pre-commit progress, multi-input History, and exact
+post-reopen verification. Manual resolution of ambiguous mappings, attachment
+choices, fast/exact trimming, decode-boundary spot checks, and the single-pass
+normalization path remain before the M5 gate is complete.
+
 ### M6 — Transcoding and hardware adaptation
 
 Deliverables:

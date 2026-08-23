@@ -282,6 +282,7 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
             mapping: preview.mapping,
             chapters: preview.chapters
         )
+        try Task.checkCancellation()
         try validateCurrent(preview)
 
         let transaction = VerifiedOutputTransaction(
@@ -303,11 +304,14 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
                     chaptersURL: chaptersURL,
                     outputURL: temporaryOutput
                 )
+                try Task.checkCancellation()
                 try validateCurrent(preview)
                 return temporaryOutput
             }
 
+            try Task.checkCancellation()
             try await onStage(.verifying)
+            try Task.checkCancellation()
             let temporaryAsset = try await inspector.inspect(output)
             try verifier.verify(
                 sources: preview.sources,
@@ -316,9 +320,11 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
                 output: temporaryAsset
             )
             try await verifyChapters(in: output, expectedCanonical: expectedChapters)
+            try Task.checkCancellation()
             try validateCurrent(preview)
             try await transaction.markVerified()
             try await onStage(.committing)
+            try Task.checkCancellation()
             let committedURL = try await transaction.commit()
             do {
                 let committedAsset = try await inspector.inspect(committedURL)
