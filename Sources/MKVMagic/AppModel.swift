@@ -7,7 +7,9 @@ import MKVMagicSystem
 final class AppModel {
     enum State: Equatable {
         case ready
+        case discovering
         case inspecting(String)
+        case completedWithWarnings(String)
         case failed(String)
     }
 
@@ -16,16 +18,40 @@ final class AppModel {
     var didChange: (() -> Void)?
 
     func addFiles(_ urls: [URL]) async {
-        let uniqueURLs = Array(Set(urls.map(\.standardizedFileURL))).sorted {
+        let uniqueRoots = Array(Set(urls.map(\.standardizedFileURL))).sorted {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
         }
-        guard !uniqueURLs.isEmpty else { return }
+        guard !uniqueRoots.isEmpty else { return }
 
-        let inspector: FFprobeInspector<FoundationCommandRunner>
+        let scopedRoots = uniqueRoots.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        defer {
+            for (url, accessed) in scopedRoots where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .discovering
+        didChange?()
+        let inputURLs: [URL]
+        do {
+            inputURLs = try await LocalMediaFileDiscovery().discover(uniqueRoots)
+        } catch {
+            state = .failed("Could not scan the selected files: \(error.localizedDescription)")
+            didChange?()
+            return
+        }
+        guard !inputURLs.isEmpty else {
+            state = .failed("No supported media or subtitle files were found.")
+            didChange?()
+            return
+        }
+
+        let inspector: UnifiedMediaInspector<FoundationCommandRunner>
         do {
             let catalog = try makeToolCatalog()
-            inspector = FFprobeInspector(
+            inspector = UnifiedMediaInspector(
                 ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
                 runner: FoundationCommandRunner()
             )
         } catch {
@@ -37,13 +63,10 @@ final class AppModel {
             return
         }
 
-        for url in uniqueURLs {
+        var failures = [String]()
+        for url in inputURLs {
             state = .inspecting(url.lastPathComponent)
             didChange?()
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer {
-                if accessed { url.stopAccessingSecurityScopedResource() }
-            }
             do {
                 let asset = try await inspector.inspect(url)
                 if let existing = assets.firstIndex(where: { $0.sourceURL == asset.sourceURL }) {
@@ -52,13 +75,22 @@ final class AppModel {
                     assets.append(asset)
                 }
             } catch {
-                state = .failed(
-                    "Could not inspect \(url.lastPathComponent): \(error.localizedDescription)")
+                let message =
+                    "Could not inspect \(url.lastPathComponent): \(error.localizedDescription)"
+                failures.append(message)
+                state = .failed(message)
                 didChange?()
                 continue
             }
         }
-        state = .ready
+        if let lastFailure = failures.last {
+            state = .completedWithWarnings(
+                "Inspected \(inputURLs.count - failures.count) of \(inputURLs.count) files. "
+                    + lastFailure
+            )
+        } else {
+            state = .ready
+        }
         didChange?()
     }
 

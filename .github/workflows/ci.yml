@@ -86,6 +86,9 @@ jobs:
           MKV_MAGIC_BUNDLE_IDENTIFIER: com.dustwave.mkvmagic.package-gate
         run: |
           ./scripts/tools/build-runtime.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
+          MKV_MAGIC_TOOL_ROOT="$MKV_MAGIC_TOOL_SOURCE_ROOT" \
+            swift test --disable-automatic-resolution \
+              --filter RealToolInspectionTests
           ./scripts/release/build-app.sh
           ./scripts/release/sign-app.sh \
             "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" - none

@@ -1,7 +1,6 @@
 import AppKit
 import MKVMagicCore
 import MKVMagicPlanning
-import UniformTypeIdentifiers
 
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
@@ -28,12 +27,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     override func loadView() {
         let root = FileDropView()
         root.onFiles = { [weak self] urls in self?.inspect(urls) }
-        root.translatesAutoresizingMaskIntoConstraints = false
         view = root
 
         let sidebar = makeSidebar()
         let content = makeContent()
         let inspector = makeInspector()
+        for pane in [sidebar, content, inspector] {
+            pane.translatesAutoresizingMaskIntoConstraints = false
+        }
         let split = NSSplitView()
         split.isVertical = true
         split.dividerStyle = .thin
@@ -43,6 +44,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         split.translatesAutoresizingMaskIntoConstraints = false
 
         let footer = makeFooter()
+        footer.translatesAutoresizingMaskIntoConstraints = false
         root.addSubview(split)
         root.addSubview(footer)
         NSLayoutConstraint.activate([
@@ -97,7 +99,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func makeContent() -> NSView {
-        let heading = NSTextField(labelWithString: "Drop video files here")
+        let heading = NSTextField(labelWithString: "Drop media files or folders here")
         heading.font = .systemFont(ofSize: 24, weight: .semibold)
         let help = NSTextField(
             wrappingLabelWithString:
@@ -115,7 +117,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.dataSource = self
         tableView.delegate = self
         tableView.rowHeight = 32
-        tableView.allowsEmptySelection = true
+        tableView.allowsEmptySelection = false
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
@@ -149,6 +151,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         inspectorText.isEditable = false
         inspectorText.drawsBackground = false
         inspectorText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+        inspectorText.isHorizontallyResizable = false
+        inspectorText.textContainer?.widthTracksTextView = true
         inspectorText.string = "Select an inspected file to see its tracks."
         let scroll = NSScrollView()
         scroll.documentView = inspectorText
@@ -217,9 +221,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     @objc private func chooseFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [.movie, .audiovisualContent, .video]
         guard panel.runModal() == .OK else { return }
         inspect(panel.urls)
     }
@@ -250,13 +253,23 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         switch model.state {
         case .ready:
             statusLabel.stringValue = model.assets.isEmpty ? "Ready" : "Inspection complete"
+        case .discovering:
+            statusLabel.stringValue = "Finding media files…"
         case .inspecting(let filename):
             statusLabel.stringValue = "Inspecting \(filename)…"
+        case .completedWithWarnings(let message):
+            statusLabel.stringValue = message
         case .failed(let message):
             statusLabel.stringValue = message
         }
         if tableView.selectedRow >= model.assets.count {
             tableView.deselectAll(nil)
+        }
+        if let row = AssetSelectionPolicy.rowToSelect(
+            currentRow: tableView.selectedRow,
+            assetCount: model.assets.count
+        ) {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         renderInspector()
     }
@@ -275,24 +288,94 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             previewButton.isEnabled = false
             return
         }
-        let duration = asset.duration.map { String(format: "%.3f s", $0.seconds) } ?? "Unknown"
-        let tracks = asset.tracks.map { track in
-            var details = "#\(track.id) \(track.kind.rawValue.capitalized) • \(track.codec)"
-            if let language = track.language { details += " • \(language)" }
-            if track.isDefault { details += " • default" }
-            if track.isForced { details += " • forced" }
-            return details
+        var lines = [
+            asset.sourceURL.lastPathComponent,
+            "",
+            "FILE",
+            "Container  \(asset.formatLongName ?? asset.container)",
+            "Duration   \(formatDuration(asset.duration))",
+            "Size       \(formatBytes(asset.fileSize))",
+            "Bitrate    \(formatBitrate(asset.bitrate))",
+        ]
+        if let application = asset.writingApplication ?? asset.muxingApplication {
+            lines.append("Written by  \(application)")
         }
-        inspectorText.string =
-            ([
-                asset.sourceURL.lastPathComponent,
-                "Container: \(asset.container)",
-                "Duration: \(duration)",
-                "Tracks: \(asset.tracks.count)",
-                "",
-            ] + tracks).joined(separator: "\n")
+        let playableTracks = InspectorPresentationPolicy.playableTracks(in: asset.tracks)
+        lines.append(contentsOf: ["", "TRACKS (\(playableTracks.count))"])
+        lines.append(contentsOf: playableTracks.map(formatTrack))
+
+        let chapterCount = asset.chapterEntryCount ?? asset.chapters.count
+        lines.append(contentsOf: ["", "CHAPTERS  \(chapterCount)"])
+        if chapterCount > 0 {
+            lines.append(
+                contentsOf: asset.chapters.prefix(8).map {
+                    "  \(formatDuration($0.start))  \($0.title)"
+                })
+            if asset.chapters.count > 8 { lines.append("  …and \(asset.chapters.count - 8) more") }
+        }
+
+        lines.append(contentsOf: ["", "ATTACHMENTS  \(asset.attachments.count)"])
+        lines.append(
+            contentsOf: asset.attachments.map {
+                "  \($0.filename) • \($0.mimeType ?? "unknown") • \(formatBytes($0.size))"
+            })
+        if let globalTags = asset.globalTagCount, let trackTags = asset.trackTagCount {
+            lines.append(contentsOf: ["", "TAGS  \(globalTags) global • \(trackTags) track"])
+        }
+        if !asset.warnings.isEmpty {
+            lines.append(contentsOf: ["", "WARNINGS"] + asset.warnings.map { "  ⚠︎ \($0)" })
+        }
+        inspectorText.string = lines.joined(separator: "\n")
         segmentTitleField.stringValue = asset.metadata["title"] ?? ""
         previewButton.isEnabled = true
+    }
+
+    private func formatTrack(_ track: MediaTrack) -> String {
+        var facts = [track.codec.uppercased()]
+        if let profile = track.profile { facts.append(profile) }
+        if let dimensions = track.dimensions {
+            facts.append("\(dimensions.width)×\(dimensions.height)")
+        }
+        if let bitDepth = InspectorPresentationPolicy.displayedBitDepth(for: track) {
+            facts.append("\(bitDepth)-bit")
+        }
+        if let frameRate = track.frameRate, frameRate != "0/0" { facts.append(frameRate + " fps") }
+        if let channels = track.channels {
+            facts.append(track.channelLayout ?? "\(channels) ch")
+        }
+        if let sampleRate = track.sampleRate {
+            facts.append(String(format: "%.1f kHz", Double(sampleRate) / 1_000))
+        }
+        if let language = track.language { facts.append(language) }
+        if let title = track.title, !title.isEmpty { facts.append(title) }
+        facts.append(contentsOf: track.hdrFormats)
+
+        var flags = [String]()
+        if track.isDefault { flags.append("default") }
+        if track.isForced { flags.append("forced") }
+        if !track.isEnabled { flags.append("disabled") }
+        if track.isCommentary { flags.append("commentary") }
+        if track.isHearingImpaired { flags.append("SDH") }
+        if track.isVisualImpaired { flags.append("descriptive") }
+        if !flags.isEmpty { facts.append(flags.joined(separator: ", ")) }
+        return "  #\(track.id) \(track.kind.rawValue.capitalized)\n    "
+            + facts.joined(separator: " • ")
+    }
+
+    private func formatDuration(_ duration: MediaTime?) -> String {
+        guard let duration else { return "Unknown" }
+        let total = max(0, Int(duration.seconds.rounded()))
+        return String(format: "%d:%02d:%02d", total / 3_600, (total / 60) % 60, total % 60)
+    }
+
+    private func formatBytes(_ bytes: Int64?) -> String {
+        guard let bytes else { return "Unknown" }
+        return ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func formatBitrate(_ bitrate: Int64?) -> String {
+        guard let bitrate else { return "Unknown" }
+        return String(format: "%.2f Mb/s", Double(bitrate) / 1_000_000)
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
@@ -328,5 +411,21 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     func tableViewSelectionDidChange(_ notification: Notification) {
         impactLabel.stringValue = "No pending plan"
         renderInspector()
+    }
+}
+
+enum AssetSelectionPolicy {
+    static func rowToSelect(currentRow: Int, assetCount: Int) -> Int? {
+        currentRow < 0 && assetCount > 0 ? 0 : nil
+    }
+}
+
+enum InspectorPresentationPolicy {
+    static func playableTracks(in tracks: [MediaTrack]) -> [MediaTrack] {
+        tracks.filter { $0.kind != .attachment }
+    }
+
+    static func displayedBitDepth(for track: MediaTrack) -> Int? {
+        track.kind == .video ? track.bitDepth : nil
     }
 }

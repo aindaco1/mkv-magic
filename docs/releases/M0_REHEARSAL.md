@@ -28,6 +28,8 @@ the release machinery, not a public MKV Magic release or user acceptance.
   as Intel code under Rosetta.
 - The runtime source build, tool manifests, packaged licenses, dynamic-library
   closure, and minimum deployment targets passed the automated checks.
+- The signed Sparkle appcast, corresponding-source archive, SBOM, artifact-size
+  inventory, and final SHA-256 manifest were generated and verified locally.
 - Hosted CI independently passed coverage, sanitizer, and full Universal media
   runtime jobs for the rehearsed commit. A missing hosted-runner `rg`
   dependency was identified in the source job and added to the workflow.

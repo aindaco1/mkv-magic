@@ -32,6 +32,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        true
+    }
+
+    func application(_ application: NSApplication, open urls: [URL]) {
+        Task { await model.addFiles(urls) }
+    }
+
     @objc private func checkForUpdates() {
         updateController.checkForUpdates()
     }

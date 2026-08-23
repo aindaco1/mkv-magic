@@ -9,8 +9,13 @@ named `mkv-magic`; the internal Swift package and executable are `MKVMagic`.
 
 ## Status
 
-The repository is in foundation development. No public release is available
-yet. The canonical product and delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
+The release foundation and first local inspection vertical slice are in place.
+The app can recursively discover media, inspect files with its bundled FFprobe
+and MKVToolNix runtime, and present normalized file, track, chapter, attachment,
+and tag facts without modifying the source. Execution remains deliberately
+disabled until the verified-output transaction milestone is complete. No public
+release is available yet. The canonical product and delivery plan is
+[PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises
 

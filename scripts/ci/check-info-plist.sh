@@ -27,6 +27,8 @@ assert_value CFBundleIdentifier "$expected_bundle_identifier"
 assert_value CFBundlePackageType APPL
 assert_value LSMinimumSystemVersion 13.0
 assert_value NSPrincipalClass NSApplication
+assert_value CFBundleDocumentTypes.0.CFBundleTypeRole Viewer
+assert_value CFBundleDocumentTypes.0.LSHandlerRank Alternate
 assert_value SUFeedURL \
     https://github.com/aindaco1/mkv-magic/releases/latest/download/appcast.xml
 
@@ -40,6 +42,17 @@ do
 done
 for key in SUAllowsAutomaticUpdates SUEnableAutomaticChecks; do
     assert_value "$key" false
+done
+
+document_extensions="$(
+    /usr/bin/plutil -extract CFBundleDocumentTypes.0.CFBundleTypeExtensions json -o - "$plist"
+)"
+for required_extension in mkv mp4 srt; do
+    if ! jq -e --arg value "$required_extension" 'index($value) != null' \
+        <<<"$document_extensions" >/dev/null; then
+        echo "missing declared document extension: $required_extension" >&2
+        exit 1
+    fi
 done
 
 public_key="$(/usr/bin/plutil -extract SUPublicEDKey raw -o - "$plist")"

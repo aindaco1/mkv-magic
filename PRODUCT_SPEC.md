@@ -2,7 +2,7 @@
 
 **Status:** Scope locked for initial implementation
 
-**Last updated:** 2026-08-22
+**Last updated:** 2026-08-23
 
 **Purpose:** Canonical product, architecture, and delivery specification
 
