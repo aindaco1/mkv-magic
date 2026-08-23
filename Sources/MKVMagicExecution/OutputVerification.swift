@@ -98,6 +98,61 @@ public struct TrackMetadataOutputVerifier: Sendable {
     }
 }
 
+public struct TrackRemovalOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        removal: TrackRemoval
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container == original.container else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard remuxDurationsMatch(original.duration, output.duration) else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard output.metadata.removingRemuxProvenance == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == original.globalTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        if let originalTrackTags = original.trackTagCount,
+            let outputTrackTags = output.trackTagCount,
+            outputTrackTags > originalTrackTags
+        {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID != nil,
+            original.segmentUID == nil || output.segmentUID != original.segmentUID
+        else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        let expectedTracks = originalTracks.filter { track in
+            guard let uid = track.uid else { return true }
+            return !removal.trackUIDs.contains(uid)
+        }
+        guard expectedTracks.count + removal.trackUIDs.count == originalTracks.count,
+            outputTracks.compactMap(\.uid) == expectedTracks.compactMap(\.uid),
+            outputTracks.map(RemuxTrackSnapshot.init) == expectedTracks.map(RemuxTrackSnapshot.init)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+    }
+}
+
 private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) throws {
     guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
     guard output.container == original.container else {
@@ -124,6 +179,16 @@ private func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
     case (nil, nil): true
     case (.some(let lhs), .some(let rhs)):
         abs(lhs.nanoseconds - rhs.nanoseconds) <= 1_000_000
+    default: false
+    }
+}
+
+private func remuxDurationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
+    switch (lhs, rhs) {
+    case (nil, nil): true
+    case (.some(let lhs), .some(let rhs)):
+        // Container duration can move by a final encoded packet during a stream-copy remux.
+        abs(lhs.nanoseconds - rhs.nanoseconds) <= 50_000_000
     default: false
     }
 }
@@ -174,6 +239,68 @@ private struct TrackTechnicalSnapshot: Equatable {
     }
 }
 
+private struct RemuxTrackSnapshot: Equatable {
+    let kind: MediaTrackKind
+    let codec: String
+    let codecLongName: String?
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let uid: UInt64?
+    let language: String?
+    let title: String?
+    let isDefault: Bool
+    let isForced: Bool
+    let isEnabled: Bool
+    let isCommentary: Bool
+    let isHearingImpaired: Bool
+    let isVisualImpaired: Bool
+    let isOriginal: Bool
+    let isTextDescription: Bool
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+    let dimensions: MediaDimensions?
+    let displayDimensions: MediaDimensions?
+    let pixelFormat: String?
+    let bitDepth: Int?
+    let frameRate: String?
+    let colorInfo: MediaColorInfo?
+    let hdrFormats: [String]
+    let tags: [String: String]
+
+    init(_ track: MediaTrack) {
+        kind = track.kind
+        codec = track.codec
+        codecLongName = track.codecLongName
+        codecID = track.codecID
+        profile = track.profile
+        level = track.level
+        uid = track.uid
+        language = (try? TrackLanguageTag.canonical(track.language ?? "und")) ?? track.language
+        title = track.title
+        isDefault = track.isDefault
+        isForced = track.isForced
+        isEnabled = track.isEnabled
+        isCommentary = track.isCommentary
+        isHearingImpaired = track.isHearingImpaired
+        isVisualImpaired = track.isVisualImpaired
+        isOriginal = track.isOriginal
+        isTextDescription = track.isTextDescription
+        channels = track.channels
+        channelLayout = track.channelLayout
+        sampleRate = track.sampleRate
+        dimensions = track.dimensions
+        displayDimensions = track.displayDimensions
+        pixelFormat = track.pixelFormat
+        bitDepth = track.bitDepth
+        frameRate = track.frameRate
+        colorInfo = track.colorInfo
+        hdrFormats = track.hdrFormats
+        tags = track.tags.removingTrackRemuxProvenance
+    }
+}
+
 private struct ChapterSnapshot: Equatable {
     let title: String
     let start: MediaTime
@@ -209,6 +336,26 @@ extension Dictionary where Key == String, Value == String {
         filter {
             $0.key.caseInsensitiveCompare("title") != .orderedSame
                 && $0.key.caseInsensitiveCompare("language") != .orderedSame
+        }
+    }
+
+    fileprivate var removingRemuxProvenance: [String: String] {
+        filter { key, _ in
+            let normalized = key.lowercased()
+            return normalized != "encoder"
+                && normalized != "creation_time"
+        }
+    }
+
+    fileprivate var removingTrackRemuxProvenance: [String: String] {
+        filter { key, _ in
+            let normalized = key.lowercased()
+            return normalized != "encoder"
+                && normalized != "bps"
+                && normalized != "duration"
+                && normalized != "number_of_frames"
+                && normalized != "number_of_bytes"
+                && !normalized.hasPrefix("_statistics_")
         }
     }
 }

@@ -23,7 +23,7 @@ public struct WorkflowPlanner: Sendable {
             switch operation {
             case .editSegmentTitle, .editTrackMetadata, .setTrackLanguage:
                 needsPropertyEdit = true
-            case .removeTracks, .muxSubtitle:
+            case .removeTracks, .removeTracksByUID, .muxSubtitle:
                 needsRemux = true
             case .trim(let start, let end, let exact):
                 guard start >= .zero, end > start else { throw PlanningError.invalidTrimRange }

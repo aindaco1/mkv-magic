@@ -34,6 +34,20 @@ final class WorkflowPlannerTests: XCTestCase {
         XCTAssertEqual(plan.impact.videoEncodeCount, 0)
     }
 
+    func testStableUIDTrackRemovalRemuxesWithoutEncoding() throws {
+        let plan = try WorkflowPlanner().plan(
+            asset: asset,
+            workflow: WorkflowDefinition(
+                name: "Remove by UID",
+                operations: [.removeTracksByUID(TrackRemoval(trackUIDs: [42]))]
+            )
+        )
+
+        XCTAssertEqual(plan.stages.first?.mechanism, .mkvMerge)
+        XCTAssertEqual(plan.impact.videoEncodeCount, 0)
+        XCTAssertTrue(plan.impact.copiesVideo)
+    }
+
     func testFullTrackMetadataEditUsesPropEditWithoutEncoding() throws {
         let edit = TrackMetadataEdit(
             trackUID: 42,

@@ -13,10 +13,12 @@ public enum MatroskaMetadataExecutionError: Error, Equatable, Sendable {
     case committedOutputAuditFailed(outputURL: URL, reason: String)
 }
 
-public enum MatroskaMetadataExecutionStage: Equatable, Sendable {
+public enum VerifiedOutputExecutionStage: Equatable, Sendable {
     case verifying
     case committing
 }
+
+public typealias MatroskaMetadataExecutionStage = VerifiedOutputExecutionStage
 
 extension MatroskaMetadataExecutionError: LocalizedError {
     public var errorDescription: String? {
@@ -51,33 +53,24 @@ public struct MatroskaMetadataEditExecutor<Runner: CommandRunning, Inspector: Me
         guard MatroskaEditingPolicy.supports(source) else {
             throw MatroskaMetadataExecutionError.unsupportedContainer
         }
-        let transaction = VerifiedOutputTransaction(
-            sourceURL: source.sourceURL,
-            destinationURL: destinationURL
-        )
-        do {
-            let temporaryOutput = try await transaction.prepareClone()
-            try await apply(edit, to: temporaryOutput, source: source)
-            try await onStage(.verifying)
-            let temporaryAsset = try await inspector.inspect(temporaryOutput)
-            try verify(edit, original: source, output: temporaryAsset)
-            try await transaction.markVerified()
-            try await onStage(.committing)
-            let committedURL = try await transaction.commit()
-            do {
-                let committedAsset = try await inspector.inspect(committedURL)
-                try verify(edit, original: source, output: committedAsset)
-                return committedAsset
-            } catch {
-                throw MatroskaMetadataExecutionError.committedOutputAuditFailed(
-                    outputURL: committedURL,
-                    reason: error.localizedDescription
+        return try await VerifiedOutputPipeline(inspector: inspector).execute(
+            source: source,
+            destinationURL: destinationURL,
+            preparation: .clone,
+            produce: { outputURL in
+                try await apply(edit, to: outputURL, source: source)
+            },
+            verify: { output in
+                try verify(edit, original: source, output: output)
+            },
+            committedAuditError: { outputURL, reason in
+                MatroskaMetadataExecutionError.committedOutputAuditFailed(
+                    outputURL: outputURL,
+                    reason: reason
                 )
-            }
-        } catch {
-            await transaction.cancel()
-            throw error
-        }
+            },
+            onStage: onStage
+        )
     }
 
     private func apply(

@@ -33,6 +33,7 @@ public enum WorkflowOperation: Codable, Hashable, Sendable {
     case editTrackMetadata(TrackMetadataEdit)
     case setTrackLanguage(trackID: Int, language: String)
     case removeTracks(Set<Int>)
+    case removeTracksByUID(TrackRemoval)
     case muxSubtitle(url: URL, language: String?, forced: Bool)
     case trim(start: MediaTime, end: MediaTime, exact: Bool)
     case transcodeVideo(VideoPreset)

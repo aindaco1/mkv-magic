@@ -6,9 +6,10 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
-    private enum PendingMetadataChange {
+    private enum PendingChange {
         case segmentTitle(String?)
         case track(TrackMetadataEdit)
+        case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
     }
 
     private let model: AppModel
@@ -19,12 +20,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let impactLabel = NSTextField(labelWithString: "No pending plan")
     private let previewButton = NSButton(title: "Preview Change", target: nil, action: nil)
     private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
+    private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
+    private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
-    private var pendingMetadataChange: PendingMetadataChange?
+    private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
     private var historyWindowController: HistoryWindowController?
     private var trackEditorWindowController: TrackEditorWindowController?
+    private var trackRemovalWindowController: TrackRemovalWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -194,12 +198,21 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         editTrackButton.target = self
         editTrackButton.action = #selector(editTrack)
         editTrackButton.isEnabled = false
+        cleanMKVButton.target = self
+        cleanMKVButton.action = #selector(cleanMKV)
+        cleanMKVButton.isEnabled = false
+        removeTracksButton.target = self
+        removeTracksButton.action = #selector(removeTracks)
+        removeTracksButton.isEnabled = false
         let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
         metadataButtons.orientation = .horizontal
         metadataButtons.spacing = 8
+        let structuralButtons = NSStackView(views: [cleanMKVButton, removeTracksButton])
+        structuralButtons.orientation = .horizontal
+        structuralButtons.spacing = 8
 
         let stack = NSStackView(views: [
-            heading, scroll, titleLabel, segmentTitleField, metadataButtons,
+            heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -304,7 +317,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             let plan = try WorkflowPlanner().plan(asset: asset, workflow: workflow)
             let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
             impactLabel.stringValue = "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
-            pendingMetadataChange = .segmentTitle(title)
+            pendingChange = .segmentTitle(title)
             pendingAssetID = asset.id
             runButton.isEnabled = true
             runButton.toolTip =
@@ -332,7 +345,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
                 self.impactLabel.stringValue =
                     "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
-                self.pendingMetadataChange = .track(edit)
+                self.pendingChange = .track(edit)
                 self.pendingAssetID = asset.id
                 self.runButton.isEnabled = true
                 self.runButton.toolTip =
@@ -344,8 +357,67 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func removeTracks() {
+        guard let asset = selectedAsset, let parentWindow = view.window else { return }
+        presentTrackRemoval(
+            asset: asset,
+            parentWindow: parentWindow,
+            mode: .manual,
+            workflowName: "Remove tracks",
+            isEnglishCleanup: false
+        )
+    }
+
+    @objc private func cleanMKV() {
+        guard let asset = selectedAsset, let parentWindow = view.window else { return }
+        presentTrackRemoval(
+            asset: asset,
+            parentWindow: parentWindow,
+            mode: .englishLibraryCleanup,
+            workflowName: "English Library Cleanup",
+            isEnglishCleanup: true
+        )
+    }
+
+    private func presentTrackRemoval(
+        asset: MediaAsset,
+        parentWindow: NSWindow,
+        mode: TrackRemovalSheetMode,
+        workflowName: String,
+        isEnglishCleanup: Bool
+    ) {
+        let controller = TrackRemovalWindowController(asset: asset, mode: mode)
+        trackRemovalWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] removal in
+            guard let self else { return }
+            self.trackRemovalWindowController = nil
+            guard let removal else { return }
+            let workflow = WorkflowDefinition(
+                name: workflowName,
+                operations: [.removeTracksByUID(removal)]
+            )
+            do {
+                let plan = try WorkflowPlanner().plan(asset: asset, workflow: workflow)
+                let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
+                self.impactLabel.stringValue =
+                    "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
+                self.pendingChange = .trackRemoval(
+                    removal,
+                    isEnglishCleanup: isEnglishCleanup
+                )
+                self.pendingAssetID = asset.id
+                self.runButton.isEnabled = true
+                self.runButton.toolTip =
+                    "Remux retained tracks, verify the new MKV, then commit it."
+            } catch {
+                self.impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+                self.clearPendingChange()
+            }
+        }
+    }
+
     @objc private func runChange() {
-        guard let pendingMetadataChange,
+        guard let pendingChange,
             let asset = selectedAsset,
             pendingAssetID == asset.id
         else {
@@ -367,11 +439,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
         previewButton.isEnabled = false
         editTrackButton.isEnabled = false
+        cleanMKVButton.isEnabled = false
+        removeTracksButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
                 let output: MediaAsset
-                switch pendingMetadataChange {
+                switch pendingChange {
                 case .segmentTitle(let title):
                     output = try await model.editSegmentTitle(
                         in: asset,
@@ -384,6 +458,20 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         edit: edit,
                         destinationURL: destinationURL
                     )
+                case .trackRemoval(let removal, let isEnglishCleanup):
+                    if isEnglishCleanup {
+                        output = try await model.cleanEnglishLibrary(
+                            in: asset,
+                            removal: removal,
+                            destinationURL: destinationURL
+                        )
+                    } else {
+                        output = try await model.removeTracks(
+                            in: asset,
+                            removal: removal,
+                            destinationURL: destinationURL
+                        )
+                    }
                 }
                 preferredSelectionURL = output.sourceURL
                 clearPendingChange()
@@ -393,8 +481,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 editTrackButton.isEnabled = asset.tracks.contains {
                     $0.kind != .attachment && $0.uid != nil
                 }
+                removeTracksButton.isEnabled = TrackRemovalPresentation.canOfferRemoval(
+                    for: asset.tracks)
+                cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
                 runButton.isEnabled =
-                    self.pendingMetadataChange != nil
+                    self.pendingChange != nil
                     && pendingAssetID == asset.id
             }
         }
@@ -435,6 +526,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         if case .executing = model.state {
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
+            cleanMKVButton.isEnabled = false
+            removeTracksButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -452,6 +545,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             segmentTitleField.stringValue = ""
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
+            cleanMKVButton.isEnabled = false
+            removeTracksButton.isEnabled = false
             return
         }
         var lines = [
@@ -503,6 +598,18 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             editTrackButton.isEnabled
             ? "Edit track names, languages, roles, and playback flags without encoding."
             : "Track editing requires a Matroska track with a stable UID."
+        removeTracksButton.isEnabled =
+            MatroskaEditingPolicy.supports(asset)
+            && TrackRemovalPresentation.canOfferRemoval(for: asset.tracks)
+        removeTracksButton.toolTip =
+            removeTracksButton.isEnabled
+            ? "Choose tracks to omit from a verified zero-encode MKV copy."
+            : "Removal requires at least two tracks with stable Matroska UIDs."
+        cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
+        cleanMKVButton.toolTip =
+            cleanMKVButton.isEnabled
+            ? "Review deterministic English-library subtitle cleanup suggestions."
+            : "No deterministic English-library subtitle removals are suggested."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -590,9 +697,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func clearPendingChange() {
-        pendingMetadataChange = nil
+        pendingChange = nil
         pendingAssetID = nil
         runButton.isEnabled = false
+    }
+
+    private static func canOfferEnglishCleanup(for asset: MediaAsset) -> Bool {
+        MatroskaEditingPolicy.supports(asset)
+            && TrackRemovalPresentation.canOfferRemoval(for: asset.tracks)
+            && !EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).isEmpty
     }
 }
 

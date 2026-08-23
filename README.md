@@ -15,11 +15,13 @@ and MKVToolNix runtime, and present normalized file, track, chapter, attachment,
 and tag facts without modifying the source. Executable metadata actions edit a
 Matroska segment title or one track's name, language, playback flags, and roles
 on a temporary clone. They verify every unrelated track and structure fact,
-then commit a new output without replacing the original. Their sanitized queue lifecycle is
-persisted atomically in the app's private Application Support container and is
-available from the lightweight History report. Structural editing actions remain
-disabled until they meet the same transaction contract. No public release is
-available yet. The canonical product and delivery plan is
+then commit a new output without replacing the original. Track removal remuxes
+retained streams without encoding, preserves their order, chapters, tags, and
+attachments, and uses the same verify-before-commit rule. A deterministic Clean
+MKV preview can suggest English-library subtitle removals for individual review.
+Every action's sanitized queue lifecycle is persisted atomically in the app's
+private Application Support container and is available from the lightweight
+History report. No public release is available yet. The canonical product and delivery plan is
 [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises

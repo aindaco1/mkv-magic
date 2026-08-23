@@ -90,6 +90,29 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(try TrackEditorPresentation.normalizedEdit(for: track).language, "en")
     }
 
+    func testTrackRemovalPresentationUsesStableUIDsAndKeepsOneTrack() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 42)
+        let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 84)
+
+        XCTAssertTrue(TrackRemovalPresentation.canOfferRemoval(for: [video, audio]))
+        XCTAssertEqual(
+            try TrackRemovalPresentation.removal(
+                tracks: [video, audio],
+                selectedIndexes: [1]
+            ).trackUIDs,
+            [84]
+        )
+        XCTAssertThrowsError(
+            try TrackRemovalPresentation.removal(
+                tracks: [video, audio],
+                selectedIndexes: [0, 1]
+            )
+        ) { error in
+            XCTAssertEqual(error as? TrackRemovalPresentationError, .allTracksRemoved)
+        }
+        XCTAssertFalse(TrackRemovalPresentation.canOfferRemoval(for: [video]))
+    }
+
     func testHistoryLocationCreatesPrivateAppSupportDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-history-\(UUID().uuidString)",
@@ -192,6 +215,27 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 510, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 520)
         XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    @MainActor
+    func testTrackRemovalWindowUsesCompactNativeLayout() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 42),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 84),
+            ]
+        )
+        let controller = TrackRemovalWindowController(asset: asset)
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertTrue(window.contentViewController is TrackRemovalViewController)
+        XCTAssertEqual(contentView.frame.size.width, 620, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 480, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 540)
+        XCTAssertEqual(window.minSize.height, 420)
     }
 
     @MainActor

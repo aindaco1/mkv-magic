@@ -6,6 +6,39 @@ import MKVMagicSystem
 
 @MainActor
 final class AppModel {
+    private enum VerifiedEdit {
+        case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
+        case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
+
+        var workflowID: UUID {
+            switch self {
+            case .metadata(_, let workflowID, _): workflowID
+            case .trackRemoval(_, let workflowID, _): workflowID
+            }
+        }
+
+        var workflowName: String {
+            switch self {
+            case .metadata(_, _, let workflowName): workflowName
+            case .trackRemoval(_, _, let workflowName): workflowName
+            }
+        }
+
+        var planningMessage: String {
+            switch self {
+            case .metadata: "Zero video encodes; mkvpropedit on a verified clone."
+            case .trackRemoval: "Zero video encodes; mkvmerge copies the retained streams."
+            }
+        }
+
+        var runningMessage: String {
+            switch self {
+            case .metadata: "Editing a temporary clone."
+            case .trackRemoval: "Remuxing retained tracks to a temporary output."
+            }
+        }
+    }
+
     enum State: Equatable {
         case ready
         case discovering
@@ -116,12 +149,14 @@ final class AppModel {
         title: String?,
         destinationURL: URL
     ) async throws -> MediaAsset {
-        try await executeMetadataEdit(
+        try await executeVerifiedEdit(
             in: asset,
-            edit: .segmentTitle(title),
             destinationURL: destinationURL,
-            workflowID: Self.segmentTitleWorkflowID,
-            workflowName: "Edit segment title"
+            edit: .metadata(
+                .segmentTitle(title),
+                workflowID: Self.segmentTitleWorkflowID,
+                workflowName: "Edit segment title"
+            )
         )
     }
 
@@ -131,21 +166,55 @@ final class AppModel {
         edit: TrackMetadataEdit,
         destinationURL: URL
     ) async throws -> MediaAsset {
-        try await executeMetadataEdit(
+        try await executeVerifiedEdit(
             in: asset,
-            edit: .track(edit),
             destinationURL: destinationURL,
-            workflowID: Self.trackMetadataWorkflowID,
-            workflowName: "Edit track metadata"
+            edit: .metadata(
+                .track(edit),
+                workflowID: Self.trackMetadataWorkflowID,
+                workflowName: "Edit track metadata"
+            )
         )
     }
 
-    private func executeMetadataEdit(
+    @discardableResult
+    func removeTracks(
         in asset: MediaAsset,
-        edit: MatroskaMetadataEdit,
+        removal: TrackRemoval,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .trackRemoval(
+                removal,
+                workflowID: Self.trackRemovalWorkflowID,
+                workflowName: "Remove tracks"
+            )
+        )
+    }
+
+    @discardableResult
+    func cleanEnglishLibrary(
+        in asset: MediaAsset,
+        removal: TrackRemoval,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .trackRemoval(
+                removal,
+                workflowID: Self.englishLibraryCleanupWorkflowID,
+                workflowName: "English Library Cleanup"
+            )
+        )
+    }
+
+    private func executeVerifiedEdit(
+        in asset: MediaAsset,
         destinationURL: URL,
-        workflowID: UUID,
-        workflowName: String
+        edit: VerifiedEdit
     ) async throws -> MediaAsset {
         let scopedURLs = [asset.sourceURL, destinationURL].map {
             ($0, $0.startAccessingSecurityScopedResource())
@@ -163,11 +232,11 @@ final class AppModel {
         do {
             let recorder = try historyRecorderFactory()
             historyRecorder = recorder
-            var historyJob = makeReadyMetadataJob(
+            var historyJob = makeReadyEditJob(
                 asset: asset,
                 destinationURL: destinationURL,
-                workflowID: workflowID,
-                workflowName: workflowName
+                workflowID: edit.workflowID,
+                workflowName: edit.workflowName
             )
             try historyJob.transition(
                 to: .inspecting,
@@ -177,7 +246,7 @@ final class AppModel {
             try historyJob.transition(
                 to: .planned,
                 at: historyJob.createdAt,
-                message: "Zero video encodes; mkvpropedit on a verified clone."
+                message: edit.planningMessage
             )
             try historyJob.transition(
                 to: .ready,
@@ -191,7 +260,7 @@ final class AppModel {
                 jobID: executingJobID,
                 to: .running,
                 at: Date(),
-                message: "Editing a temporary clone."
+                message: edit.runningMessage
             )
 
             let catalog = try makeToolCatalog()
@@ -201,34 +270,37 @@ final class AppModel {
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 runner: runner
             )
-            let executor = MatroskaMetadataEditExecutor(
-                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
-                runner: runner,
-                inspector: inspector
-            )
-            let output = try await executor.execute(
-                source: asset,
-                edit: edit,
-                destinationURL: destinationURL,
-                onStage: { stage in
-                    switch stage {
-                    case .verifying:
-                        try await recorder.transition(
-                            jobID: executingJobID,
-                            to: .verifying,
-                            at: Date(),
-                            message: "Re-inspecting output and comparing preserved structure."
-                        )
-                    case .committing:
-                        try await recorder.transition(
-                            jobID: executingJobID,
-                            to: .committing,
-                            at: Date(),
-                            message: "Verification passed; committing the new output."
-                        )
+            let output: MediaAsset
+            switch edit {
+            case .metadata(let metadataEdit, _, _):
+                let executor = MatroskaMetadataEditExecutor(
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    source: asset,
+                    edit: metadataEdit,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(stage, jobID: executingJobID, using: recorder)
                     }
-                }
-            )
+                )
+            case .trackRemoval(let removal, _, _):
+                let executor = TrackRemovalExecutor(
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    source: asset,
+                    removal: removal,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(stage, jobID: executingJobID, using: recorder)
+                    }
+                )
+            }
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
             } else {
@@ -273,7 +345,7 @@ final class AppModel {
         }
     }
 
-    private func makeReadyMetadataJob(
+    private func makeReadyEditJob(
         asset: MediaAsset,
         destinationURL: URL,
         workflowID: UUID,
@@ -294,7 +366,35 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? TrackRemovalExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         return "Edit stopped before a verified commit."
+    }
+
+    private static func record(
+        _ stage: VerifiedOutputExecutionStage,
+        jobID: UUID,
+        using recorder: any JobHistoryRecording
+    ) async throws {
+        switch stage {
+        case .verifying:
+            try await recorder.transition(
+                jobID: jobID,
+                to: .verifying,
+                at: Date(),
+                message: "Re-inspecting output and comparing preserved structure."
+            )
+        case .committing:
+            try await recorder.transition(
+                jobID: jobID,
+                to: .committing,
+                at: Date(),
+                message: "Verification passed; committing the new output."
+            )
+        }
     }
 
     private static let segmentTitleWorkflowID = UUID(
@@ -302,6 +402,12 @@ final class AppModel {
     )!
     private static let trackMetadataWorkflowID = UUID(
         uuidString: "842C095A-A70A-4B81-BD33-E2857F9B87CD"
+    )!
+    private static let trackRemovalWorkflowID = UUID(
+        uuidString: "6F67B5AB-BB34-45BF-B159-E98F0C26FA3E"
+    )!
+    private static let englishLibraryCleanupWorkflowID = UUID(
+        uuidString: "853C0788-5994-491F-AC13-A0A47319CD0E"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

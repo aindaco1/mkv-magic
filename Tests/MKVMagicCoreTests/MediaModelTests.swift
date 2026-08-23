@@ -37,6 +37,7 @@ final class MediaModelTests: XCTestCase {
                     )),
                 .setTrackLanguage(trackID: 2, language: "eng"),
                 .removeTracks([7, 8]),
+                .removeTracksByUID(TrackRemoval(trackUIDs: [42, 84])),
             ]
         )
         let data = try JSONEncoder().encode(workflow)
@@ -106,5 +107,54 @@ final class MediaModelTests: XCTestCase {
             try JSONDecoder().decode(MediaJobInput.self, from: JSONEncoder().encode(input)),
             input
         )
+    }
+
+    func testEnglishLibraryCleanupSuggestionsPreserveAudioCommentaryAndOnlyUsefulSubtitle() {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20, language: "ja"),
+                MediaTrack(id: 2, kind: .subtitle, codec: "subrip", uid: 30, language: "eng"),
+                MediaTrack(
+                    id: 3, kind: .subtitle, codec: "subrip", uid: 40, language: "en",
+                    title: "English SDH", isHearingImpaired: true),
+                MediaTrack(id: 4, kind: .subtitle, codec: "subrip", uid: 50, language: "fr"),
+                MediaTrack(
+                    id: 5, kind: .subtitle, codec: "subrip", uid: 60, language: "de",
+                    title: "Director Commentary", isCommentary: true),
+                MediaTrack(
+                    id: 6, kind: .subtitle, codec: "subrip", uid: 70, language: "qaa",
+                    title: "Local language"),
+                MediaTrack(
+                    id: 7, kind: .subtitle, codec: "subrip", uid: 80, language: "it",
+                    title: "Signs & Songs"),
+            ]
+        )
+
+        XCTAssertEqual(
+            EnglishLibraryCleanupPolicy.trackSuggestions(for: asset),
+            [
+                CleanMKVTrackSuggestion(trackUID: 40, reason: .redundantSDH),
+                CleanMKVTrackSuggestion(
+                    trackUID: 50, reason: .nonEnglishSubtitle(language: "fr")),
+            ]
+        )
+    }
+
+    func testEnglishLibraryCleanupPreservesSoleEnglishSDHSubtitle() {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10),
+                MediaTrack(
+                    id: 1, kind: .subtitle, codec: "subrip", uid: 20, language: "en",
+                    title: "English SDH", isHearingImpaired: true),
+            ]
+        )
+
+        XCTAssertTrue(EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).isEmpty)
     }
 }

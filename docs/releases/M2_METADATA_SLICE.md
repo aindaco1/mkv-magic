@@ -1,23 +1,28 @@
 # M2 metadata editing slice
 
-This records engineering acceptance of the first M2 executable actions. It is
-not acceptance of track removal, bulk editing, or the Clean MKV milestone, and it is
-not a public release.
+This records engineering acceptance of the first M2 metadata, track-removal,
+and deterministic cleanup-preview actions. It is not acceptance of bulk role
+matching, the complete Clean MKV milestone, or a public release.
 
 ## Safety contract
 
 1. The source must be a regular non-symbolic-link Matroska file.
 2. The destination must be a new path selected by the user; existing files are
    never overwritten.
-3. MKV Magic creates a same-volume item-replacement directory and uses an APFS
-   clone when available, with a normal copy fallback provided by macOS.
+3. MKV Magic creates a same-volume item-replacement directory. Metadata edits
+   use an APFS clone when available, with a normal copy fallback provided by
+   macOS; remux actions reserve a new private output path for `mkvmerge`.
 4. `mkvpropedit` receives only the temporary clone through an executable plus
    argument array. The source path is never passed to the editing tool, and the
    internal clone uses a short ASCII-only name independent of the user's output
    filename.
-5. The temporary output is re-inspected and must preserve container, duration,
-   every track fact, chapter structure, attachments, unrelated tags, and segment
-   identity while matching the previewed title or selected track properties.
+5. The temporary output is re-inspected. Metadata edits must preserve container,
+   duration, every track fact, chapter structure, attachments, unrelated tags,
+   and segment identity while matching the preview. Track removal must contain
+   exactly the retained stable UIDs in their original order, preserve their
+   codec/layout/HDR and semantic metadata, chapters, attachments, global user
+   metadata, and create a fresh segment identity. Only generated remux provenance
+   and up to 50 ms of final-packet duration rounding are ignored.
 6. Only a verified nonempty output can enter the exclusive commit state.
 7. Any pre-commit error removes the working copy and leaves both the original
    bytes and destination untouched.
@@ -34,6 +39,19 @@ not a public release.
   changes its name, canonical language, forced flag, and commentary role, then
   proves the intended header changes, preserved technical facts, complete
   verify/commit stages, and an unchanged source SHA-256 digest.
+- A real `mkvmerge` integration removes one of two audio tracks by stable UID,
+  preserves the retained track, segment title, chapter data, and a font
+  attachment, creates a fresh segment identity, completes verify/commit, and
+  proves the source SHA-256 unchanged. Its observed 2.33 ms packet-level duration
+  shift established the verifier's bounded 50 ms remux tolerance; a regression
+  rejects material duration changes.
+- The app-level real-tool integration now also records track removal through the
+  complete sanitized lifecycle, including an explicit zero-encode `mkvmerge`
+  plan, while retaining only display names in history.
+- The native removal sheet refuses an empty selection or removal of every track.
+  Its Clean MKV mode prechecks deterministic English Library suggestions for
+  review. Domain regressions preserve video/audio, commentary subtitles, unknown
+  language subtitles, and the only available English/unknown SDH subtitle.
 - The inspection and edit integrations run sequentially after replacing a
   Foundation `waitUntilExit` hang with a race-safe termination callback. A
   32-command regression covers repeated process completion.
@@ -65,6 +83,6 @@ not a public release.
 
 ## Still pending in M2
 
-- Track removal, bulk matching/editing, `mkvmerge` remuxing, Clean MKV previews,
-  optional verified-original Trash behavior, cancellation UI, and privacy-safe
-  command/details reports.
+- Bulk role matching/editing, attachment/tag/flag cleanup suggestions, optional
+  verified-original Trash behavior, cancellation UI, privacy-safe command/details
+  reports, and packaged visual acceptance of the new removal/cleanup sheet.

@@ -70,6 +70,28 @@ final class VerifiedOutputTransactionTests: XCTestCase {
         await transaction.cancel()
     }
 
+    func testEmptyOutputPreparationRequiresToolCreationAndVerification() async throws {
+        let transaction = VerifiedOutputTransaction(
+            sourceURL: sourceURL,
+            destinationURL: destinationURL
+        )
+        let temporaryOutput = try await transaction.prepareEmptyOutput()
+
+        XCTAssertFalse(FileManager.default.fileExists(atPath: temporaryOutput.path))
+        do {
+            try await transaction.markVerified()
+            XCTFail("Expected an absent tool output to fail closed")
+        } catch {
+            XCTAssertEqual(error as? OutputTransactionError, .invalidState)
+        }
+
+        try Data("remuxed".utf8).write(to: temporaryOutput)
+        try await transaction.markVerified()
+        _ = try await transaction.commit()
+        XCTAssertEqual(try Data(contentsOf: sourceURL), Data("original".utf8))
+        XCTAssertEqual(try Data(contentsOf: destinationURL), Data("remuxed".utf8))
+    }
+
     func testExistingDestinationFailsBeforeCreatingWorkingCopy() async throws {
         try Data("existing".utf8).write(to: destinationURL)
         let transaction = VerifiedOutputTransaction(

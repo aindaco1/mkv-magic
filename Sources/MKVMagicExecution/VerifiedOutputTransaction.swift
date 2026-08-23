@@ -54,30 +54,7 @@ public actor VerifiedOutputTransaction {
 
     public func prepareClone() throws -> URL {
         guard state == .initialized else { throw OutputTransactionError.invalidState }
-        try validatePaths()
-
-        let replacementDirectory: URL
-        do {
-            replacementDirectory = try fileManager.url(
-                for: .itemReplacementDirectory,
-                in: .userDomainMask,
-                appropriateFor: destinationURL,
-                create: true
-            )
-        } catch {
-            throw OutputTransactionError.unsafeDestination
-        }
-        let temporaryOutput = replacementDirectory.appendingPathComponent(
-            temporaryFilename(),
-            isDirectory: false
-        )
-        guard !fileManager.fileExists(atPath: temporaryOutput.path) else {
-            try? fileManager.removeItem(at: replacementDirectory)
-            throw OutputTransactionError.unsafeDestination
-        }
-
-        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
-        originalPermissions = attributes[.posixPermissions] as? Int ?? 0o644
+        let (replacementDirectory, temporaryOutput) = try prepareReplacementLocation()
         let flags = copyfile_flags_t(COPYFILE_ALL | COPYFILE_CLONE)
         guard copyfile(sourceURL.path, temporaryOutput.path, nil, flags) == 0 else {
             let code = errno
@@ -100,14 +77,23 @@ public actor VerifiedOutputTransaction {
         return temporaryOutput
     }
 
+    /// Reserves a private, non-existent output path for a tool that creates a new file.
+    public func prepareEmptyOutput() throws -> URL {
+        guard state == .initialized else { throw OutputTransactionError.invalidState }
+        let (_, temporaryOutput) = try prepareReplacementLocation()
+        state = .prepared
+        return temporaryOutput
+    }
+
     public func markVerified() throws {
         guard state == .prepared, let temporaryOutputURL else {
             throw OutputTransactionError.invalidState
         }
-        let values = try temporaryOutputURL.resourceValues(forKeys: [
-            .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
-        ])
-        guard values.isRegularFile == true,
+        guard
+            let values = try? temporaryOutputURL.resourceValues(forKeys: [
+                .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
+            ]),
+            values.isRegularFile == true,
             values.isSymbolicLink != true,
             values.fileSize ?? 0 > 0
         else {
@@ -184,6 +170,35 @@ public actor VerifiedOutputTransaction {
         else {
             throw OutputTransactionError.unsafeDestination
         }
+    }
+
+    private func prepareReplacementLocation() throws -> (URL, URL) {
+        try validatePaths()
+        let attributes = try fileManager.attributesOfItem(atPath: sourceURL.path)
+        originalPermissions = attributes[.posixPermissions] as? Int ?? 0o644
+
+        let replacementDirectory: URL
+        do {
+            replacementDirectory = try fileManager.url(
+                for: .itemReplacementDirectory,
+                in: .userDomainMask,
+                appropriateFor: destinationURL,
+                create: true
+            )
+        } catch {
+            throw OutputTransactionError.unsafeDestination
+        }
+        let temporaryOutput = replacementDirectory.appendingPathComponent(
+            temporaryFilename(),
+            isDirectory: false
+        )
+        guard !fileManager.fileExists(atPath: temporaryOutput.path) else {
+            try? fileManager.removeItem(at: replacementDirectory)
+            throw OutputTransactionError.unsafeDestination
+        }
+        replacementDirectoryURL = replacementDirectory
+        temporaryOutputURL = temporaryOutput
+        return (replacementDirectory, temporaryOutput)
     }
 
     /// Keep third-party tools away from user-controlled or non-ASCII working-copy names.

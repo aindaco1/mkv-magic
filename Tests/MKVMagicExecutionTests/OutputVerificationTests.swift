@@ -106,27 +106,93 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTrackRemovalVerifierAcceptsOnlySelectedUIDRemovalAndRenumbering() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10, language: "und")
+        let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let subtitle = MediaTrack(
+            id: 2, kind: .subtitle, codec: "subrip", uid: 30, language: "en")
+        let renumberedSubtitle = MediaTrack(
+            id: 1, kind: .subtitle, codec: "subrip", uid: 30, language: "en")
+        let original = asset(title: "Movie", tracks: [video, audio, subtitle])
+        let output = asset(
+            title: "Movie",
+            tracks: [video, renumberedSubtitle],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+
+        XCTAssertNoThrow(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                removal: TrackRemoval(trackUIDs: [20])
+            ))
+    }
+
+    func testTrackRemovalVerifierRejectsRetainedTrackMutation() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)
+        let mutated = MediaTrack(id: 0, kind: .video, codec: "hevc", uid: 10)
+
+        XCTAssertThrowsError(
+            try TrackRemovalOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [video, audio]),
+                output: asset(
+                    title: "Movie", tracks: [mutated], segmentUID: "2233", encoder: "mkvmerge"),
+                removal: TrackRemoval(trackUIDs: [20])
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+        }
+    }
+
+    func testTrackRemovalVerifierRejectsMaterialDurationChange() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)
+        let original = asset(title: "Movie", tracks: [video, audio])
+        let output = asset(
+            title: "Movie",
+            tracks: [video],
+            duration: MediaTime(seconds: 9.9)!,
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+
+        XCTAssertThrowsError(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                removal: TrackRemoval(trackUIDs: [20])
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .durationChanged)
+        }
+    }
+
     private func asset(
         title: String,
         tracks: [MediaTrack] = [
             MediaTrack(id: 0, kind: .audio, codec: "aac", language: "eng")
-        ]
+        ],
+        duration: MediaTime = MediaTime(seconds: 10)!,
+        segmentUID: String = "0011",
+        encoder: String = "fixture"
     ) -> MediaAsset {
         MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
             container: "matroska",
-            duration: MediaTime(seconds: 10),
+            duration: duration,
             fileSize: 1_024,
             tracks: tracks,
             chapters: [ChapterNode(title: "Chapter 1", start: .zero)],
             attachments: [
                 MediaAttachment(id: 1, filename: "Font.otf", mimeType: "font/otf", size: 20)
             ],
-            metadata: ["title": title, "encoder": "fixture"],
+            metadata: ["title": title, "encoder": encoder],
             chapterEntryCount: 1,
             globalTagCount: 0,
             trackTagCount: 0,
-            segmentUID: "0011"
+            segmentUID: segmentUID
         )
     }
 }
