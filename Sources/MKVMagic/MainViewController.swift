@@ -106,6 +106,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var trimTask: Task<Void, Never>?
     private var isPreparingTrim = false
     private var losslessJoinWindowController: LosslessJoinWindowController?
+    private var commonFormatJoinWindowController: CommonFormatJoinWindowController?
     private var losslessJoinProgressWindowController: VerifiedOutputProgressWindowController?
     private var losslessJoinTask: Task<Void, Never>?
 
@@ -580,14 +581,24 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     encodingCapabilities: capabilities
                 )
                 losslessJoinWindowController = controller
-                controller.beginSheet(for: parentWindow) { [weak self] candidate in
+                controller.beginSheet(for: parentWindow) { [weak self] selection in
                     guard let self else { return }
                     self.losslessJoinWindowController = nil
-                    guard let candidate else {
+                    guard let selection else {
                         self.refresh()
                         return
                     }
-                    self.confirmLosslessJoin(candidate, parentWindow: parentWindow)
+                    switch selection {
+                    case .lossless(let candidate):
+                        self.confirmLosslessJoin(candidate, parentWindow: parentWindow)
+                    case .commonFormat(let candidate):
+                        DispatchQueue.main.async { [weak self] in
+                            self?.reviewCommonFormatJoin(
+                                candidate,
+                                parentWindow: parentWindow
+                            )
+                        }
+                    }
                 }
                 statusLabel.stringValue = "Review source order, track lanes, and chapters."
             } catch {
@@ -595,6 +606,116 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 refresh()
             }
         }
+    }
+
+    private func reviewCommonFormatJoin(
+        _ candidate: CommonFormatJoinCandidate,
+        parentWindow: NSWindow
+    ) {
+        do {
+            let controller = try CommonFormatJoinWindowController(candidate: candidate)
+            commonFormatJoinWindowController = controller
+            controller.beginSheet(for: parentWindow) { [weak self] resolvedPlan in
+                guard let self else { return }
+                self.commonFormatJoinWindowController = nil
+                guard let resolvedPlan else {
+                    self.refresh()
+                    return
+                }
+                self.confirmCommonFormatJoin(
+                    candidate,
+                    resolvedPlan: resolvedPlan,
+                    parentWindow: parentWindow
+                )
+            }
+        } catch {
+            statusLabel.stringValue =
+                "Common-format choices are unavailable: \(error.localizedDescription)"
+            refresh()
+        }
+    }
+
+    private func confirmCommonFormatJoin(
+        _ candidate: CommonFormatJoinCandidate,
+        resolvedPlan: ResolvedJoinNormalizationPlan,
+        parentWindow: NSWindow
+    ) {
+        statusLabel.stringValue = "Confirming approved choices and unchanged sources…"
+        Task {
+            do {
+                let preview = try await model.previewCommonFormatJoin(
+                    candidate,
+                    resolvedPlan: resolvedPlan
+                )
+                guard view.window === parentWindow else { return }
+                chooseCommonFormatJoinDestination(preview, parentWindow: parentWindow)
+            } catch {
+                statusLabel.stringValue =
+                    "Common-format review must be reopened: \(error.localizedDescription)"
+                refresh()
+            }
+        }
+    }
+
+    private func chooseCommonFormatJoinDestination(
+        _ preview: CommonFormatJoinPreview,
+        parentWindow: NSWindow
+    ) {
+        guard let firstSource = preview.candidate.sources.first else { return }
+        let panel = NSSavePanel()
+        panel.title = "Save Verified Joined MKV"
+        panel.prompt = "Normalize, Join & Save"
+        panel.message =
+            "Incompatible lanes will be normalized once in private temporary storage; the final MKV is saved only after verification."
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        panel.directoryURL = firstSource.sourceURL.deletingLastPathComponent()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
+        panel.allowsOtherFileTypes = false
+        panel.isExtensionHidden = false
+        panel.beginSheetModal(for: parentWindow) { [weak self] response in
+            guard let self, response == .OK, let destinationURL = panel.url else {
+                self?.refresh()
+                return
+            }
+            self.runCommonFormatJoin(
+                preview,
+                destinationURL: destinationURL,
+                parentWindow: parentWindow
+            )
+        }
+    }
+
+    private func runCommonFormatJoin(
+        _ preview: CommonFormatJoinPreview,
+        destinationURL: URL,
+        parentWindow: NSWindow
+    ) {
+        let progress = VerifiedOutputProgressWindowController.commonFormatJoin()
+        losslessJoinProgressWindowController = progress
+        progress.beginSheet(for: parentWindow)
+        let task = Task { [weak self, weak progress] in
+            guard let self else { return }
+            do {
+                let output = try await model.executeCommonFormatJoin(
+                    preview: preview,
+                    destinationURL: destinationURL,
+                    onStage: { stage in progress?.update(stage: stage) }
+                )
+                preferredSelectionURL = output.sourceURL
+                progress?.finish()
+                losslessJoinProgressWindowController = nil
+                losslessJoinTask = nil
+                refresh()
+            } catch {
+                progress?.finish()
+                losslessJoinProgressWindowController = nil
+                losslessJoinTask = nil
+                refresh()
+            }
+        }
+        losslessJoinTask = task
+        progress.onCancel = { [weak self] in self?.losslessJoinTask?.cancel() }
     }
 
     private func confirmLosslessJoin(

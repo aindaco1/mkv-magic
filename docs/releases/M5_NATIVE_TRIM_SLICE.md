@@ -83,3 +83,9 @@ SBOM/checksums, ZIP/appcast assembly, and checksum-verified DMG packaging.
   editions, HDR10 preservation, and Dolby Vision policy for trimming.
 - Split by chapter/range/duration/size, Chapter Studio keyframe snapping,
   private-library beta, physical Intel performance acceptance, and public release.
+
+## Subsequent update
+
+Native common-format choice approval and app-level one-pass execution were
+completed in `M5_NATIVE_COMMON_FORMAT_JOIN_SLICE.md`. Manual ambiguous mapping,
+join-boundary decode checks, and the other limitations above remain current.

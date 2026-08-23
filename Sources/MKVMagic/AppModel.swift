@@ -341,6 +341,189 @@ final class AppModel {
         }
     }
 
+    func previewCommonFormatJoin(
+        _ candidate: CommonFormatJoinCandidate,
+        resolvedPlan: ResolvedJoinNormalizationPlan
+    ) async throws -> CommonFormatJoinPreview {
+        let scopedURLs = candidate.sources.map {
+            ($0.sourceURL, $0.sourceURL.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Binding every approved common-format choice to unchanged files…")
+        didChange?()
+        do {
+            guard candidate.sources.count == candidate.chapterPreviews.count,
+                resolvedPlan.proposal == candidate.proposal
+            else {
+                throw JoinNormalizationChoiceError.reportChanged
+            }
+            let currentReport = try JoinCompatibilityAnalyzer().analyze(
+                sources: candidate.sources,
+                mapping: candidate.mapping
+            )
+            guard currentReport == candidate.report,
+                currentReport.disposition == .normalizationRequired
+            else {
+                throw JoinNormalizationChoiceError.reportChanged
+            }
+
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: candidate.sources,
+                proposal: candidate.proposal,
+                choices: resolvedPlan.choices,
+                availableVideoPresets: Set(candidate.capabilities.availableVideoPresets),
+                aacAvailable: candidate.capabilities.aac == .verified
+            )
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let chapterExecutor = ChapterEditExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            for preview in candidate.chapterPreviews {
+                try await chapterExecutor.validateCurrent(preview)
+            }
+            let normalizationPreview = try JoinNormalizationExecutor(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                runner: runner,
+                inspector: inspector
+            ).preview(
+                sources: candidate.sources,
+                resolvedPlan: resolved,
+                capabilities: candidate.capabilities
+            )
+            state = .ready
+            didChange?()
+            return CommonFormatJoinPreview(
+                candidate: candidate,
+                resolvedPlan: resolved,
+                normalizationPreview: normalizationPreview
+            )
+        } catch {
+            state = .failed(
+                "Common-format review is stale or incomplete: \(error.localizedDescription)"
+            )
+            didChange?()
+            throw error
+        }
+    }
+
+    @discardableResult
+    func executeCommonFormatJoin(
+        preview: CommonFormatJoinPreview,
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (CommonFormatJoinExecutionStage) -> Void = {
+            _ in
+        }
+    ) async throws -> MediaAsset {
+        let sources = preview.candidate.sources
+        let scopedURLs = (sources.map(\.sourceURL) + [destinationURL]).map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Normalizing only the incompatible lanes once…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let proposal = preview.resolvedPlan.proposal
+            let execution = try await beginHistory(
+                inputDisplayNames: sources.map { $0.sourceURL.lastPathComponent },
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: Self.commonFormatJoinWorkflowID,
+                workflowName: "Join MKV files with one normalization pass",
+                inspectionMessage:
+                    "Used completed inspections and exact extracted nested chapter documents.",
+                planningMessage:
+                    "Normalize \(proposal.impact.videoEncodeCount) video generation and \(proposal.impact.audioEncodeCount) audio lane(s) once; packet-copy compatible lanes.",
+                runningMessage:
+                    "Creating one private verified normalized stream bundle before final assembly."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let output = try await CommonFormatJoinExecutor(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            ).execute(
+                normalizationPreview: preview.normalizationPreview,
+                resolvedPlan: preview.resolvedPlan,
+                chapters: preview.candidate.chapters,
+                destinationURL: destinationURL,
+                onStage: { stage in
+                    await onStage(stage)
+                    if stage == .assembling {
+                        await MainActor.run {
+                            self.state = .executing(
+                                "Assembling normalized and packet-copy lanes into the final MKV…"
+                            )
+                            self.didChange?()
+                        }
+                    }
+                    switch stage {
+                    case .verifying:
+                        try await Self.record(
+                            .verifying,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    case .committing:
+                        try await Self.record(
+                            .committing,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    case .normalizing, .assembling:
+                        break
+                    }
+                }
+            )
+            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
+                assets[existing] = output
+            } else {
+                assets.append(output)
+            }
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage:
+                    "Verified the one-pass normalized lanes, packet-copy lanes, metadata, attachments, and exact nested chapters; committed and reopened output."
+            )
+            return output
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeLosslessJoin(
         preview: LosslessJoinPreview,
@@ -1327,6 +1510,11 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? JoinFinalAssemblyExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         if let executionError = error as? FastTrimExecutionError,
             case .committedOutputAuditFailed = executionError
         {
@@ -1392,6 +1580,9 @@ final class AppModel {
     )!
     nonisolated private static let losslessJoinWorkflowID = UUID(
         uuidString: "1329034D-8DA4-4D8F-82B6-C3BC42A4E4FA"
+    )!
+    nonisolated private static let commonFormatJoinWorkflowID = UUID(
+        uuidString: "754EEC4F-8989-442A-98C2-A4B17622489D"
     )!
     nonisolated private static let fastTrimWorkflowID = UUID(
         uuidString: "7E551E9E-039C-46DB-A14D-E43E338A5E2A"

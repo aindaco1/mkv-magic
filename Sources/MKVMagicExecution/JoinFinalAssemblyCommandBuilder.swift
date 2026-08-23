@@ -100,6 +100,33 @@ public struct JoinFinalAssemblyCommand: Equatable, Sendable {
     }
 }
 
+/// Shared fail-closed contract for source-level data that final common-format
+/// assembly must preserve. Keeping it separate lets the native review stop
+/// before a long encode under the same policy used by the command compiler.
+public struct JoinFinalAssemblySourcePolicy: Sendable {
+    public init() {}
+
+    public func validate(_ sources: [MediaAsset]) throws {
+        let allowedContainerKeys: Set<String> = ["title", "encoder", "creation_time"]
+        for (sourceIndex, source) in sources.enumerated() {
+            guard source.globalTagCount == 0, source.trackTagCount == 0 else {
+                throw JoinFinalAssemblyCommandError.unsupportedTagPreservation(
+                    sourceIndex: sourceIndex
+                )
+            }
+            guard
+                source.metadata.keys.allSatisfy({
+                    allowedContainerKeys.contains($0.lowercased())
+                })
+            else {
+                throw JoinFinalAssemblyCommandError.unsupportedContainerMetadata(
+                    sourceIndex: sourceIndex
+                )
+            }
+        }
+    }
+}
+
 /// Compiles one final mkvmerge invocation. Encoded tracks are read from the
 /// already verified normalization bundle; compatible source tracks are appended
 /// directly in the same invocation, so packet-copy lanes do not need a second
@@ -151,7 +178,7 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
         } catch {
             throw JoinFinalAssemblyCommandError.normalizedBundleMismatch
         }
-        try validatePreservableSourceMetadata(sources)
+        try JoinFinalAssemblySourcePolicy().validate(sources)
 
         var indexedTracks = [[Int: MediaTrack]]()
         for source in sources {
@@ -435,26 +462,6 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
             throw error
         } catch {
             throw JoinFinalAssemblyCommandError.invalidChapters
-        }
-    }
-
-    private func validatePreservableSourceMetadata(_ sources: [MediaAsset]) throws {
-        let allowedContainerKeys: Set<String> = ["title", "encoder", "creation_time"]
-        for (sourceIndex, source) in sources.enumerated() {
-            guard source.globalTagCount == 0, source.trackTagCount == 0 else {
-                throw JoinFinalAssemblyCommandError.unsupportedTagPreservation(
-                    sourceIndex: sourceIndex
-                )
-            }
-            guard
-                source.metadata.keys.allSatisfy({
-                    allowedContainerKeys.contains($0.lowercased())
-                })
-            else {
-                throw JoinFinalAssemblyCommandError.unsupportedContainerMetadata(
-                    sourceIndex: sourceIndex
-                )
-            }
         }
     }
 

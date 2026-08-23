@@ -423,6 +423,135 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testRealCommonFormatJoinNormalizesOnceAndRecordsOneVerifiedJob() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-app-common-join-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: fixtureRoot,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let sourceOne = fixtureRoot.appendingPathComponent("Part 48k.mkv")
+        let sourceTwo = fixtureRoot.appendingPathComponent("Part 44k.mkv")
+        for (index, fixture) in [
+            (sourceOne, 48_000, UInt8(0)),
+            (sourceTwo, 44_100, UInt8(1)),
+        ].enumerated() {
+            let raw = fixtureRoot.appendingPathComponent("audio-\(index).pcm")
+            try Data(repeating: fixture.2, count: fixture.1 * 2).write(to: raw)
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .ffmpeg),
+                    arguments: [
+                        "-hide_banner", "-nostdin", "-loglevel", "error",
+                        "-f", "s16le", "-ar", String(fixture.1), "-ac", "1",
+                        "-i", raw.path,
+                        "-c:a", "aac",
+                        "-metadata", "title=Common Join Fixture",
+                        "-metadata:s:a:0", "language=eng",
+                        "-metadata:s:a:0", "title=Main Audio",
+                        fixture.0.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+            let clearTags = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .mkvpropedit),
+                    arguments: [fixture.0.path, "--tags", "all:"],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(clearTags.exitCode, 0, clearTags.standardError.text)
+        }
+        let sourceURLs = [sourceOne, sourceTwo]
+        let sourceDigests = try sourceURLs.map {
+            SHA256.hash(data: try Data(contentsOf: $0))
+        }
+        let destination = fixtureRoot.appendingPathComponent("Joined Normalized.mkv")
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { store })
+        await model.addFiles(sourceURLs)
+        XCTAssertEqual(model.assets.count, 2)
+        let options = try await model.loadLosslessJoinSourceOptions(model.assets)
+        let capabilities = await model.probeEncodingCapabilities()
+        XCTAssertEqual(capabilities.aac, .verified)
+        let review = LosslessJoinReviewBuilder.make(
+            selections: options.map {
+                LosslessJoinSourceSelection(
+                    option: $0,
+                    editionID: $0.editions.count == 1 ? $0.editions[0].id : nil
+                )
+            },
+            encodingCapabilities: capabilities
+        )
+        let candidate = try XCTUnwrap(
+            review.commonFormatCandidate,
+            "\(review.blockerSummaries); \(review.normalizationSummaries)"
+        )
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        let preview = try await model.previewCommonFormatJoin(
+            candidate,
+            resolvedPlan: resolved
+        )
+        var stages = [CommonFormatJoinExecutionStage]()
+        let output = try await model.executeCommonFormatJoin(
+            preview: preview,
+            destinationURL: destination,
+            onStage: { stages.append($0) }
+        )
+
+        XCTAssertEqual(stages, [.normalizing, .assembling, .verifying, .committing])
+        XCTAssertEqual(output.sourceURL, destination)
+        XCTAssertEqual(output.tracks.count, 1)
+        XCTAssertEqual(output.tracks[0].kind, .audio)
+        XCTAssertEqual(output.tracks[0].codec, "aac")
+        XCTAssertEqual(output.tracks[0].sampleRate, 48_000)
+        XCTAssertEqual(output.chapterEntryCount, 2)
+        XCTAssertEqual(
+            try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+            sourceDigests
+        )
+        let records = try await store.load()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowName, "Join MKV files with one normalization pass")
+        XCTAssertEqual(
+            record.inputDisplayNames,
+            candidate.sources.map { $0.sourceURL.lastPathComponent }
+        )
+        XCTAssertEqual(record.outputDisplayName, "Joined Normalized.mkv")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let serialized = record.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertFalse(serialized.contains(fixtureRoot.path))
+        XCTAssertTrue(serialized.contains("audio lane(s) once"))
+    }
+
+    @MainActor
     func testRealFastTrimUsesReviewedKeyframesAndRecordsVerifiedLifecycle() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

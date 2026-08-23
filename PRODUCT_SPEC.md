@@ -910,9 +910,16 @@ zero-encode Fast Trim, and offers one-generation Exact Trim choices only from th
 active local capability probe. Save remains disabled until an immutable review
 has resolved the actual output range, encoder, audio policy, and clipped nested
 chapters. Both routes use shared cancellable verified-output progress, add the
-reopened result to inspection, and persist a sanitized History lifecycle. Manual
-join mapping, native common-format join execution choices, and join-boundary
-decode spot checks remain before the M5 gate is complete.
+reopened result to inspection, and persist a sanitized History lifecycle. The
+native common-format Join route now enables only after the active capability
+probe and the same fail-closed source-metadata policy used by final assembly.
+It presents the exact resolved SDR video/AAC audio targets, packet-copy lanes,
+attachments, metadata source, and nested chapter output; requires one explicit
+approval; binds that approval to unchanged source and chapter revisions; creates
+the verified normalized stream bundle only in private temporary storage; and
+persists one final-output History lifecycle through final assembly, verification,
+commit, and reopen. Manual join mapping and join-boundary decode spot checks
+remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

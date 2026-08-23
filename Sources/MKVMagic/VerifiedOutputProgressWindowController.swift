@@ -86,6 +86,18 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         )
     }
 
+    static func commonFormatJoin() -> VerifiedOutputProgressWindowController {
+        VerifiedOutputProgressWindowController(
+            title: "Joining MKV Files",
+            initialMessage: "Normalizing only the incompatible lanes once…",
+            verifyingMessage:
+                "Reopening the final MKV and verifying streams, metadata, attachments, and chapters…",
+            committingMessage: "Verification passed. Saving and auditing the final MKV…",
+            cancellingMessage:
+                "Cancelling and removing the private stream bundle and temporary output…"
+        )
+    }
+
     func beginSheet(for parentWindow: NSWindow) {
         guard let window else { return }
         parentWindow.beginSheet(window)
@@ -93,6 +105,21 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
 
     func update(stage: VerifiedOutputExecutionStage) {
         switch stage {
+        case .verifying:
+            statusLabel.stringValue = verifyingMessage
+        case .committing:
+            statusLabel.stringValue = committingMessage
+            cancelButton.isEnabled = false
+        }
+    }
+
+    func update(stage: CommonFormatJoinExecutionStage) {
+        switch stage {
+        case .normalizing:
+            statusLabel.stringValue = "Normalizing only the incompatible lanes once…"
+        case .assembling:
+            statusLabel.stringValue =
+                "Assembling normalized and packet-copy lanes into one temporary MKV…"
         case .verifying:
             statusLabel.stringValue = verifyingMessage
         case .committing:

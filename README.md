@@ -82,9 +82,8 @@ track identities. The app revalidates every exact source chapter document,
 prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results and compares the exact nested chapter XML.
-Manual ambiguity mapping, decode spot checks, attachment selection, and native
-common-format execution remain pending. When a reviewed group
-needs normalization, the same window now previews the proposed common video,
+Manual ambiguity mapping and decode spot checks remain pending. When a reviewed group
+needs normalization, the same window previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
 local one-frame capability probe; affected audio lanes are converted once to
@@ -107,13 +106,20 @@ when the source contains encoder padding. A final pure compiler now emits one
 packet-copy lanes, selected attachments and track metadata, one title, and the
 exact nested joined chapters. It refuses overwrite, changed chapters/bundles,
 unsafe paths or text, unpreserved tags, subtitle conversion, and subtitle gaps.
-The revision-bound final executor now compiles that command again inside a
+The revision-bound final executor compiles that command again inside a
 verified-output transaction, semantically audits the temporary MKV, re-extracts
 and canonically compares its full nested chapter XML, commits atomically, then
 repeats the complete audit after reopening the saved path. A real mixed-lane
 fixture passes this transaction without changing either original. The native
-preview still does not enable saving because exact choice controls and app-level
-execution wiring are not implemented yet.
+review now enables **Review Common Format…** only when those exact contracts are
+executable. A compact second sheet lists the resolved targets, nested chapter
+output, packet-copy behavior, and one-generation impact, then requires explicit
+approval before Save. The app binds the approval to unchanged source and chapter
+revisions, creates the verified normalized bundle only in private temporary
+storage, assembles the final MKV, adds only the reopened final result to the
+library, and records exactly one sanitized History job. Source tags, executable
+subtitle conversion/gaps, HDR conversion, and manual ambiguous mapping continue
+to fail closed before encoding.
 
 For an eligible inspected MKV, **Trim…** now opens one compact native review
 window. Five bounded local thumbnails provide quick **Set In** and **Set Out**

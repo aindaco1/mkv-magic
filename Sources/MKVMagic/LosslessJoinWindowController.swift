@@ -23,14 +23,36 @@ struct LosslessJoinCandidate: Equatable, Sendable {
     let chapters: JoinedChapterComposition
 }
 
+struct CommonFormatJoinCandidate: Equatable, Sendable {
+    let sources: [MediaAsset]
+    let chapterPreviews: [ChapterEditPreview]
+    let mapping: JoinTrackMapping
+    let report: JoinCompatibilityReport
+    let chapters: JoinedChapterComposition
+    let proposal: JoinNormalizationProposal
+    let capabilities: FFmpegEncodingCapabilities
+}
+
+enum JoinReviewSelection: Equatable, Sendable {
+    case lossless(LosslessJoinCandidate)
+    case commonFormat(CommonFormatJoinCandidate)
+}
+
 struct LosslessJoinReviewSnapshot: Equatable, Sendable {
     let candidate: LosslessJoinCandidate?
+    let commonFormatCandidate: CommonFormatJoinCandidate?
     let laneSummaries: [String]
     let issueSummaries: [String]
     let normalizationSummaries: [String]
     let blockerSummaries: [String]
 
-    var isReady: Bool { candidate != nil }
+    var selection: JoinReviewSelection? {
+        if let candidate { return .lossless(candidate) }
+        if let commonFormatCandidate { return .commonFormat(commonFormatCandidate) }
+        return nil
+    }
+
+    var isReady: Bool { selection != nil }
 }
 
 enum LosslessJoinReviewBuilder {
@@ -57,19 +79,16 @@ enum LosslessJoinReviewBuilder {
 
         let lanes = laneSummaries(mapping: proposal.mapping, sources: sources)
         let issues = report.issues.map { issueSummary($0, sources: sources) }
-        var blockers = [String]()
+        var sharedBlockers = [String]()
         if !proposal.ambiguities.isEmpty {
             for ambiguity in proposal.ambiguities {
-                blockers.append(
+                sharedBlockers.append(
                     "Part \(ambiguity.sourceIndex + 1) has ambiguous "
                         + "\(ambiguity.kind.rawValue) tracks "
                         + ambiguity.trackIDs.map { "#\($0)" }.joined(separator: ", ")
                         + "; automatic mapping will not guess."
                 )
             }
-        }
-        if report.disposition != .losslessCandidate {
-            blockers.append(dispositionSummary(report.disposition))
         }
         if let firstSource = sources.first {
             var stableUIDs = Set<UInt64>()
@@ -79,7 +98,7 @@ enum LosslessJoinReviewBuilder {
                     let uid = track.uid,
                     stableUIDs.insert(uid).inserted
                 else {
-                    blockers.append(
+                    sharedBlockers.append(
                         "The first source needs a unique stable Matroska UID for every output lane."
                     )
                     break
@@ -90,7 +109,7 @@ enum LosslessJoinReviewBuilder {
         var joinedSources = [JoinedChapterSource]()
         for (index, selection) in selections.enumerated() {
             guard let duration = selection.option.source.duration, duration > .zero else {
-                blockers.append("Part \(index + 1) needs a known positive duration.")
+                sharedBlockers.append("Part \(index + 1) needs a known positive duration.")
                 continue
             }
             let selectedChapters: [MatroskaChapterAtom]
@@ -101,7 +120,7 @@ enum LosslessJoinReviewBuilder {
             {
                 selectedChapters = edition.chapters
             } else {
-                blockers.append(
+                sharedBlockers.append(
                     "Choose the source chapter edition for Part \(index + 1)."
                 )
                 continue
@@ -124,15 +143,19 @@ enum LosslessJoinReviewBuilder {
             do {
                 composition = try JoinedChapterComposer().compose(joinedSources)
             } catch {
-                blockers.append("Joined chapters are invalid: \(error.localizedDescription)")
+                sharedBlockers.append("Joined chapters are invalid: \(error.localizedDescription)")
                 composition = nil
             }
         } else {
             composition = nil
         }
 
+        var losslessBlockers = sharedBlockers
+        if report.disposition != .losslessCandidate {
+            losslessBlockers.append(dispositionSummary(report.disposition))
+        }
         let candidate =
-            blockers.isEmpty
+            losslessBlockers.isEmpty
             ? composition.map {
                 LosslessJoinCandidate(
                     sources: sources,
@@ -143,17 +166,44 @@ enum LosslessJoinReviewBuilder {
                 )
             }
             : nil
-        return LosslessJoinReviewSnapshot(
-            candidate: candidate,
-            laneSummaries: lanes,
-            issueSummaries: issues,
-            normalizationSummaries: normalizationSummaries(
+
+        let normalization = normalizationReview(
+            sources: sources,
+            mapping: proposal.mapping,
+            report: report,
+            hasAmbiguities: !proposal.ambiguities.isEmpty,
+            encodingCapabilities: encodingCapabilities
+        )
+        let commonFormatCandidate: CommonFormatJoinCandidate?
+        if report.disposition == .normalizationRequired,
+            sharedBlockers.isEmpty,
+            normalization.blockers.isEmpty,
+            let normalizationProposal = normalization.proposal,
+            let capabilities = encodingCapabilities,
+            let chapters = composition
+        {
+            commonFormatCandidate = CommonFormatJoinCandidate(
                 sources: sources,
+                chapterPreviews: selections.map(\.option.chapterPreview),
                 mapping: proposal.mapping,
                 report: report,
-                hasAmbiguities: !proposal.ambiguities.isEmpty,
-                encodingCapabilities: encodingCapabilities
-            ),
+                chapters: chapters,
+                proposal: normalizationProposal,
+                capabilities: capabilities
+            )
+        } else {
+            commonFormatCandidate = nil
+        }
+        let blockers =
+            candidate == nil && commonFormatCandidate != nil
+            ? []
+            : stableUnique(sharedBlockers + normalization.blockers + losslessBlockers)
+        return LosslessJoinReviewSnapshot(
+            candidate: candidate,
+            commonFormatCandidate: commonFormatCandidate,
+            laneSummaries: lanes,
+            issueSummaries: issues,
+            normalizationSummaries: normalization.summaries,
             blockerSummaries: blockers
         )
     }
@@ -161,6 +211,7 @@ enum LosslessJoinReviewBuilder {
     private static func blocked(_ message: String) -> LosslessJoinReviewSnapshot {
         LosslessJoinReviewSnapshot(
             candidate: nil,
+            commonFormatCandidate: nil,
             laneSummaries: [],
             issueSummaries: [],
             normalizationSummaries: [],
@@ -168,27 +219,49 @@ enum LosslessJoinReviewBuilder {
         )
     }
 
-    private static func normalizationSummaries(
+    private struct NormalizationReview {
+        let proposal: JoinNormalizationProposal?
+        let summaries: [String]
+        let blockers: [String]
+    }
+
+    private static func normalizationReview(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         report: JoinCompatibilityReport,
         hasAmbiguities: Bool,
         encodingCapabilities: FFmpegEncodingCapabilities?
-    ) -> [String] {
+    ) -> NormalizationReview {
         switch report.disposition {
         case .losslessCandidate:
-            return ["Not needed; every reviewed lane remains a packet copy."]
+            return NormalizationReview(
+                proposal: nil,
+                summaries: ["Not needed; every reviewed lane remains a packet copy."],
+                blockers: []
+            )
         case .confirmationRequired:
-            return [
-                "No encode requirement is known; explicit metadata, gap, or attachment confirmation is still required."
-            ]
+            return NormalizationReview(
+                proposal: nil,
+                summaries: [
+                    "No encode requirement is known; explicit metadata, gap, or attachment confirmation is still required."
+                ],
+                blockers: [dispositionSummary(report.disposition)]
+            )
         case .unsupported:
-            return ["No supported common-format plan is available for this source set."]
+            return NormalizationReview(
+                proposal: nil,
+                summaries: ["No supported common-format plan is available for this source set."],
+                blockers: [dispositionSummary(report.disposition)]
+            )
         case .normalizationRequired:
             break
         }
         if hasAmbiguities {
-            return ["Resolve ambiguous track lanes before choosing common output formats."]
+            return NormalizationReview(
+                proposal: nil,
+                summaries: ["Resolve ambiguous track lanes before choosing common output formats."],
+                blockers: ["Resolve ambiguous track lanes before choosing common output formats."]
+            )
         }
         guard
             let proposal = try? JoinNormalizationPlanner().propose(
@@ -199,9 +272,14 @@ enum LosslessJoinReviewBuilder {
                     ?? .av1Quality
             )
         else {
-            return ["The common-format proposal could not be bound to this review."]
+            return NormalizationReview(
+                proposal: nil,
+                summaries: ["The common-format proposal could not be bound to this review."],
+                blockers: ["The common-format proposal could not be bound to this review."]
+            )
         }
         var summaries = [String]()
+        var blockers = proposal.blockers.map(\.summary)
         for lane in proposal.videoLanes where lane.encodesVideo {
             let preset = lane.recommendedPreset.map(videoPresetSummary) ?? "format needs review"
             let canvas =
@@ -242,18 +320,22 @@ enum LosslessJoinReviewBuilder {
         if let capabilities = encodingCapabilities,
             needsVideoEncode, capabilities.recommendedVideoPreset == nil
         {
-            summaries.append("Blocked: no bundled video encoder passed the active local probe.")
+            let message = "No bundled video encoder passed the active local probe."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
         } else if let capabilities = encodingCapabilities,
             needsAudioEncode, capabilities.aac != .verified
         {
-            summaries.append("Blocked: no bundled AAC encoder passed the active local probe.")
+            let message = "No bundled AAC encoder passed the active local probe."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
         } else if let capabilities = encodingCapabilities,
             needsVideoEncode || needsAudioEncode,
             let missingFilter = capabilities.missingJoinFilters.first
         {
-            summaries.append(
-                "Blocked: bundled FFmpeg did not report the required \(missingFilter) filter."
-            )
+            let message = "Bundled FFmpeg did not report the required \(missingFilter) filter."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
         } else if let blocker = proposal.blockers.first {
             summaries.append("Blocked: \(blocker.summary)")
         } else {
@@ -270,7 +352,50 @@ enum LosslessJoinReviewBuilder {
                 "Planning preview only; every listed target still requires explicit approval before execution."
             )
         }
-        return summaries
+        if encodingCapabilities == nil, needsVideoEncode || needsAudioEncode {
+            let message =
+                "Bundled encoders must be actively probed before common-format choices can run."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        }
+        for lane in proposal.videoLanes
+        where lane.encodesVideo
+            && lane.dynamicRangeChoices != [.sdr]
+        {
+            let message =
+                "Video lane \(lane.laneIndex + 1) needs HDR/color conversion that is not executable yet."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        }
+        for lane in proposal.subtitleLanes where lane.mechanism == .normalizeTextToASS {
+            let message =
+                "Subtitle lane \(lane.laneIndex + 1) needs text conversion that is not executable in Join yet."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        }
+        for lane in proposal.subtitleLanes where lane.sourceActions.contains(.emptyTimeline) {
+            let message =
+                "Subtitle lane \(lane.laneIndex + 1) needs an empty timed section that is not executable in Join yet."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        }
+        do {
+            try JoinFinalAssemblySourcePolicy().validate(sources)
+        } catch {
+            let message = error.localizedDescription
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        }
+        return NormalizationReview(
+            proposal: proposal,
+            summaries: stableUnique(summaries),
+            blockers: stableUnique(blockers)
+        )
+    }
+
+    private static func stableUnique(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
     }
 
     private static func videoPresetSummary(_ preset: VideoPreset) -> String {
@@ -362,7 +487,7 @@ enum LosslessJoinReviewBuilder {
 @MainActor
 final class LosslessJoinWindowController: NSWindowController {
     private let joinViewController: LosslessJoinViewController
-    private var completion: ((LosslessJoinCandidate?) -> Void)?
+    private var completion: ((JoinReviewSelection?) -> Void)?
 
     init(
         options: [LosslessJoinSourceOption],
@@ -379,8 +504,8 @@ final class LosslessJoinWindowController: NSWindowController {
         window.minSize = NSSize(width: 720, height: 560)
         super.init(window: window)
         joinViewController.onCancel = { [weak self] in self?.finish(with: nil) }
-        joinViewController.onContinue = { [weak self] candidate in
-            self?.finish(with: candidate)
+        joinViewController.onContinue = { [weak self] selection in
+            self?.finish(with: selection)
         }
     }
 
@@ -391,7 +516,7 @@ final class LosslessJoinWindowController: NSWindowController {
 
     func beginSheet(
         for parentWindow: NSWindow,
-        completion: @escaping (LosslessJoinCandidate?) -> Void
+        completion: @escaping (JoinReviewSelection?) -> Void
     ) {
         self.completion = completion
         guard let window else {
@@ -402,10 +527,10 @@ final class LosslessJoinWindowController: NSWindowController {
         parentWindow.beginSheet(window)
     }
 
-    private func finish(with candidate: LosslessJoinCandidate?) {
+    private func finish(with selection: JoinReviewSelection?) {
         guard let window else { return }
         window.sheetParent?.endSheet(window)
-        completion?(candidate)
+        completion?(selection)
         completion = nil
     }
 }
@@ -415,7 +540,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     NSTableViewDelegate
 {
     var onCancel: (() -> Void)?
-    var onContinue: ((LosslessJoinCandidate) -> Void)?
+    var onContinue: ((JoinReviewSelection) -> Void)?
 
     private var options: [LosslessJoinSourceOption]
     private let encodingCapabilities: FFmpegEncodingCapabilities?
@@ -423,6 +548,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private var editionIDs = [UUID: UUID]()
     private var snapshot = LosslessJoinReviewSnapshot(
         candidate: nil,
+        commonFormatCandidate: nil,
         laneSummaries: [],
         issueSummaries: [],
         normalizationSummaries: [],
@@ -455,11 +581,11 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
 
     override func loadView() {
         let root = NSView()
-        let heading = NSTextField(labelWithString: "Join files without re-encoding")
+        let heading = NSTextField(labelWithString: "Join MKV files")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let help = NSTextField(
             wrappingLabelWithString:
-                "Choose and order complete MKVs. MKV Magic maps every track, keeps one explicitly selected chapter edition per source, creates nested Part chapters, and enables saving only for a strict lossless candidate."
+                "Choose and order complete MKVs. MKV Magic maps every track, keeps one explicitly selected chapter edition per source, creates nested Part chapters, and recommends a common format only when lossless joining is not safe."
         )
         help.textColor = .secondaryLabelColor
 
@@ -701,9 +827,11 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         }
         lines.append("")
         lines.append("CHAPTER OUTPUT")
-        if let candidate = snapshot.candidate {
+        if let chapters = snapshot.candidate?.chapters
+            ?? snapshot.commonFormatCandidate?.chapters
+        {
             lines.append(
-                "  One default nested edition • \(candidate.chapters.document.chapterCount) entries • \(duration(candidate.chapters.duration))"
+                "  One default nested edition • \(chapters.document.chapterCount) entries • \(duration(chapters.duration))"
             )
         } else {
             lines.append("  Waiting for a complete strict review.")
@@ -717,11 +845,18 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         )
         reviewText.string = lines.joined(separator: "\n")
         continueButton.isEnabled = snapshot.isReady
-        if snapshot.isReady {
+        if snapshot.candidate != nil {
+            continueButton.title = "Continue to Save…"
             statusLabel.stringValue =
                 "Ready: zero video encodes. Bundled mkvmerge and the committed output will still be verified."
             statusLabel.textColor = .systemGreen
+        } else if let common = snapshot.commonFormatCandidate {
+            continueButton.title = "Review Common Format…"
+            statusLabel.stringValue =
+                "Ready to review: \(common.proposal.impact.videoEncodeCount) video generation and \(common.proposal.impact.audioEncodeCount) audio lane encode(s)."
+            statusLabel.textColor = .systemOrange
         } else {
+            continueButton.title = "Continue to Save…"
             statusLabel.stringValue = snapshot.blockerSummaries.first ?? "Review is incomplete."
             statusLabel.textColor = .systemOrange
         }
@@ -731,8 +866,8 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     @objc private func cancel() { onCancel?() }
 
     @objc private func continueJoin() {
-        guard let candidate = snapshot.candidate else { return }
-        onContinue?(candidate)
+        guard let selection = snapshot.selection else { return }
+        onContinue?(selection)
     }
 
     private func recursiveCount(_ atoms: [MatroskaChapterAtom]) -> Int {

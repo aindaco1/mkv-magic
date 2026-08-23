@@ -217,6 +217,115 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testCommonFormatJoinRequiresExplicitApprovalOfResolvedOnePassChoices() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: losslessJoinOption(part: 1, duration: 10, sampleRate: 48_000),
+                    editionID: nil
+                ),
+                LosslessJoinSourceSelection(
+                    option: losslessJoinOption(part: 2, duration: 10, sampleRate: 44_100),
+                    editionID: nil
+                ),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        XCTAssertNil(snapshot.candidate)
+        XCTAssertTrue(snapshot.isReady)
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        let audio = try XCTUnwrap(resolved.choices.audioTargetsByLane[0])
+        XCTAssertEqual(audio.codec, "AAC")
+        XCTAssertEqual(audio.channels, 2)
+        XCTAssertEqual(audio.channelLayout, "stereo")
+        XCTAssertEqual(audio.sampleRate, 48_000)
+        XCTAssertEqual(audio.bitrate, 192_000)
+        XCTAssertFalse(audio.allowsSyntheticSilence)
+
+        let controller = try CommonFormatJoinWindowController(candidate: candidate)
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+        XCTAssertEqual(window.title, "Review Common Format")
+        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 460))
+        let controls = buttons(in: content)
+        let approval = try XCTUnwrap(
+            controls.first { $0.title == "I approve every common-format choice above." }
+        )
+        let save = try XCTUnwrap(controls.first { $0.title == "Continue to Save…" })
+        XCTAssertFalse(save.isEnabled)
+        approval.performClick(nil)
+        XCTAssertTrue(save.isEnabled)
+        let review = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        ).string
+        XCTAssertTrue(review.contains("AAC, stereo, 48 kHz, 192 kbps"))
+        XCTAssertTrue(review.contains("one fused normalization pass"))
+        XCTAssertTrue(review.contains("nested Matroska edition"))
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_COMMON_JOIN_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            controller.showWindow(nil)
+            window.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+            content.cacheDisplay(in: bounds, to: representation)
+            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    @MainActor
+    func testJoinWindowOffersCommonFormatReviewWhenCapabilitiesAreVerified() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let controller = LosslessJoinWindowController(
+            options: [
+                losslessJoinOption(part: 1, duration: 10, sampleRate: 48_000),
+                losslessJoinOption(part: 2, duration: 10, sampleRate: 44_100),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let review = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Review Common Format…" }
+        )
+        XCTAssertTrue(review.isEnabled)
+    }
+
     func testLosslessJoinReviewRequiresExplicitChoiceForMultipleEditions() throws {
         let option = losslessJoinOption(
             part: 1,
@@ -345,9 +454,9 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(review.contains("AV1 remains preferred"))
         XCTAssertTrue(review.contains("verified fallback"))
         XCTAssertFalse(review.contains("one AV1 10-bit generation"))
-        XCTAssertFalse(
+        XCTAssertTrue(
             try XCTUnwrap(
-                buttons(in: content).first { $0.title == "Continue to Save…" }
+                buttons(in: content).first { $0.title == "Review Common Format…" }
             ).isEnabled
         )
     }
@@ -1478,7 +1587,9 @@ final class AppPolicyTests: XCTestCase {
                     channelLayout: "stereo",
                     sampleRate: sampleRate
                 )
-            ]
+            ],
+            globalTagCount: 0,
+            trackTagCount: 0
         )
         return LosslessJoinSourceOption(
             chapterPreview: ChapterEditPreview(
@@ -1526,7 +1637,9 @@ final class AppPolicyTests: XCTestCase {
                         matrix: "bt709"
                     )
                 )
-            ]
+            ],
+            globalTagCount: 0,
+            trackTagCount: 0
         )
         return LosslessJoinSourceOption(
             chapterPreview: ChapterEditPreview(

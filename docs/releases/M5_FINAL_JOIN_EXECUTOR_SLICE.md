@@ -75,3 +75,10 @@ and verified DMG packaging.
 - Join-boundary decode checks, exact trimming and native trim controls,
   private-library beta
   acceptance, and physical Intel performance acceptance.
+
+## Subsequent update
+
+The native exact-choice review, private one-pass orchestration, final-output
+progress, and single sanitized History lifecycle were completed in
+`M5_NATIVE_COMMON_FORMAT_JOIN_SLICE.md`. The remaining preservation, decode,
+beta, and Intel limitations above still apply.
