@@ -6,6 +6,7 @@ release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
 app_path="$release_root/MKV Magic.app"
 version="${MKV_MAGIC_VERSION:-0.0.0-dev}"
 build_number="${MKV_MAGIC_BUILD_NUMBER:-1}"
+bundle_identifier="${MKV_MAGIC_BUNDLE_IDENTIFIER:-com.dustwave.mkvmagic}"
 tool_source_root="${MKV_MAGIC_TOOL_SOURCE_ROOT:-}"
 require_tools="${MKV_MAGIC_REQUIRE_TOOLS:-0}"
 
@@ -31,6 +32,10 @@ if [[ ! "$build_number" =~ ^[1-9][0-9]*$ ]]; then
     echo "invalid MKV Magic build number: $build_number" >&2
     exit 64
 fi
+case "$bundle_identifier" in
+    com.dustwave.mkvmagic|com.dustwave.mkvmagic.package-gate) ;;
+    *) echo "invalid MKV Magic bundle identifier: $bundle_identifier" >&2; exit 64 ;;
+esac
 if [[ "$require_tools" != 0 && "$require_tools" != 1 ]]; then
     echo "MKV_MAGIC_REQUIRE_TOOLS must be 0 or 1" >&2
     exit 64
@@ -87,6 +92,8 @@ fi
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" \
     "$app_path/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" \
+    "$app_path/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $bundle_identifier" \
     "$app_path/Contents/Info.plist"
 
 codesign --remove-signature "$app_path/Contents/MacOS/MKVMagic" 2>/dev/null || true

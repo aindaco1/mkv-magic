@@ -64,7 +64,7 @@ jobs:
           ./scripts/release/validate-tag.sh "$RELEASE_TAG"
 
       - name: Install source-gate dependencies
-        run: brew install shellcheck
+        run: brew install ripgrep shellcheck
 
       - name: Validate source
         run: ./scripts/ci/local-gate.sh

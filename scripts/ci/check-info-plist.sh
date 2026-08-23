@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 plist="${1:-$repo_root/Sources/MKVMagic/Info.plist}"
+expected_bundle_identifier="${MKV_MAGIC_BUNDLE_IDENTIFIER:-com.dustwave.mkvmagic}"
 if [[ ! -f "$plist" || -L "$plist" ]]; then
     echo "missing or unsafe Info.plist" >&2
     exit 1
@@ -22,7 +23,7 @@ assert_value() {
 
 assert_value CFBundleDisplayName "MKV Magic"
 assert_value CFBundleExecutable MKVMagic
-assert_value CFBundleIdentifier com.dustwave.mkvmagic
+assert_value CFBundleIdentifier "$expected_bundle_identifier"
 assert_value CFBundlePackageType APPL
 assert_value LSMinimumSystemVersion 13.0
 assert_value NSPrincipalClass NSApplication

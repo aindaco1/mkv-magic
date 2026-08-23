@@ -8,6 +8,7 @@ cleanup() {
 }
 trap cleanup EXIT
 release_root="$gate_root/artifacts"
+export MKV_MAGIC_BUNDLE_IDENTIFIER=com.dustwave.mkvmagic.package-gate
 
 cd "$repo_root"
 MKV_MAGIC_RELEASE_ROOT="$release_root" \

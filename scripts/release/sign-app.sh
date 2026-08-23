@@ -16,6 +16,12 @@ if [[ ! -d "$app_input" || -L "$app_input" ]]; then
     exit 1
 fi
 app_path="$(cd "$(dirname "$app_input")" && pwd -P)/$(basename "$app_input")"
+bundle_identifier="$(plutil -extract CFBundleIdentifier raw -o - \
+    "$app_path/Contents/Info.plist")"
+if [[ "$signing_identity" != - && "$bundle_identifier" != com.dustwave.mkvmagic ]]; then
+    echo "Developer ID signing requires the production bundle identifier" >&2
+    exit 1
+fi
 framework="$app_path/Contents/Frameworks/Sparkle.framework"
 current="$framework/Versions/Current"
 if [[ ! -d "$framework" || -L "$framework" ]]; then

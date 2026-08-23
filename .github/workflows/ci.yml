@@ -24,12 +24,13 @@ jobs:
           persist-credentials: false
 
       - name: Install source-gate dependencies
-        run: brew install shellcheck
+        run: brew install ripgrep shellcheck
 
       - name: Report toolchain
         run: |
           swift --version
           xcodebuild -version
+          rg --version
           shellcheck --version
 
       - name: Validate source and Universal binary
@@ -82,6 +83,7 @@ jobs:
           MKV_MAGIC_REQUIRE_TOOLS: "1"
           MKV_MAGIC_VERSION: 0.0.0
           MKV_MAGIC_BUILD_NUMBER: 1
+          MKV_MAGIC_BUNDLE_IDENTIFIER: com.dustwave.mkvmagic.package-gate
         run: |
           ./scripts/tools/build-runtime.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
           ./scripts/release/build-app.sh
