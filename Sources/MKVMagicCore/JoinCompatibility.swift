@@ -47,6 +47,88 @@ public struct JoinTrackMappingProposal: Equatable, Sendable {
     }
 }
 
+public enum JoinTrackMappingEditingError: Error, Equatable, Sendable {
+    case invalidSourceIndex
+    case invalidLaneIndex
+    case missingTrack
+    case kindMismatch
+}
+
+extension JoinTrackMappingEditingError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .invalidSourceIndex: "The selected join source no longer exists."
+        case .invalidLaneIndex: "The selected output lane no longer exists."
+        case .missingTrack: "The selected source track no longer exists."
+        case .kindMismatch: "A track can only move to a lane of the same type."
+        }
+    }
+}
+
+/// Applies one explicit table edit without ever duplicating or discarding a
+/// source track. If the target cell already contains another track, the two
+/// assignments swap. A lane made completely empty by the move is removed.
+public struct JoinTrackMappingEditor: Sendable {
+    public init() {}
+
+    public func assigning(
+        trackID: Int,
+        fromSource sourceIndex: Int,
+        toLane targetLaneIndex: Int,
+        sources: [MediaAsset],
+        mapping: JoinTrackMapping
+    ) throws -> JoinTrackMapping {
+        _ = try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: mapping)
+        guard sources.indices.contains(sourceIndex) else {
+            throw JoinTrackMappingEditingError.invalidSourceIndex
+        }
+        guard mapping.lanes.indices.contains(targetLaneIndex) else {
+            throw JoinTrackMappingEditingError.invalidLaneIndex
+        }
+        guard let track = sources[sourceIndex].tracks.first(where: { $0.id == trackID }) else {
+            throw JoinTrackMappingEditingError.missingTrack
+        }
+        guard track.kind == mapping.lanes[targetLaneIndex].kind else {
+            throw JoinTrackMappingEditingError.kindMismatch
+        }
+        guard
+            let sourceLaneIndex = mapping.lanes.firstIndex(where: {
+                $0.trackIDsBySource[sourceIndex] == trackID
+            })
+        else {
+            throw JoinTrackMappingEditingError.missingTrack
+        }
+        guard sourceLaneIndex != targetLaneIndex else { return mapping }
+
+        var lanes = mapping.lanes
+        let displacedTrackID = lanes[targetLaneIndex].trackIDsBySource[sourceIndex]
+        lanes[targetLaneIndex] = replacing(
+            lanes[targetLaneIndex],
+            sourceIndex: sourceIndex,
+            trackID: trackID
+        )
+        lanes[sourceLaneIndex] = replacing(
+            lanes[sourceLaneIndex],
+            sourceIndex: sourceIndex,
+            trackID: displacedTrackID
+        )
+        lanes.removeAll { $0.trackIDsBySource.allSatisfy({ $0 == nil }) }
+        let edited = JoinTrackMapping(lanes: lanes)
+        _ = try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: edited)
+        return edited
+    }
+
+    private func replacing(
+        _ lane: JoinTrackLane,
+        sourceIndex: Int,
+        trackID: Int?
+    ) -> JoinTrackLane {
+        var trackIDs = lane.trackIDsBySource
+        trackIDs[sourceIndex] = trackID
+        return JoinTrackLane(kind: lane.kind, trackIDsBySource: trackIDs)
+    }
+}
+
 public enum JoinAppendDisposition: String, Equatable, Hashable, Sendable {
     case losslessCandidate
     case confirmationRequired

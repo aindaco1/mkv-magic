@@ -357,6 +357,133 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertNotNil(reviewed.candidate)
     }
 
+    func testManualTrackMappingResolvesAmbiguityAndBindsExactSourceOrder() throws {
+        let first = ambiguousSubtitleJoinOption(part: 1, trackIDs: [1, 2])
+        let second = ambiguousSubtitleJoinOption(part: 2, trackIDs: [11, 12])
+        let selections = [
+            LosslessJoinSourceSelection(option: first, editionID: nil),
+            LosslessJoinSourceSelection(option: second, editionID: nil),
+        ]
+        let automatic = LosslessJoinReviewBuilder.make(selections: selections)
+        XCTAssertNil(automatic.candidate)
+        XCTAssertEqual(automatic.unresolvedAmbiguities.count, 1)
+        let proposed = try XCTUnwrap(automatic.reviewedMapping)
+        let firstEdit = try JoinTrackMappingEditor().assigning(
+            trackID: 11,
+            fromSource: 1,
+            toLane: 0,
+            sources: selections.map(\.option.source),
+            mapping: proposed
+        )
+        let resolved = try JoinTrackMappingEditor().assigning(
+            trackID: 12,
+            fromSource: 1,
+            toLane: 1,
+            sources: selections.map(\.option.source),
+            mapping: firstEdit
+        )
+        let manual = LosslessJoinManualMapping(
+            sourceIDs: selections.map(\.option.source.id),
+            mapping: resolved
+        )
+
+        let reviewed = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            manualMapping: manual
+        )
+        XCTAssertNotNil(reviewed.candidate)
+        XCTAssertTrue(reviewed.usesManualMapping)
+        XCTAssertTrue(reviewed.unresolvedAmbiguities.isEmpty)
+        XCTAssertTrue(reviewed.blockerSummaries.isEmpty)
+        XCTAssertEqual(reviewed.candidate?.mapping.lanes.count, 2)
+
+        let stale = LosslessJoinReviewBuilder.make(
+            selections: selections.reversed(),
+            manualMapping: manual
+        )
+        XCTAssertNil(stale.selection)
+        XCTAssertTrue(stale.blockerSummaries.contains { $0.contains("source order") })
+    }
+
+    @MainActor
+    func testAmbiguousJoinOffersExplicitNativeMappingTable() throws {
+        let first = ambiguousSubtitleJoinOption(part: 1, trackIDs: [1, 2])
+        let second = ambiguousSubtitleJoinOption(part: 2, trackIDs: [11, 12])
+        let sources = [first.source, second.source]
+        let proposed = try JoinTrackMappingProposer().propose(sources: sources).mapping
+        let editor = JoinTrackMappingWindowController(
+            sources: sources,
+            mapping: proposed,
+            requiresResolution: true
+        )
+        let editorWindow = try XCTUnwrap(editor.window)
+        let editorContent = try XCTUnwrap(editorWindow.contentView)
+        editorWindow.setContentSize(editorWindow.minSize)
+        editorContent.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(editorWindow.title, "Resolve Track Mapping")
+        XCTAssertEqual(editorWindow.minSize, NSSize(width: 700, height: 420))
+        let mappingTable = try XCTUnwrap(
+            descendants(in: editorContent).compactMap { $0 as? NSTableView }.first
+        )
+        XCTAssertEqual(mappingTable.numberOfRows, 4)
+        let editorButtons = buttons(in: editorContent)
+        for title in ["Reset Proposal", "Cancel", "Use This Mapping"] {
+            XCTAssertTrue(editorButtons.contains { $0.title == title })
+        }
+        XCTAssertTrue(
+            try XCTUnwrap(editorButtons.first { $0.title == "Use This Mapping" }).isEnabled)
+        let helpText = descendants(in: editorContent).compactMap {
+            ($0 as? NSTextField)?.stringValue
+        }
+        .joined(separator: " ")
+        XCTAssertTrue(helpText.contains("no source track is duplicated or discarded"))
+        XCTAssertTrue(helpText.contains("every source track assigned once"))
+
+        let firstPopup = try XCTUnwrap(
+            mappingTable.view(atColumn: 2, row: 0, makeIfNecessary: true) as? NSPopUpButton
+        )
+        let track11 = try XCTUnwrap(
+            firstPopup.itemArray.first {
+                ($0.representedObject as? NSNumber)?.intValue == 11
+            }
+        )
+        firstPopup.select(track11)
+        firstPopup.sendAction(firstPopup.action, to: firstPopup.target)
+        XCTAssertEqual(mappingTable.numberOfRows, 3)
+
+        let secondPopup = try XCTUnwrap(
+            mappingTable.view(atColumn: 2, row: 1, makeIfNecessary: true) as? NSPopUpButton
+        )
+        let track12 = try XCTUnwrap(
+            secondPopup.itemArray.first {
+                ($0.representedObject as? NSNumber)?.intValue == 12
+            }
+        )
+        secondPopup.select(track12)
+        secondPopup.sendAction(secondPopup.action, to: secondPopup.target)
+        XCTAssertEqual(mappingTable.numberOfRows, 2)
+        XCTAssertTrue(try XCTUnwrap(editorButtons.first { $0.title == "Reset Proposal" }).isEnabled)
+        for button in editorButtons where !button.isHidden {
+            let frame = button.convert(button.bounds, to: editorContent)
+            XCTAssertGreaterThanOrEqual(frame.minX, editorContent.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, editorContent.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, editorContent.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, editorContent.bounds.maxY + 1)
+        }
+
+        let join = LosslessJoinWindowController(options: [first, second])
+        let joinContent = try XCTUnwrap(join.window?.contentView)
+        joinContent.layoutSubtreeIfNeeded()
+        let joinButtons = buttons(in: joinContent)
+        XCTAssertTrue(
+            try XCTUnwrap(joinButtons.first { $0.title == "Resolve Track Mapping…" }).isEnabled
+        )
+        XCTAssertFalse(
+            try XCTUnwrap(joinButtons.first { $0.title == "Continue to Save…" }).isEnabled
+        )
+    }
+
     @MainActor
     func testLosslessJoinWindowKeepsNativeReviewActionsVisibleAtMinimumSize() throws {
         let first = losslessJoinOption(part: 1, duration: 10)
@@ -1638,6 +1765,40 @@ final class AppPolicyTests: XCTestCase {
                     )
                 )
             ],
+            globalTagCount: 0,
+            trackTagCount: 0
+        )
+        return LosslessJoinSourceOption(
+            chapterPreview: ChapterEditPreview(
+                source: source,
+                original: MatroskaChapterDocument(editions: []),
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 1)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
+    }
+
+    private func ambiguousSubtitleJoinOption(
+        part: Int,
+        trackIDs: [Int]
+    ) -> LosslessJoinSourceOption {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Part \(part).mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            tracks: trackIDs.map { trackID in
+                MediaTrack(
+                    id: trackID,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    codecID: "S_TEXT/UTF8",
+                    uid: UInt64(part * 100 + trackID),
+                    language: "en"
+                )
+            },
             globalTagCount: 0,
             trackTagCount: 0
         )

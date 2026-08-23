@@ -15,6 +15,11 @@ struct LosslessJoinSourceSelection: Equatable, Sendable {
     let editionID: UUID?
 }
 
+struct LosslessJoinManualMapping: Equatable, Sendable {
+    let sourceIDs: [UUID]
+    let mapping: JoinTrackMapping
+}
+
 struct LosslessJoinCandidate: Equatable, Sendable {
     let sources: [MediaAsset]
     let chapterPreviews: [ChapterEditPreview]
@@ -41,6 +46,9 @@ enum JoinReviewSelection: Equatable, Sendable {
 struct LosslessJoinReviewSnapshot: Equatable, Sendable {
     let candidate: LosslessJoinCandidate?
     let commonFormatCandidate: CommonFormatJoinCandidate?
+    let reviewedMapping: JoinTrackMapping?
+    let unresolvedAmbiguities: [JoinTrackMappingAmbiguity]
+    let usesManualMapping: Bool
     let laneSummaries: [String]
     let issueSummaries: [String]
     let normalizationSummaries: [String]
@@ -58,6 +66,7 @@ struct LosslessJoinReviewSnapshot: Equatable, Sendable {
 enum LosslessJoinReviewBuilder {
     static func make(
         selections: [LosslessJoinSourceSelection],
+        manualMapping: LosslessJoinManualMapping? = nil,
         encodingCapabilities: FFmpegEncodingCapabilities? = nil
     ) -> LosslessJoinReviewSnapshot {
         guard selections.count >= 2 else {
@@ -66,22 +75,42 @@ enum LosslessJoinReviewBuilder {
 
         let sources = selections.map(\.option.source)
         let proposal: JoinTrackMappingProposal
-        let report: JoinCompatibilityReport
         do {
             proposal = try JoinTrackMappingProposer().propose(sources: sources)
+        } catch {
+            return blocked("The track map could not be built: \(error.localizedDescription)")
+        }
+        let mapping: JoinTrackMapping
+        let unresolvedAmbiguities: [JoinTrackMappingAmbiguity]
+        let usesManualMapping: Bool
+        if let manualMapping {
+            guard manualMapping.sourceIDs == sources.map(\.id) else {
+                return blocked(
+                    "The reviewed track map no longer matches the selected source order.")
+            }
+            mapping = manualMapping.mapping
+            unresolvedAmbiguities = []
+            usesManualMapping = true
+        } else {
+            mapping = proposal.mapping
+            unresolvedAmbiguities = proposal.ambiguities
+            usesManualMapping = false
+        }
+        let report: JoinCompatibilityReport
+        do {
             report = try JoinCompatibilityAnalyzer().analyze(
                 sources: sources,
-                mapping: proposal.mapping
+                mapping: mapping
             )
         } catch {
             return blocked("The track map could not be built: \(error.localizedDescription)")
         }
 
-        let lanes = laneSummaries(mapping: proposal.mapping, sources: sources)
+        let lanes = laneSummaries(mapping: mapping, sources: sources)
         let issues = report.issues.map { issueSummary($0, sources: sources) }
         var sharedBlockers = [String]()
-        if !proposal.ambiguities.isEmpty {
-            for ambiguity in proposal.ambiguities {
+        if !unresolvedAmbiguities.isEmpty {
+            for ambiguity in unresolvedAmbiguities {
                 sharedBlockers.append(
                     "Part \(ambiguity.sourceIndex + 1) has ambiguous "
                         + "\(ambiguity.kind.rawValue) tracks "
@@ -92,7 +121,7 @@ enum LosslessJoinReviewBuilder {
         }
         if let firstSource = sources.first {
             var stableUIDs = Set<UInt64>()
-            for lane in proposal.mapping.lanes {
+            for lane in mapping.lanes {
                 guard let trackID = lane.trackIDsBySource.first ?? nil,
                     let track = firstSource.tracks.first(where: { $0.id == trackID }),
                     let uid = track.uid,
@@ -160,7 +189,7 @@ enum LosslessJoinReviewBuilder {
                 LosslessJoinCandidate(
                     sources: sources,
                     chapterPreviews: selections.map(\.option.chapterPreview),
-                    mapping: proposal.mapping,
+                    mapping: mapping,
                     report: report,
                     chapters: $0
                 )
@@ -169,9 +198,9 @@ enum LosslessJoinReviewBuilder {
 
         let normalization = normalizationReview(
             sources: sources,
-            mapping: proposal.mapping,
+            mapping: mapping,
             report: report,
-            hasAmbiguities: !proposal.ambiguities.isEmpty,
+            hasAmbiguities: !unresolvedAmbiguities.isEmpty,
             encodingCapabilities: encodingCapabilities
         )
         let commonFormatCandidate: CommonFormatJoinCandidate?
@@ -185,7 +214,7 @@ enum LosslessJoinReviewBuilder {
             commonFormatCandidate = CommonFormatJoinCandidate(
                 sources: sources,
                 chapterPreviews: selections.map(\.option.chapterPreview),
-                mapping: proposal.mapping,
+                mapping: mapping,
                 report: report,
                 chapters: chapters,
                 proposal: normalizationProposal,
@@ -201,6 +230,9 @@ enum LosslessJoinReviewBuilder {
         return LosslessJoinReviewSnapshot(
             candidate: candidate,
             commonFormatCandidate: commonFormatCandidate,
+            reviewedMapping: mapping,
+            unresolvedAmbiguities: unresolvedAmbiguities,
+            usesManualMapping: usesManualMapping,
             laneSummaries: lanes,
             issueSummaries: issues,
             normalizationSummaries: normalization.summaries,
@@ -212,6 +244,9 @@ enum LosslessJoinReviewBuilder {
         LosslessJoinReviewSnapshot(
             candidate: nil,
             commonFormatCandidate: nil,
+            reviewedMapping: nil,
+            unresolvedAmbiguities: [],
+            usesManualMapping: false,
             laneSummaries: [],
             issueSummaries: [],
             normalizationSummaries: [],
@@ -487,6 +522,7 @@ enum LosslessJoinReviewBuilder {
 @MainActor
 final class LosslessJoinWindowController: NSWindowController {
     private let joinViewController: LosslessJoinViewController
+    private var trackMappingWindowController: JoinTrackMappingWindowController?
     private var completion: ((JoinReviewSelection?) -> Void)?
 
     init(
@@ -506,6 +542,13 @@ final class LosslessJoinWindowController: NSWindowController {
         joinViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         joinViewController.onContinue = { [weak self] selection in
             self?.finish(with: selection)
+        }
+        joinViewController.onEditMapping = { [weak self] sources, mapping, requiresResolution in
+            self?.editMapping(
+                sources: sources,
+                mapping: mapping,
+                requiresResolution: requiresResolution
+            )
         }
     }
 
@@ -533,6 +576,29 @@ final class LosslessJoinWindowController: NSWindowController {
         completion?(selection)
         completion = nil
     }
+
+    private func editMapping(
+        sources: [MediaAsset],
+        mapping: JoinTrackMapping,
+        requiresResolution: Bool
+    ) {
+        guard let window else { return }
+        let controller = JoinTrackMappingWindowController(
+            sources: sources,
+            mapping: mapping,
+            requiresResolution: requiresResolution
+        )
+        trackMappingWindowController = controller
+        controller.beginSheet(for: window) { [weak self] editedMapping in
+            guard let self else { return }
+            self.trackMappingWindowController = nil
+            guard let editedMapping else { return }
+            self.joinViewController.acceptManualMapping(
+                editedMapping,
+                sourceIDs: sources.map(\.id)
+            )
+        }
+    }
 }
 
 @MainActor
@@ -541,14 +607,19 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
 {
     var onCancel: (() -> Void)?
     var onContinue: ((JoinReviewSelection) -> Void)?
+    var onEditMapping: (([MediaAsset], JoinTrackMapping, Bool) -> Void)?
 
     private var options: [LosslessJoinSourceOption]
     private let encodingCapabilities: FFmpegEncodingCapabilities?
     private var includedIDs: Set<UUID>
     private var editionIDs = [UUID: UUID]()
+    private var manualMapping: LosslessJoinManualMapping?
     private var snapshot = LosslessJoinReviewSnapshot(
         candidate: nil,
         commonFormatCandidate: nil,
+        reviewedMapping: nil,
+        unresolvedAmbiguities: [],
+        usesManualMapping: false,
         laneSummaries: [],
         issueSummaries: [],
         normalizationSummaries: [],
@@ -560,6 +631,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private let continueButton = NSButton(title: "Continue to Save…", target: nil, action: nil)
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
+    private let mappingButton = NSButton(title: "Edit Track Mapping…", target: nil, action: nil)
 
     init(
         options: [LosslessJoinSourceOption],
@@ -616,8 +688,15 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         moveUpButton.action = #selector(moveSourceUp)
         moveDownButton.target = self
         moveDownButton.action = #selector(moveSourceDown)
-        let orderButtons = NSStackView(views: [moveUpButton, moveDownButton])
+        mappingButton.target = self
+        mappingButton.action = #selector(editMapping)
+        let orderSpacer = NSView()
+        orderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let orderButtons = NSStackView(views: [
+            moveUpButton, moveDownButton, orderSpacer, mappingButton,
+        ])
         orderButtons.orientation = .horizontal
+        orderButtons.alignment = .centerY
         orderButtons.spacing = 8
 
         let reviewHeading = NSTextField(labelWithString: "Compatibility review")
@@ -665,6 +744,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             tableScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
             reviewScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             reviewScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
+            orderButtons.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         view = root
@@ -765,6 +845,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         guard options.indices.contains(sender.tag) else { return }
         let id = options[sender.tag].source.id
         if sender.state == .on { includedIDs.insert(id) } else { includedIDs.remove(id) }
+        manualMapping = nil
         tableView.reloadData()
         refreshReview()
     }
@@ -790,6 +871,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         let destination = row + offset
         guard options.indices.contains(row), options.indices.contains(destination) else { return }
         options.swapAt(row, destination)
+        manualMapping = nil
         tableView.reloadData()
         tableView.selectRowIndexes(IndexSet(integer: destination), byExtendingSelection: false)
         refreshReview()
@@ -803,18 +885,16 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     }
 
     private func refreshReview() {
-        let selections = options.compactMap { option -> LosslessJoinSourceSelection? in
-            guard includedIDs.contains(option.source.id) else { return nil }
-            return LosslessJoinSourceSelection(
-                option: option,
-                editionID: editionIDs[option.source.id]
-            )
-        }
+        let selections = selectedSources()
         snapshot = LosslessJoinReviewBuilder.make(
             selections: selections,
+            manualMapping: manualMapping,
             encodingCapabilities: encodingCapabilities
         )
         var lines = ["TRACK LANES"]
+        if snapshot.usesManualMapping {
+            lines.append("  Explicit mapping confirmed for this exact source order.")
+        }
         lines.append(
             contentsOf: snapshot.laneSummaries.isEmpty
                 ? ["  None yet"] : snapshot.laneSummaries.map { "  \($0)" })
@@ -844,6 +924,10 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
                 : snapshot.normalizationSummaries.map { "  \($0)" }
         )
         reviewText.string = lines.joined(separator: "\n")
+        mappingButton.isEnabled = snapshot.reviewedMapping != nil
+        mappingButton.title =
+            snapshot.unresolvedAmbiguities.isEmpty
+            ? "Edit Track Mapping…" : "Resolve Track Mapping…"
         continueButton.isEnabled = snapshot.isReady
         if snapshot.candidate != nil {
             continueButton.title = "Continue to Save…"
@@ -861,6 +945,28 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             statusLabel.textColor = .systemOrange
         }
         updateMoveButtons()
+    }
+
+    private func selectedSources() -> [LosslessJoinSourceSelection] {
+        options.compactMap { option -> LosslessJoinSourceSelection? in
+            guard includedIDs.contains(option.source.id) else { return nil }
+            return LosslessJoinSourceSelection(
+                option: option,
+                editionID: editionIDs[option.source.id]
+            )
+        }
+    }
+
+    @objc private func editMapping() {
+        guard let mapping = snapshot.reviewedMapping else { return }
+        let sources = selectedSources().map(\.option.source)
+        onEditMapping?(sources, mapping, !snapshot.unresolvedAmbiguities.isEmpty)
+    }
+
+    func acceptManualMapping(_ mapping: JoinTrackMapping, sourceIDs: [UUID]) {
+        guard selectedSources().map(\.option.source.id) == sourceIDs else { return }
+        manualMapping = LosslessJoinManualMapping(sourceIDs: sourceIDs, mapping: mapping)
+        refreshReview()
     }
 
     @objc private func cancel() { onCancel?() }

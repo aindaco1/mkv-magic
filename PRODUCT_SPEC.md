@@ -924,8 +924,13 @@ reopen. Direct packet-copy lanes also receive streaming ordered payload
 fingerprints: audio, subtitles, and other codecs use exact FFprobe packet hashes;
 H.264/HEVC video removes only muxer-managed parameter-set units before hashing
 the retained encoded packet bodies. This remains memory-bounded for long media
-and fails on packet loss, reordering, or payload changes. Manual join mapping
-remains before the M5 gate is complete.
+and fails on packet loss, reordering, or payload changes. Ambiguous automatic
+matches now open a native lane-by-source table. Each explicit edit moves or
+swaps a same-type track while preserving the exhaustive exactly-once mapping;
+the confirmed map is bound to the exact source identities and order. A real
+two-lane ambiguous fixture passes the full app transaction without changing
+either source. M5 implementation is complete; private-library beta and physical
+Intel performance acceptance remain before the milestone is accepted.
 
 ### M6 — Transcoding and hardware adaptation
 

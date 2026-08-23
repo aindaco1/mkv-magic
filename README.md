@@ -83,8 +83,11 @@ prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results, compares the exact nested chapter XML,
 decodes a bounded window spanning every join, and fingerprints the ordered
-encoded packet payloads of every lane promised as a direct copy. Manual
-ambiguity mapping remains pending. When a reviewed group
+encoded packet payloads of every lane promised as a direct copy. When automatic
+matching finds indistinguishable tracks, **Resolve Track Mapping…** opens an
+explicit lane-by-Part table. Selecting a same-type track moves or swaps its
+assignment, never duplicates or discards it, and the confirmed map is invalidated
+if source inclusion or order changes. When a reviewed group
 needs normalization, the same window previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
@@ -122,8 +125,8 @@ approval before Save. The app binds the approval to unchanged source and chapter
 revisions, creates the verified normalized bundle only in private temporary
 storage, assembles the final MKV, adds only the reopened final result to the
 library, and records exactly one sanitized History job. Source tags, executable
-subtitle conversion/gaps, HDR conversion, and manual ambiguous mapping continue
-to fail closed before encoding.
+subtitle conversion/gaps, and HDR conversion continue to fail closed before
+encoding.
 
 For an eligible inspected MKV, **Trim…** now opens one compact native review
 window. Five bounded local thumbnails provide quick **Set In** and **Set Out**

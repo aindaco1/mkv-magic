@@ -86,7 +86,6 @@ and DMG verification.
 ## Still pending
 
 - Join-boundary decode spot checks and copied-stream fingerprints.
-- Manual mapping for ambiguous track lanes.
 - Source-tag preservation and executable text-subtitle conversion/gap support.
 - HDR10-preserving normalization and explicit mixed SDR/HDR conversion choices.
 - Private-library beta, physical Intel performance acceptance, and public release.
@@ -94,5 +93,6 @@ and DMG verification.
 ## Subsequent update
 
 Boundary decode and direct copied-payload fingerprints were completed in
-`M5_JOIN_OUTPUT_AUDIT_SLICE.md`. The manual mapping, preservation, HDR, beta,
-Intel, and release limitations above remain current.
+`M5_JOIN_OUTPUT_AUDIT_SLICE.md`; manual mapping was completed in
+`M5_MANUAL_TRACK_MAPPING_SLICE.md`. The preservation, HDR, beta, Intel, and
+release limitations above remain current.

@@ -75,5 +75,7 @@ DMG packaging.
 - Single-pass multi-lane fingerprint demux optimization for unusually large
   track counts; the current implementation is memory-bounded but scans once per
   copied lane.
-- Manual mapping for ambiguous track lanes.
 - Private-library beta, physical Intel performance acceptance, and public release.
+
+Manual mapping for ambiguous track lanes was subsequently completed in
+`M5_MANUAL_TRACK_MAPPING_SLICE.md`.

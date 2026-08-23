@@ -85,5 +85,6 @@ the private temporary output.
 
 Fast and Exact Trim, native common-format Join, and strict boundary/payload
 auditing were subsequently completed. The current output-audit contract and
-evidence are recorded in `M5_JOIN_OUTPUT_AUDIT_SLICE.md`; manual mapping, beta,
-and physical Intel acceptance remain pending.
+evidence are recorded in `M5_JOIN_OUTPUT_AUDIT_SLICE.md`; manual mapping was
+completed in `M5_MANUAL_TRACK_MAPPING_SLICE.md`. Beta and physical Intel
+acceptance remain pending.

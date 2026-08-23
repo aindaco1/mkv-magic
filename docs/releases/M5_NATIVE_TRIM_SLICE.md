@@ -87,7 +87,8 @@ SBOM/checksums, ZIP/appcast assembly, and checksum-verified DMG packaging.
 ## Subsequent update
 
 Native common-format choice approval and app-level one-pass execution were
-completed in `M5_NATIVE_COMMON_FORMAT_JOIN_SLICE.md`. Manual ambiguous mapping,
-and the other trim limitations above remain current. Join-boundary decode and
+completed in `M5_NATIVE_COMMON_FORMAT_JOIN_SLICE.md`. Join-boundary decode and
 direct copied-payload checks were subsequently completed in
-`M5_JOIN_OUTPUT_AUDIT_SLICE.md`.
+`M5_JOIN_OUTPUT_AUDIT_SLICE.md`, and manual ambiguous mapping was completed in
+`M5_MANUAL_TRACK_MAPPING_SLICE.md`. The other trim limitations above remain
+current.

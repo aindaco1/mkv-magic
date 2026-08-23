@@ -552,6 +552,126 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testRealManualMappingJoinsAmbiguousTracksExactlyOnce() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-manual-map-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: fixtureRoot,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let sourceURLs = [
+            fixtureRoot.appendingPathComponent("Ambiguous One.mkv"),
+            fixtureRoot.appendingPathComponent("Ambiguous Two.mkv"),
+        ]
+        for (index, sourceURL) in sourceURLs.enumerated() {
+            let raw = fixtureRoot.appendingPathComponent("audio-\(index).pcm")
+            try Data(repeating: UInt8(index), count: 96_000).write(to: raw)
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .ffmpeg),
+                    arguments: [
+                        "-hide_banner", "-nostdin", "-loglevel", "error",
+                        "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", raw.path,
+                        "-map", "0:a", "-map", "0:a", "-c:a", "aac",
+                        "-metadata", "title=Manual Mapping Fixture",
+                        "-metadata:s:a:0", "language=eng",
+                        "-metadata:s:a:1", "language=eng",
+                        "-disposition:a:0", "default",
+                        "-disposition:a:1", "0",
+                        sourceURL.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+        }
+        let sourceDigests = try sourceURLs.map {
+            SHA256.hash(data: try Data(contentsOf: $0))
+        }
+        let destination = fixtureRoot.appendingPathComponent("Mapped Join.mkv")
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { store })
+        await model.addFiles(sourceURLs)
+        let options = try await model.loadLosslessJoinSourceOptions(model.assets)
+        let selections = options.map {
+            LosslessJoinSourceSelection(
+                option: $0,
+                editionID: $0.editions.count == 1 ? $0.editions[0].id : nil
+            )
+        }
+        let automatic = LosslessJoinReviewBuilder.make(selections: selections)
+        XCTAssertNil(automatic.candidate)
+        XCTAssertEqual(automatic.unresolvedAmbiguities.count, 1)
+        let ambiguity = try XCTUnwrap(automatic.unresolvedAmbiguities.first)
+        XCTAssertEqual(ambiguity.trackIDs.count, 2)
+        XCTAssertEqual(ambiguity.candidateLaneIndices.count, 2)
+        var mapping = try XCTUnwrap(automatic.reviewedMapping)
+        for (trackID, laneIndex) in zip(
+            ambiguity.trackIDs,
+            ambiguity.candidateLaneIndices
+        ) {
+            mapping = try JoinTrackMappingEditor().assigning(
+                trackID: trackID,
+                fromSource: ambiguity.sourceIndex,
+                toLane: laneIndex,
+                sources: selections.map(\.option.source),
+                mapping: mapping
+            )
+        }
+        let reviewed = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            manualMapping: LosslessJoinManualMapping(
+                sourceIDs: selections.map(\.option.source.id),
+                mapping: mapping
+            )
+        )
+        let candidate = try XCTUnwrap(
+            reviewed.candidate,
+            "\(reviewed.blockerSummaries); \(reviewed.issueSummaries)"
+        )
+        let preview = try await model.previewLosslessJoin(candidate)
+        let output = try await model.executeLosslessJoin(
+            preview: preview,
+            destinationURL: destination
+        )
+
+        XCTAssertEqual(output.tracks.filter { $0.kind == .audio }.count, 2)
+        XCTAssertEqual(output.chapterEntryCount, 2)
+        XCTAssertEqual(
+            try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+            sourceDigests
+        )
+        let records = try await store.load()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowName, "Join MKV files losslessly")
+        XCTAssertEqual(record.inputDisplayNames, ["Ambiguous One.mkv", "Ambiguous Two.mkv"])
+        XCTAssertEqual(record.outputDisplayName, "Mapped Join.mkv")
+        XCTAssertEqual(record.events.last?.state, .succeeded)
+    }
+
+    @MainActor
     func testRealFastTrimUsesReviewedKeyframesAndRecordsVerifiedLifecycle() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

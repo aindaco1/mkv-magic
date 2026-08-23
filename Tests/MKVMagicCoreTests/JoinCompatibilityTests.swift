@@ -250,6 +250,79 @@ final class JoinCompatibilityTests: XCTestCase {
         )
     }
 
+    func testManualEditorMovesAmbiguousTracksWithoutDroppingOrDuplicatingThem() throws {
+        let sources = [
+            asset(index: 0, tracks: [video(id: 0), subtitle(id: 1), subtitle(id: 2)]),
+            asset(index: 1, tracks: [video(id: 10), subtitle(id: 11), subtitle(id: 12)]),
+        ]
+        let proposed = try JoinTrackMappingProposer().propose(sources: sources).mapping
+        let editor = JoinTrackMappingEditor()
+
+        let firstEdit = try editor.assigning(
+            trackID: 11,
+            fromSource: 1,
+            toLane: 1,
+            sources: sources,
+            mapping: proposed
+        )
+        let resolved = try editor.assigning(
+            trackID: 12,
+            fromSource: 1,
+            toLane: 2,
+            sources: sources,
+            mapping: firstEdit
+        )
+
+        XCTAssertEqual(
+            resolved.lanes,
+            [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10]),
+                JoinTrackLane(kind: .subtitle, trackIDsBySource: [1, 11]),
+                JoinTrackLane(kind: .subtitle, trackIDsBySource: [2, 12]),
+            ]
+        )
+        XCTAssertEqual(
+            try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: resolved)
+                .disposition,
+            .losslessCandidate
+        )
+    }
+
+    func testManualEditorSwapsOccupiedCellsAndRejectsWrongKinds() throws {
+        let sources = [
+            asset(index: 0, tracks: [video(id: 0), audio(id: 1), audio(id: 2)]),
+            asset(index: 1, tracks: [video(id: 10), audio(id: 11), audio(id: 12)]),
+        ]
+        let mapping = JoinTrackMapping(lanes: [
+            JoinTrackLane(kind: .video, trackIDsBySource: [0, 10]),
+            JoinTrackLane(kind: .audio, trackIDsBySource: [1, 11]),
+            JoinTrackLane(kind: .audio, trackIDsBySource: [2, 12]),
+        ])
+        let editor = JoinTrackMappingEditor()
+
+        let swapped = try editor.assigning(
+            trackID: 12,
+            fromSource: 1,
+            toLane: 1,
+            sources: sources,
+            mapping: mapping
+        )
+        XCTAssertEqual(swapped.lanes[1].trackIDsBySource, [1, 12])
+        XCTAssertEqual(swapped.lanes[2].trackIDsBySource, [2, 11])
+
+        XCTAssertThrowsError(
+            try editor.assigning(
+                trackID: 10,
+                fromSource: 1,
+                toLane: 1,
+                sources: sources,
+                mapping: mapping
+            )
+        ) { error in
+            XCTAssertEqual(error as? JoinTrackMappingEditingError, .kindMismatch)
+        }
+    }
+
     func testProposalUsesObviousOneToOneLaneButStillReportsMetadataDifference() throws {
         let frenchAudio = MediaTrack(
             id: 11,
