@@ -52,6 +52,14 @@ and the original file are preserved. The replacement is re-extracted before
 commit and after reopen; compatible contiguous packet timelines receive an
 additional exact nanosecond timing audit, while gapped timelines avoid an unsafe
 timestamp override and retain the subtitle format's own timing semantics.
+For inspected Matroska files, **Chapters…** now opens a native nested Chapter
+Studio. It can add, remove, duplicate, nest, and unnest editions and atoms; edit
+nanosecond start/end values, flags, and localized display names; generate fixed
+interval chapters; explicitly flatten leaf chapters for Jellyfin; and import or
+export Matroska XML and simple chapter text. The reviewed tree is written only
+to a temporary clone with `mkvpropedit`, then re-extracted for exact hierarchy,
+UID, timestamp, language, and flag comparison before commit and after reopen.
+The thumbnail timeline and scene/black/silence suggestions remain M4 work.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

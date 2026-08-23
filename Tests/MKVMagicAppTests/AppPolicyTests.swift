@@ -870,6 +870,64 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
     }
 
+    @MainActor
+    func testChapterStudioExposesNestedEditingAndExplicitFlatteningActions() throws {
+        let sourceURL = URL(fileURLWithPath: "/tmp/Movie.mkv")
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 60_000_000_000)
+        )
+        let original = MatroskaChapterDocument(
+            editions: [
+                MatroskaChapterEdition(
+                    uid: 1,
+                    chapters: [
+                        MatroskaChapterAtom(
+                            uid: 2,
+                            start: .zero,
+                            displays: [ChapterDisplay(title: "Opening")]
+                        )
+                    ]
+                )
+            ]
+        )
+        let controller = ChapterStudioWindowController(
+            preview: ChapterEditPreview(
+                source: source,
+                original: original,
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 0)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let titles = buttonTitles(in: content)
+
+        for expected in [
+            "Add Edition", "Add Chapter", "Add Child", "Duplicate", "Remove", "Nest",
+            "Unnest", "Every…", "Flatten for Jellyfin", "Import…", "Export…", "Use Changes",
+        ] {
+            XCTAssertTrue(titles.contains(expected), "Missing Chapter Studio action \(expected)")
+        }
+
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_CHAPTER_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            controller.showWindow(nil)
+            controller.window?.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+            content.cacheDisplay(in: bounds, to: representation)
+            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
     private func makeHistoryRecord(id: UUID, createdAt: Date) throws -> MediaJobRecord {
         var record = MediaJobRecord(
             id: id,
@@ -908,6 +966,12 @@ final class AppPolicyTests: XCTestCase {
             cleanup: AdvancedSubStationAlphaCleanupPolicy().preview(parsed.document),
             normalizationNeeded: false
         )
+    }
+
+    @MainActor
+    private func buttonTitles(in view: NSView) -> [String] {
+        let own = (view as? NSButton).map { [$0.title] } ?? []
+        return own + view.subviews.flatMap(buttonTitles)
     }
 }
 

@@ -18,6 +18,7 @@ final class AppModel {
         case saved(CompiledSavedWorkflow)
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
+        case chapters(ChapterEditPreview, MatroskaChapterDocument)
 
         var workflowID: UUID {
             switch self {
@@ -26,6 +27,7 @@ final class AppModel {
             case .saved(let workflow): workflow.workflowID
             case .externalSubtitle: AppModel.externalSubtitleMuxWorkflowID
             case .embeddedSubtitle: AppModel.embeddedSubtitleCleanupWorkflowID
+            case .chapters: AppModel.chapterEditWorkflowID
             }
         }
 
@@ -38,6 +40,7 @@ final class AppModel {
                 "Add external \(preview.format.displayName) subtitle"
             case .embeddedSubtitle(let preview, _):
                 "Clean embedded \(preview.format.displayName) subtitle"
+            case .chapters: "Edit Matroska chapters"
             }
         }
 
@@ -53,6 +56,8 @@ final class AppModel {
                 "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
             case .embeddedSubtitle(let preview, _):
                 "Zero encodes; replace one reviewed embedded \(preview.format.displayName) track at its original position in one verified remux."
+            case .chapters(_, let document):
+                "Zero encodes; replace the chapter document with \(document.chapterCount) reviewed nested entries on a verified clone."
             }
         }
 
@@ -68,6 +73,8 @@ final class AppModel {
                 "Adding one reviewed subtitle to a temporary MKV remux."
             case .embeddedSubtitle:
                 "Replacing one reviewed embedded subtitle in a temporary MKV remux."
+            case .chapters:
+                "Replacing chapters in one temporary MKV clone."
             }
         }
 
@@ -160,6 +167,26 @@ final class AppModel {
             runner: runner,
             inspector: inspector
         ).preview(source: source, trackUID: trackUID)
+    }
+
+    func previewChapters(in source: MediaAsset) async throws -> ChapterEditPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try await ChapterEditExecutor(
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source)
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -374,6 +401,19 @@ final class AppModel {
             in: preview.source,
             destinationURL: destinationURL,
             edit: .embeddedSubtitle(preview, restoringIDs: restoringIDs)
+        )
+    }
+
+    @discardableResult
+    func editChapters(
+        preview: ChapterEditPreview,
+        desired: MatroskaChapterDocument,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: preview.source,
+            destinationURL: destinationURL,
+            edit: .chapters(preview, desired)
         )
     }
 
@@ -614,6 +654,25 @@ final class AppModel {
                         )
                     }
                 )
+            case .chapters(let preview, let desired):
+                let executor = ChapterEditExecutor(
+                    mkvextractURL: try catalog.url(for: .mkvextract),
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    preview: preview,
+                    desired: desired,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    }
+                )
             }
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
@@ -755,6 +814,11 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? ChapterEditExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         return "Edit stopped before a verified commit."
     }
 
@@ -804,6 +868,9 @@ final class AppModel {
     )!
     nonisolated private static let embeddedSubtitleCleanupWorkflowID = UUID(
         uuidString: "C3A2A7DD-8C17-4A91-A9BC-9750F35A9C6F"
+    )!
+    nonisolated private static let chapterEditWorkflowID = UUID(
+        uuidString: "01898D29-C2C9-44C4-A87D-B72A3AB90FF8"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

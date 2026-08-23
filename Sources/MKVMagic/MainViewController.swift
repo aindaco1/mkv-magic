@@ -18,6 +18,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         )
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
+        case chapters(ChapterEditPreview, MatroskaChapterDocument)
     }
 
     private enum SubtitleCleanupCandidate {
@@ -84,6 +85,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
     private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
+    private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
@@ -96,6 +98,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
+    private var chapterStudioWindowController: ChapterStudioWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -281,6 +284,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         addSubtitleButton.target = self
         addSubtitleButton.action = #selector(addExternalSubtitle)
         addSubtitleButton.isEnabled = false
+        chaptersButton.target = self
+        chaptersButton.action = #selector(editChapters)
+        chaptersButton.isEnabled = false
         let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
         metadataButtons.orientation = .horizontal
         metadataButtons.spacing = 8
@@ -290,10 +296,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let subtitleButtons = NSStackView(views: [cleanSubtitleButton, addSubtitleButton])
         subtitleButtons.orientation = .horizontal
         subtitleButtons.spacing = 8
+        let chapterButtons = NSStackView(views: [chaptersButton])
+        chapterButtons.orientation = .horizontal
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
-            subtitleButtons,
+            subtitleButtons, chapterButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -490,6 +498,53 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             } catch {
                 self.impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
                 self.clearPendingChange()
+            }
+        }
+    }
+
+    @objc private func editChapters() {
+        guard let asset = selectedAsset, MatroskaEditingPolicy.supports(asset),
+            let parentWindow = view.window
+        else { return }
+        statusLabel.stringValue =
+            "Extracting nested chapters from \(asset.sourceURL.lastPathComponent)…"
+        chaptersButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewChapters(in: asset)
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                let controller = ChapterStudioWindowController(preview: preview)
+                chapterStudioWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] desired in
+                    guard let self else { return }
+                    self.chapterStudioWindowController = nil
+                    self.chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+                    guard let desired else {
+                        self.refresh()
+                        return
+                    }
+                    guard self.selectedAsset?.id == asset.id else {
+                        self.clearPendingChange()
+                        self.refresh()
+                        return
+                    }
+                    self.pendingChange = .chapters(preview, desired)
+                    self.pendingAssetID = asset.id
+                    self.impactLabel.stringValue =
+                        "0 video encodes • mkvpropedit • \(desired.chapterCount) nested entries"
+                    self.statusLabel.stringValue = "Chapter edit plan ready"
+                    self.runButton.isEnabled = true
+                    self.runButton.toolTip =
+                        "Replace chapters on a temporary clone, re-extract the exact hierarchy, verify preserved media, then commit."
+                }
+            } catch {
+                statusLabel.stringValue = "Could not open chapters: \(error.localizedDescription)"
+                chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+                clearPendingChange()
             }
         }
     }
@@ -887,6 +942,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         removeTracksButton.isEnabled = false
         cleanSubtitleButton.isEnabled = false
         addSubtitleButton.isEnabled = false
+        chaptersButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
@@ -949,6 +1005,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         restoringIDs: restoringIDs,
                         destinationURL: destinationURL
                     ).sourceURL
+                case .chapters(let preview, let desired):
+                    outputURL = try await model.editChapters(
+                        preview: preview,
+                        desired: desired,
+                        destinationURL: destinationURL
+                    ).sourceURL
                 }
                 preferredSelectionURL =
                     model.assets.contains { $0.sourceURL == outputURL }
@@ -965,6 +1027,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
                 cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
                 addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+                chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
                 runButton.isEnabled =
                     self.pendingChange != nil
                     && pendingAssetID == asset.id
@@ -1011,6 +1074,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
             addSubtitleButton.isEnabled = false
+            chaptersButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -1032,6 +1096,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
             addSubtitleButton.isEnabled = false
+            chaptersButton.isEnabled = false
             return
         }
         var lines = [
@@ -1107,6 +1172,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             addSubtitleButton.isEnabled
             ? "Review and add one external SRT, ASS, or SSA track last in a verified MKV copy."
             : "External subtitle muxing currently requires an inspected Matroska video."
+        chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+        chaptersButton.toolTip =
+            chaptersButton.isEnabled
+            ? "Create and edit exact nested Matroska chapters without encoding."
+            : "Chapter Studio currently requires an inspected Matroska file."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {

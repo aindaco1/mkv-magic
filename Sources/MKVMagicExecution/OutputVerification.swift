@@ -310,6 +310,36 @@ public struct EmbeddedSubtitleReplacementOutputVerifier: Sendable {
     }
 }
 
+public struct ChapterReplacementOutputVerifier: Sendable {
+    public init() {}
+
+    /// Chapter contents are audited independently through a fresh `mkvextract` round trip.
+    public func verify(original: MediaAsset, output: MediaAsset) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container == original.container else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard durationsMatch(original.duration, output.duration) else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard output.tracks == original.tracks else {
+            throw OutputVerificationError.tracksChanged
+        }
+        guard output.metadata == original.metadata,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID == original.segmentUID else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public enum SegmentTitleExpectation: Equatable, Sendable {
     case preserve
     case set(String?)

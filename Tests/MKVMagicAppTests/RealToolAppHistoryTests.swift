@@ -34,6 +34,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let styledMuxOutput = fixtureRoot.appendingPathComponent("source — Styled.mkv")
         let embeddedCleanupOutput = fixtureRoot.appendingPathComponent(
             "source — Embedded Cleaned.mkv")
+        let chapterOutput = fixtureRoot.appendingPathComponent("source — Chapters.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
         try Data("1\n00:00:00,000 --> 00:00:00,500\nBonjour\n".utf8).write(to: subtitle)
         try Data(
@@ -195,9 +196,22 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
 
+        let chapterPreview = try await model.previewChapters(in: embeddedCleanedAsset)
+        let chapterDocument = try MatroskaChapterDocument.fixedInterval(
+            duration: try XCTUnwrap(embeddedCleanedAsset.duration),
+            interval: MediaTime(nanoseconds: 500_000_000)
+        )
+        let chapteredAsset = try await model.editChapters(
+            preview: chapterPreview,
+            desired: chapterDocument,
+            destinationURL: chapterOutput
+        )
+        XCTAssertGreaterThan(chapteredAsset.chapterEntryCount ?? 0, 0)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 7)
+        XCTAssertEqual(records.count, 8)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
@@ -279,6 +293,20 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         XCTAssertEqual(
             embeddedCleanupRecord.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let chapterRecord = records[7]
+        XCTAssertEqual(chapterRecord.workflowName, "Edit Matroska chapters")
+        XCTAssertEqual(chapterRecord.inputDisplayNames, ["source — Embedded Cleaned.mkv"])
+        XCTAssertEqual(chapterRecord.outputDisplayName, "source — Chapters.mkv")
+        XCTAssertTrue(
+            chapterRecord.events.contains {
+                $0.state == .planned
+                    && $0.message?.contains("nested entries") == true
+            }
+        )
+        XCTAssertEqual(
+            chapterRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
 

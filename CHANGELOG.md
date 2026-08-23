@@ -90,3 +90,12 @@ semantic versioning; public release tags are immutable and signed.
   segment facts. Preserve contiguous packet timelines at nanosecond precision;
   avoid MKVToolNix's timestamp override for gapped or non-contiguous retained
   cues because it would incorrectly extend a preceding subtitle.
+- Add the Chapter Studio core: exact nested edition/atom models, nanosecond
+  timestamp and language validation, bounded Matroska XML/simple-text codecs,
+  localized display names, edition/chapter flags, fixed-interval generation,
+  explicit Jellyfin leaf flattening, and a compact native outline editor.
+- Preview chapters with `mkvextract`, bind edits to the source revision and
+  canonical extracted tree, apply `mkvpropedit` only to a temporary clone, and
+  re-extract exact chapters before commit and after reopen while independently
+  verifying that tracks, duration, tags, attachments, metadata, and segment
+  identity remain unchanged.
