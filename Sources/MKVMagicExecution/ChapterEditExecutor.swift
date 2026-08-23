@@ -106,12 +106,12 @@ public struct ChapterEditExecutor<Runner: CommandRunning, Inspector: MediaInspec
         var digest: Data { Data(SHA256.hash(data: canonicalData)) }
     }
 
-    private let mkvextractURL: URL
     private let mkvpropeditURL: URL
     private let runner: Runner
     private let inspector: Inspector
     private let codec = MatroskaChapterXMLCodec()
     private let verifier = ChapterReplacementOutputVerifier()
+    private let chapterExtractor: MatroskaChapterDocumentExtractor<Runner>
 
     public init(
         mkvextractURL: URL,
@@ -119,10 +119,13 @@ public struct ChapterEditExecutor<Runner: CommandRunning, Inspector: MediaInspec
         runner: Runner,
         inspector: Inspector
     ) {
-        self.mkvextractURL = mkvextractURL
         self.mkvpropeditURL = mkvpropeditURL
         self.runner = runner
         self.inspector = inspector
+        chapterExtractor = MatroskaChapterDocumentExtractor(
+            mkvextractURL: mkvextractURL,
+            runner: runner
+        )
     }
 
     public func preview(source: MediaAsset) async throws -> ChapterEditPreview {
@@ -240,47 +243,26 @@ public struct ChapterEditExecutor<Runner: CommandRunning, Inspector: MediaInspec
     }
 
     private func extract(from fileURL: URL) async throws -> ExtractedDocument {
-        try await withPrivateDirectory { directory in
-            let outputURL = directory.appendingPathComponent("chapters.xml", isDirectory: false)
-            try await run(
-                tool: "mkvextract",
-                executableURL: mkvextractURL,
-                arguments: [fileURL.path, "chapters", outputURL.path],
-                timeout: 120
-            )
-            if !FileManager.default.fileExists(atPath: outputURL.path) {
-                return try emptyExtractedDocument()
-            }
-            guard
-                let values = try? outputURL.resourceValues(forKeys: [
-                    .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
-                ]),
-                values.isRegularFile == true,
-                values.isSymbolicLink != true,
-                let size = values.fileSize,
-                size >= 0,
-                size <= MatroskaChapterXMLCodec.maximumInputBytes
-            else {
-                throw ChapterEditExecutionError.unsafeChapterOutput
-            }
-            if size == 0 {
-                return try emptyExtractedDocument()
-            }
-            let data = try Data(contentsOf: outputURL, options: .mappedIfSafe)
-            let document = try codec.parse(data)
+        do {
+            let extracted = try await chapterExtractor.extract(from: fileURL)
             return ExtractedDocument(
-                document: document,
-                canonicalData: try codec.serialize(document)
+                document: extracted.document,
+                canonicalData: extracted.canonicalData
             )
+        } catch let error as MatroskaChapterOutputAuditError {
+            switch error {
+            case .toolFailed(let exitCode, let message):
+                throw ChapterEditExecutionError.toolFailed(
+                    tool: "mkvextract",
+                    exitCode: exitCode,
+                    message: message
+                )
+            case .unsafeExtractedDocument:
+                throw ChapterEditExecutionError.unsafeChapterOutput
+            case .mismatch:
+                throw ChapterEditExecutionError.chapterVerificationFailed
+            }
         }
-    }
-
-    private func emptyExtractedDocument() throws -> ExtractedDocument {
-        let document = MatroskaChapterDocument()
-        return ExtractedDocument(
-            document: document,
-            canonicalData: try codec.serialize(document)
-        )
     }
 
     private func run(

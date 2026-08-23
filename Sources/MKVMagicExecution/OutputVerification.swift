@@ -330,6 +330,87 @@ public struct LosslessJoinOutputVerifier: Sendable {
     }
 }
 
+public enum FastTrimVerificationError: Error, Equatable, Sendable {
+    case emptyOutput
+    case wrongContainer
+    case wrongDuration
+    case tracksChanged
+    case attachmentsChanged
+    case metadataChanged
+    case chaptersChanged
+    case segmentIdentityChanged
+}
+
+extension FastTrimVerificationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .emptyOutput: "The trimmed MKV is empty."
+        case .wrongContainer: "Fast Trim did not create a Matroska MKV."
+        case .wrongDuration: "The trimmed duration does not match the reviewed keyframes."
+        case .tracksChanged: "A stream changed during the lossless trim."
+        case .attachmentsChanged: "An attachment changed during the lossless trim."
+        case .metadataChanged: "Metadata or tags changed outside the reviewed trim."
+        case .chaptersChanged: "The trimmed chapter count does not match the reviewed tree."
+        case .segmentIdentityChanged: "The trimmed MKV did not receive a new segment identity."
+        }
+    }
+}
+
+public struct FastTrimOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        plan: FastTrimPlan,
+        chapters: MatroskaChapterDocument,
+        output: MediaAsset
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else { throw FastTrimVerificationError.emptyOutput }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw FastTrimVerificationError.wrongContainer
+        }
+        guard let duration = output.duration, duration.nanoseconds >= 0 else {
+            throw FastTrimVerificationError.wrongDuration
+        }
+        let difference = duration.nanoseconds.subtractingReportingOverflow(
+            plan.adjusted.duration.nanoseconds
+        )
+        guard !difference.overflow, difference.partialValue.magnitude <= 100_000_000 else {
+            throw FastTrimVerificationError.wrongDuration
+        }
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard
+            outputTracks.map(RemuxTrackSnapshot.init)
+                == originalTracks.map(RemuxTrackSnapshot.init)
+        else {
+            throw FastTrimVerificationError.tracksChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw FastTrimVerificationError.attachmentsChanged
+        }
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount
+        else {
+            throw FastTrimVerificationError.metadataChanged
+        }
+        let expectedTopLevelCount = chapters.editions.reduce(0) {
+            $0 + $1.chapters.count
+        }
+        guard output.chapterEntryCount == expectedTopLevelCount else {
+            throw FastTrimVerificationError.chaptersChanged
+        }
+        guard let outputUID = output.segmentUID,
+            original.segmentUID == nil || outputUID != original.segmentUID
+        else {
+            throw FastTrimVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public enum JoinFinalAssemblyVerificationError: Error, Equatable, Sendable {
     case emptyOutput
     case wrongContainer

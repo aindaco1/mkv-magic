@@ -60,8 +60,8 @@ command directly. It normalizes only mismatched video, appends AAC from the
 originals, verifies HEVC/AAC identity and exact chapters before and after atomic
 commit, and proves both originals remain byte-identical.
 
-The current suite contains 303 tests. The standard run has 18 intentional
-bundled-tool skips; the assembled-runtime run executes all 303 with zero skips.
+The current suite contains 316 tests. The standard run has 19 intentional
+bundled-tool skips; the assembled-runtime run executes all 316 with zero skips.
 The complete gate also covers coverage, AddressSanitizer, ThreadSanitizer,
 Universal build, signatures/entitlements, SBOM/checksums, ZIP/appcast assembly,
 and verified DMG packaging.
@@ -72,5 +72,6 @@ and verified DMG packaging.
   progress/history execution wiring.
 - Verified preservation of source tags and executable text-subtitle
   conversion/gap intermediates.
-- Join-boundary decode checks, fast/exact trimming, private-library beta
+- Join-boundary decode checks, exact trimming and native trim controls,
+  private-library beta
   acceptance, and physical Intel performance acceptance.

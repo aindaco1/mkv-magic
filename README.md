@@ -82,8 +82,8 @@ track identities. The app revalidates every exact source chapter document,
 prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results and compares the exact nested chapter XML.
-Manual ambiguity mapping, trim execution, decode spot checks, attachment
-selection, and complete common-format execution remain pending. When a reviewed group
+Manual ambiguity mapping, native trim controls, decode spot checks, attachment
+selection, and native common-format execution remain pending. When a reviewed group
 needs normalization, the same window now previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
@@ -114,6 +114,17 @@ repeats the complete audit after reopening the saved path. A real mixed-lane
 fixture passes this transaction without changing either original. The native
 preview still does not enable saving because exact choice controls and app-level
 execution wiring are not implemented yet.
+
+The internal Fast Trim path now scans the primary video track with bounded local
+`ffprobe`, shows the first-keyframe-at-or-after adjustment for both requested
+boundaries, and refuses to call the result frame-exact. For one-video Matroska
+MKVs it uses `mkvmerge --split parts:` with no video or audio encode, clips and
+rebases the complete nested chapter tree, writes that reviewed tree to the
+temporary output, and verifies streams, metadata, attachments, duration,
+segment identity, and canonical re-extracted chapters before commit and after
+reopen. It rejects ordered editions and changed sources rather than guessing.
+The native thumbnail/numeric Trim window and frame-exact encoding path remain
+pending.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current

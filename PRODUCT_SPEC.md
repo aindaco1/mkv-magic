@@ -884,9 +884,16 @@ paths, or overwrite. The revision-bound executor now runs this command inside
 the verified-output transaction, checks duration, stream identity/order,
 reviewed metadata, attachments, title, zero-tag policy, chapter count, and new
 segment identity, canonically compares re-extracted nested chapter XML, commits
-atomically, and repeats every audit after reopening. Manual mapping, native
-choice controls and execution wiring, fast/exact trimming, and join-boundary
-decode spot checks remain before the M5 gate is complete.
+atomically, and repeats every audit after reopening. The internal Fast Trim path
+now probes the primary video's keyframes, resolves each requested boundary to
+the first keyframe at or after it, explicitly exposes both adjustments, and
+executes `mkvmerge --split parts:` without encoding. It clips and rebases the
+full nested chapter tree, regenerates retained chapter identities, refuses
+ordered editions, binds the source and original chapter digest to review, and
+audits copied streams, metadata, attachments, duration, segment identity, and
+canonical nested chapters before commit and after reopen. Manual mapping,
+native choice/trim controls and execution wiring, frame-exact trimming, and
+join-boundary decode spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 
