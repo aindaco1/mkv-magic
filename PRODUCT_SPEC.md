@@ -904,9 +904,15 @@ rebased nested chapter tree, and verifies duration, streams, metadata,
 attachments, tags, chapter count/XML, and segment identity before commit and
 again after reopen. It currently fails closed for subtitle/data tracks, multiple
 video tracks, source tags, ordered chapters, HDR/Dolby Vision, incomplete facts,
-unavailable encoders, and non-MKV inputs. Manual mapping, native choice/trim
-controls and execution wiring, and join-boundary decode spot checks remain before
-the M5 gate is complete.
+unavailable encoders, and non-MKV inputs. The native Trim sheet now samples five
+local thumbnails, supports exact numeric in/out entry, defaults to disclosed
+zero-encode Fast Trim, and offers one-generation Exact Trim choices only from the
+active local capability probe. Save remains disabled until an immutable review
+has resolved the actual output range, encoder, audio policy, and clipped nested
+chapters. Both routes use shared cancellable verified-output progress, add the
+reopened result to inspection, and persist a sanitized History lifecycle. Manual
+join mapping, native common-format join execution choices, and join-boundary
+decode spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

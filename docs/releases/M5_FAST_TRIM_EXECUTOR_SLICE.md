@@ -83,3 +83,6 @@ compilation.
 The one-generation Exact Trim executor was subsequently accepted separately in
 `M5_EXACT_TRIM_EXECUTOR_SLICE.md`; that does not broaden this Fast Trim slice's
 own claims.
+
+The native-window item above was subsequently completed in
+`M5_NATIVE_TRIM_SLICE.md`; the remaining limitations still apply.

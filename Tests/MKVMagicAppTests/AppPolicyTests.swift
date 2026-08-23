@@ -114,6 +114,44 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testTrimmedOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.trimmedFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.WEBM")),
+            "Movie — Trimmed.mkv"
+        )
+    }
+
+    func testTrimPresentationRequiresOneMKVVideoAndCreatesBoundedOverviewTimes() {
+        let duration = MediaTime(nanoseconds: 60_000_000_000)
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska,webm",
+            duration: duration,
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "h264")]
+        )
+        XCTAssertTrue(TrimPresentationPolicy.canOfferTrim(for: source))
+        XCTAssertFalse(
+            TrimPresentationPolicy.canOfferTrim(
+                for: MediaAsset(
+                    sourceURL: URL(fileURLWithPath: "/Media/Movie.mp4"),
+                    container: "mov",
+                    duration: duration,
+                    tracks: source.tracks
+                )
+            )
+        )
+        let times = TrimPresentationPolicy.thumbnailTimes(duration: duration)
+        XCTAssertEqual(times.count, 5)
+        XCTAssertEqual(times.first, .zero)
+        XCTAssertEqual(times.last, MediaTime(nanoseconds: duration.nanoseconds - 1))
+        XCTAssertEqual(times, times.sorted())
+        XCTAssertEqual(
+            TrimPresentationPolicy.presetName(.hevcCompatibility),
+            "Fast — HEVC 10-bit"
+        )
+    }
+
     func testLosslessJoinReviewBuildsStrictNestedPartPlan() throws {
         let first = losslessJoinOption(
             part: 1,
@@ -1076,6 +1114,144 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(footer.frame.height, 52, accuracy: 0.5)
         XCTAssertEqual(splitView.arrangedSubviews.count, 3)
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
+        XCTAssertTrue(buttons(in: controller.view).contains { $0.title == "Trim…" })
+    }
+
+    @MainActor
+    func testTrimWindowKeepsThumbnailsNumericFieldsAndReviewActionsUsableAtMinimumSize()
+        throws
+    {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 60_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "h264",
+                    dimensions: MediaDimensions(width: 1_920, height: 1_080),
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                )
+            ]
+        )
+        let jpeg = try makeThumbnailJPEG()
+        let thumbnails = TrimPresentationPolicy.thumbnailTimes(
+            duration: try XCTUnwrap(source.duration)
+        ).map { ChapterThumbnail(time: $0, imageData: jpeg) }
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .unavailable,
+            proResEncoder: nil,
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let controller = TrimWindowController(
+            source: source,
+            thumbnails: thumbnails,
+            capabilities: capabilities,
+            reviewProvider: { _ in
+                throw NSError(
+                    domain: "TrimReviewFixture",
+                    code: 1,
+                    userInfo: [NSLocalizedDescriptionKey: "Fixture review failed."]
+                )
+            }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Trim MKV")
+        XCTAssertEqual(window.minSize, NSSize(width: 700, height: 570))
+        XCTAssertEqual(descendants(in: content).compactMap { $0 as? NSImageView }.count, 5)
+        XCTAssertEqual(
+            descendants(in: content).compactMap { $0 as? NSTextField }.filter {
+                $0.isEditable
+            }.count, 2)
+        let mode = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSSegmentedControl }.first
+        )
+        XCTAssertEqual(mode.segmentCount, 2)
+        XCTAssertEqual(mode.label(forSegment: 0), "Fast (No Encoding)")
+        XCTAssertEqual(mode.label(forSegment: 1), "Exact")
+        let controls = buttons(in: content)
+        XCTAssertEqual(controls.filter { $0.title == "Set In" }.count, 5)
+        XCTAssertEqual(controls.filter { $0.title == "Set Out" }.count, 5)
+        XCTAssertFalse(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
+        XCTAssertFalse(
+            try XCTUnwrap(controls.first { $0.title == "Continue to Save…" }).isEnabled
+        )
+        try XCTUnwrap(controls.filter { $0.title == "Set In" }.dropFirst().first)
+            .performClick(nil)
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_TRIM_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
+
+        mode.selectedSegment = 1
+        mode.sendAction(mode.action, to: mode.target)
+        content.layoutSubtreeIfNeeded()
+        let visiblePopups = descendants(in: content).compactMap { $0 as? NSPopUpButton }.filter {
+            !$0.isHiddenOrHasHiddenAncestor
+        }
+        XCTAssertEqual(visiblePopups.count, 2)
+        XCTAssertEqual(visiblePopups[0].titleOfSelectedItem, "Fast — HEVC 10-bit")
+        XCTAssertEqual(
+            visiblePopups[1].titleOfSelectedItem,
+            "Preserve Audio Exactly (Packet Copy)"
+        )
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
+        for button in controls where !button.isHiddenOrHasHiddenAncestor {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        for subview in descendants(in: content) where !subview.isHiddenOrHasHiddenAncestor {
+            let frame = subview.convert(subview.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_TRIM_EXACT_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
+
+        try XCTUnwrap(controls.first { $0.title == "Review Trim" }).performClick(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains {
+                $0 == "Cannot run this trim: Fixture review failed."
+            }
+        )
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
+        XCTAssertTrue(
+            descendants(in: content).compactMap { $0 as? NSTextField }.filter(\.isEditable)
+                .allSatisfy(\.isEnabled)
+        )
     }
 
     @MainActor
@@ -1414,8 +1590,34 @@ final class AppPolicyTests: XCTestCase {
                 bitsPerPixel: 0
             )
         )
+        let pixels = try XCTUnwrap(bitmap.bitmapData)
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide {
+                let offset = y * bitmap.bytesPerRow + x * 3
+                pixels[offset] = UInt8((x * 255) / bitmap.pixelsWide)
+                pixels[offset + 1] = UInt8((y * 255) / bitmap.pixelsHigh)
+                pixels[offset + 2] = 132
+            }
+        }
         return try XCTUnwrap(
             bitmap.representation(using: .jpeg, properties: [.compressionFactor: 0.8]))
+    }
+
+    @MainActor
+    private func captureTrimWindow(window: NSWindow, content: NSView, at path: String) throws {
+        window.appearance = NSAppearance(named: .aqua)
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.white.cgColor
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(nil)
+        window.displayIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        content.layoutSubtreeIfNeeded()
+        let bounds = content.bounds
+        let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+        content.cacheDisplay(in: bounds, to: representation)
+        let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
     }
 }
 

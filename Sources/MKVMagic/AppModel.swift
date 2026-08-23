@@ -434,6 +434,139 @@ final class AppModel {
         }
     }
 
+    @discardableResult
+    func executeTrim(
+        preview: TrimExecutionPreview,
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
+    ) async throws -> MediaAsset {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing(
+            preview.videoEncodeCount == 0
+                ? "Fast trimming without encoding…"
+                : "Exact trimming with one video encode…"
+        )
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let planningMessage: String
+            let runningMessage: String
+            let workflowID: UUID
+            switch preview {
+            case .fast(let fast):
+                workflowID = Self.fastTrimWorkflowID
+                planningMessage =
+                    "Zero encodes; copy every stream at reviewed keyframes "
+                    + "\(ChapterTimestamp.format(fast.plan.adjusted.start, digits: 3))–"
+                    + ChapterTimestamp.format(fast.plan.adjusted.end, digits: 3) + "."
+                runningMessage =
+                    "Splitting one temporary MKV at reviewed keyframes and replacing chapters."
+            case .exact(let exact):
+                workflowID = Self.exactTrimWorkflowID
+                let audio =
+                    exact.resolvedPlan.choice.audioPolicy == .packetCopy
+                    ? "packet-copy every audio track"
+                    : "encode \(exact.encodedAudioTrackIDs.count) audio track(s) once to AAC"
+                planningMessage =
+                    "One video encode using "
+                    + TrimPresentationPolicy.presetName(
+                        exact.resolvedPlan.choice.videoPreset
+                    )
+                    + "; \(audio); preserve the exact reviewed range."
+                runningMessage =
+                    "Encoding video once to one temporary MKV and replacing exact chapters."
+            }
+            let execution = try await beginHistory(
+                inputDisplayNames: [source.sourceURL.lastPathComponent],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: workflowID,
+                workflowName: preview.workflowName,
+                inspectionMessage:
+                    "Used the completed inspection plus exact extracted nested chapters.",
+                planningMessage: planningMessage,
+                runningMessage: runningMessage
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let output: MediaAsset
+            switch preview {
+            case .fast(let fast):
+                output = try await FastTrimExecutor(
+                    ffprobeURL: try catalog.url(for: .ffprobe),
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    mkvextractURL: try catalog.url(for: .mkvextract),
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner,
+                    inspector: inspector
+                ).execute(
+                    preview: fast,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        await onStage(stage)
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    }
+                )
+            case .exact(let exact):
+                output = try await ExactTrimExecutor(
+                    ffmpegURL: try catalog.url(for: .ffmpeg),
+                    mkvextractURL: try catalog.url(for: .mkvextract),
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner,
+                    inspector: inspector
+                ).execute(
+                    preview: exact,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        await onStage(stage)
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    }
+                )
+            }
+            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
+                assets[existing] = output
+            } else {
+                assets.append(output)
+            }
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage:
+                    "Verified trimmed range, streams, metadata, attachments, and exact nested chapters; committed and reopened output."
+            )
+            return output
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     func suggestChapters(
         in source: MediaAsset,
         existingChapterStarts: [MediaTime],
@@ -457,7 +590,7 @@ final class AppModel {
     func chapterThumbnails(
         in source: MediaAsset,
         at times: [MediaTime],
-        expectedSourceRevision: ChapterSourceRevision
+        expectedSourceRevision: ChapterSourceRevision? = nil
     ) async throws -> [ChapterThumbnail] {
         let accessed = source.sourceURL.startAccessingSecurityScopedResource()
         defer {
@@ -472,6 +605,74 @@ final class AppModel {
             times: times,
             expectedSourceRevision: expectedSourceRevision
         )
+    }
+
+    func previewTrim(
+        in source: MediaAsset,
+        request: TrimReviewRequest,
+        capabilities: FFmpegEncodingCapabilities
+    ) async throws -> TrimExecutionPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        state = .executing(
+            request.mode == .fast
+                ? "Reading exact keyframes and nested chapters…"
+                : "Binding the exact range, encoder, streams, and nested chapters…"
+        )
+        didChange?()
+        do {
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let preview: TrimExecutionPreview
+            switch request.mode {
+            case .fast:
+                preview = .fast(
+                    try await FastTrimExecutor(
+                        ffprobeURL: try catalog.url(for: .ffprobe),
+                        mkvmergeURL: try catalog.url(for: .mkvmerge),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
+                        mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                        runner: runner,
+                        inspector: inspector
+                    ).preview(
+                        source: source,
+                        requestedRange: request.range
+                    )
+                )
+            case .exact:
+                guard let choice = request.exactChoice else {
+                    throw ExactTrimPlanningError.invalidChoice
+                }
+                preview = .exact(
+                    try await ExactTrimExecutor(
+                        ffmpegURL: try catalog.url(for: .ffmpeg),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
+                        mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                        runner: runner,
+                        inspector: inspector
+                    ).preview(
+                        source: source,
+                        range: request.range,
+                        choice: choice,
+                        capabilities: capabilities
+                    )
+                )
+            }
+            state = .ready
+            didChange?()
+            return preview
+        } catch {
+            state = .failed("Trim review stopped: \(error.localizedDescription)")
+            didChange?()
+            throw error
+        }
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -1072,7 +1273,7 @@ final class AppModel {
                 message: "User cancelled; temporary output removed and originals unchanged."
             )
         }
-        state = .failed("Join cancelled. Temporary output removed; originals unchanged.")
+        state = .failed("Cancelled. Temporary output removed; originals unchanged.")
         didChange?()
     }
 
@@ -1122,6 +1323,16 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? LosslessJoinExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? FastTrimExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? ExactTrimExecutionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."
@@ -1181,6 +1392,12 @@ final class AppModel {
     )!
     nonisolated private static let losslessJoinWorkflowID = UUID(
         uuidString: "1329034D-8DA4-4D8F-82B6-C3BC42A4E4FA"
+    )!
+    nonisolated private static let fastTrimWorkflowID = UUID(
+        uuidString: "7E551E9E-039C-46DB-A14D-E43E338A5E2A"
+    )!
+    nonisolated private static let exactTrimWorkflowID = UUID(
+        uuidString: "CA62AB88-34D1-44E0-B410-FB9DAA2FE3ED"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

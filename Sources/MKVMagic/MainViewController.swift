@@ -86,6 +86,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
+    private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
     private let joinButton = NSButton(title: "Join Files…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
@@ -100,8 +101,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
     private var chapterStudioWindowController: ChapterStudioWindowController?
+    private var trimWindowController: TrimWindowController?
+    private var trimProgressWindowController: VerifiedOutputProgressWindowController?
+    private var trimTask: Task<Void, Never>?
+    private var isPreparingTrim = false
     private var losslessJoinWindowController: LosslessJoinWindowController?
-    private var losslessJoinProgressWindowController: LosslessJoinProgressWindowController?
+    private var losslessJoinProgressWindowController: VerifiedOutputProgressWindowController?
     private var losslessJoinTask: Task<Void, Never>?
 
     init(model: AppModel) {
@@ -303,6 +308,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         chaptersButton.target = self
         chaptersButton.action = #selector(editChapters)
         chaptersButton.isEnabled = false
+        trimButton.target = self
+        trimButton.action = #selector(trimFile)
+        trimButton.isEnabled = false
         let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
         metadataButtons.orientation = .horizontal
         metadataButtons.spacing = 8
@@ -312,8 +320,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let subtitleButtons = NSStackView(views: [cleanSubtitleButton, addSubtitleButton])
         subtitleButtons.orientation = .horizontal
         subtitleButtons.spacing = 8
-        let chapterButtons = NSStackView(views: [chaptersButton])
+        let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
         chapterButtons.orientation = .horizontal
+        chapterButtons.spacing = 8
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
@@ -424,6 +433,134 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func trimFile() {
+        guard !isPreparingTrim, let asset = selectedAsset,
+            TrimPresentationPolicy.canOfferTrim(for: asset),
+            let duration = asset.duration, let parentWindow = view.window
+        else { return }
+        let times = TrimPresentationPolicy.thumbnailTimes(duration: duration)
+        guard !times.isEmpty else { return }
+        isPreparingTrim = true
+        trimButton.isEnabled = false
+        statusLabel.stringValue = "Loading local trim thumbnails and encoder choices…"
+        Task {
+            do {
+                async let capabilityTask = model.probeEncodingCapabilities()
+                async let thumbnailTask = model.chapterThumbnails(
+                    in: asset,
+                    at: times
+                )
+                let (capabilities, thumbnails) = try await (
+                    capabilityTask,
+                    thumbnailTask
+                )
+                guard selectedAsset?.id == asset.id, view.window === parentWindow else {
+                    isPreparingTrim = false
+                    refresh()
+                    return
+                }
+                let controller = TrimWindowController(
+                    source: asset,
+                    thumbnails: thumbnails,
+                    capabilities: capabilities,
+                    reviewProvider: { [weak model] request in
+                        guard let model else { throw CancellationError() }
+                        return try await model.previewTrim(
+                            in: asset,
+                            request: request,
+                            capabilities: capabilities
+                        )
+                    }
+                )
+                isPreparingTrim = false
+                trimWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] preview in
+                    guard let self else { return }
+                    self.trimWindowController = nil
+                    guard let preview else {
+                        self.refresh()
+                        return
+                    }
+                    guard self.selectedAsset?.id == asset.id else {
+                        self.refresh()
+                        return
+                    }
+                    self.chooseTrimDestination(preview, parentWindow: parentWindow)
+                }
+                statusLabel.stringValue = "Choose numeric trim boundaries and review the result."
+            } catch {
+                isPreparingTrim = false
+                statusLabel.stringValue = "Could not open Trim: \(error.localizedDescription)"
+                refresh()
+            }
+        }
+    }
+
+    private func chooseTrimDestination(
+        _ preview: TrimExecutionPreview,
+        parentWindow: NSWindow
+    ) {
+        let panel = NSSavePanel()
+        panel.title = "Save Verified Trimmed MKV"
+        panel.prompt = "Trim & Save"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = OutputNamingPolicy.trimmedFilename(
+            for: preview.source.sourceURL
+        )
+        panel.directoryURL = preview.source.sourceURL.deletingLastPathComponent()
+        panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
+        panel.allowsOtherFileTypes = false
+        panel.isExtensionHidden = false
+        panel.beginSheetModal(for: parentWindow) { [weak self] response in
+            guard let self, response == .OK, let destinationURL = panel.url else {
+                self?.refresh()
+                return
+            }
+            self.runTrim(
+                preview,
+                destinationURL: destinationURL,
+                parentWindow: parentWindow
+            )
+        }
+    }
+
+    private func runTrim(
+        _ preview: TrimExecutionPreview,
+        destinationURL: URL,
+        parentWindow: NSWindow
+    ) {
+        let mode: TrimMode =
+            switch preview {
+            case .fast: .fast
+            case .exact: .exact
+            }
+        let progress = VerifiedOutputProgressWindowController.trim(mode: mode)
+        trimProgressWindowController = progress
+        progress.beginSheet(for: parentWindow)
+        let task = Task { [weak self, weak progress] in
+            guard let self else { return }
+            do {
+                let output = try await model.executeTrim(
+                    preview: preview,
+                    destinationURL: destinationURL,
+                    onStage: { stage in progress?.update(stage: stage) }
+                )
+                preferredSelectionURL = output.sourceURL
+                progress?.finish()
+                trimProgressWindowController = nil
+                trimTask = nil
+                refresh()
+            } catch {
+                progress?.finish()
+                trimProgressWindowController = nil
+                trimTask = nil
+                refresh()
+            }
+        }
+        trimTask = task
+        progress.onCancel = { [weak self] in self?.trimTask?.cancel() }
+    }
+
     @objc private func joinFiles() {
         guard let parentWindow = view.window else { return }
         let sources = model.assets.filter { MatroskaEditingPolicy.supports($0) }
@@ -510,7 +647,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         destinationURL: URL,
         parentWindow: NSWindow
     ) {
-        let progress = LosslessJoinProgressWindowController()
+        let progress = VerifiedOutputProgressWindowController.losslessJoin()
         losslessJoinProgressWindowController = progress
         progress.beginSheet(for: parentWindow)
         let task = Task { [weak self, weak progress] in
@@ -1090,6 +1227,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanSubtitleButton.isEnabled = false
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
+        trimButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
@@ -1175,6 +1313,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
                 addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
                 chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+                trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
                 runButton.isEnabled =
                     self.pendingChange != nil
                     && pendingAssetID == asset.id
@@ -1223,6 +1362,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanSubtitleButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
+            trimButton.isEnabled = false
             joinButton.isEnabled = false
             runButton.isEnabled = false
         }
@@ -1246,6 +1386,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanSubtitleButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
+            trimButton.isEnabled = false
             return
         }
         var lines = [
@@ -1326,6 +1467,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             chaptersButton.isEnabled
             ? "Create and edit exact nested Matroska chapters without encoding."
             : "Chapter Studio currently requires an inspected Matroska file."
+        trimButton.isEnabled =
+            !isPreparingTrim && TrimPresentationPolicy.canOfferTrim(for: asset)
+        trimButton.toolTip =
+            trimButton.isEnabled
+            ? "Choose numeric in/out points, preview keyframe adjustments, or encode video once for exact boundaries."
+            : "Trim currently requires an inspected MKV with exactly one video track and a known duration."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -1493,5 +1640,9 @@ enum OutputNamingPolicy {
 
     static func joinedFilename(for firstSourceURL: URL) -> String {
         "\(firstSourceURL.deletingPathExtension().lastPathComponent) — Joined.mkv"
+    }
+
+    static func trimmedFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Trimmed.mkv"
     }
 }

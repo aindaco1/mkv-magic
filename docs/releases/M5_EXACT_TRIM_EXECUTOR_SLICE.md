@@ -97,3 +97,6 @@ ZIP/appcast assembly, and verified DMG packaging.
   ordered-edition handling, HDR10 preservation, and Dolby Vision policy.
 - Split by chapters/ranges/duration/size, Chapter Studio keyframe snapping,
   private-library beta, physical Intel performance acceptance, and public release.
+
+The native-window item above was subsequently completed in
+`M5_NATIVE_TRIM_SLICE.md`; the remaining limitations still apply.

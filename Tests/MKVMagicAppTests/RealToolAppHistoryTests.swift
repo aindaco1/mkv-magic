@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MKVMagicCore
+import MKVMagicExecution
 import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
@@ -419,6 +420,148 @@ final class RealToolAppHistoryTests: XCTestCase {
         let serialized = record.events.compactMap(\.message).joined(separator: " ")
         XCTAssertFalse(serialized.contains(fixtureRoot.path))
         XCTAssertTrue(serialized.contains("Zero encodes"))
+    }
+
+    @MainActor
+    func testRealFastTrimUsesReviewedKeyframesAndRecordsVerifiedLifecycle() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-app-trim-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: fixtureRoot,
+            withIntermediateDirectories: false
+        )
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawURL = fixtureRoot.appendingPathComponent("frames.yuv")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature — Trimmed.mkv")
+        let chapterURL = fixtureRoot.appendingPathComponent("chapters.xml")
+        let width = 64
+        let height = 48
+        let frameCount = 100
+        try Data(repeating: 32, count: width * height * 3 / 2 * frameCount).write(to: rawURL)
+
+        let encode = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawURL.path,
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "mpeg4", "-g", "20", "-bf", "0", "-q:v", "5",
+                    "-metadata", "title=App Trim Fixture",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+        let duration = MediaTime(nanoseconds: 10_000_000_000)
+        let chapters = MatroskaChapterDocument(editions: [
+            MatroskaChapterEdition(
+                isDefault: true,
+                chapters: [
+                    MatroskaChapterAtom(
+                        start: .zero,
+                        end: duration,
+                        displays: [ChapterDisplay(title: "Feature")],
+                        children: [
+                            MatroskaChapterAtom(
+                                start: .zero,
+                                end: MediaTime(nanoseconds: 5_000_000_000),
+                                displays: [ChapterDisplay(title: "First Half")]
+                            ),
+                            MatroskaChapterAtom(
+                                start: MediaTime(nanoseconds: 5_000_000_000),
+                                end: duration,
+                                displays: [ChapterDisplay(title: "Second Half")]
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ])
+        try MatroskaChapterXMLCodec().serialize(chapters).write(to: chapterURL)
+        let setChapters = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvpropedit),
+                arguments: [
+                    "--abort-on-warnings", sourceURL.path,
+                    "--chapters", chapterURL.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(setChapters.exitCode, 0, setChapters.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(applicationSupportURL: applicationSupport)
+        let model = AppModel(historyRecorderFactory: { store })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let requested = MediaTrimRange(
+            start: MediaTime(nanoseconds: 3_000_000_000),
+            end: MediaTime(nanoseconds: 7_000_000_000)
+        )
+        let preview = try await model.previewTrim(
+            in: source,
+            request: TrimReviewRequest(mode: .fast, range: requested, exactChoice: nil),
+            capabilities: .unavailable
+        )
+        XCTAssertEqual(preview.requestedRange, requested)
+        XCTAssertEqual(
+            preview.outputRange,
+            MediaTrimRange(
+                start: MediaTime(nanoseconds: 4_000_000_000),
+                end: MediaTime(nanoseconds: 8_000_000_000)
+            )
+        )
+        XCTAssertEqual(preview.videoEncodeCount, 0)
+
+        let output = try await model.executeTrim(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+        XCTAssertEqual(output.sourceURL, destinationURL)
+        XCTAssertEqual(output.chapterEntryCount, 1)
+        XCTAssertEqual(
+            SHA256.hash(data: try Data(contentsOf: sourceURL)),
+            sourceDigest
+        )
+
+        let records = try await store.load()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowName, "Fast Trim")
+        XCTAssertEqual(record.inputDisplayNames, ["Feature.mkv"])
+        XCTAssertEqual(record.outputDisplayName, "Feature — Trimmed.mkv")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let serialized = record.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertTrue(serialized.contains("Zero encodes"))
+        XCTAssertTrue(serialized.contains("00:00:04.000–00:00:08.000"))
+        XCTAssertFalse(serialized.contains(fixtureRoot.path))
     }
 }
 

@@ -82,8 +82,8 @@ track identities. The app revalidates every exact source chapter document,
 prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results and compares the exact nested chapter XML.
-Manual ambiguity mapping, native trim controls, decode spot checks, attachment
-selection, and native common-format execution remain pending. When a reviewed group
+Manual ambiguity mapping, decode spot checks, attachment selection, and native
+common-format execution remain pending. When a reviewed group
 needs normalization, the same window now previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
@@ -115,6 +115,17 @@ fixture passes this transaction without changing either original. The native
 preview still does not enable saving because exact choice controls and app-level
 execution wiring are not implemented yet.
 
+For an eligible inspected MKV, **Trim…** now opens one compact native review
+window. Five bounded local thumbnails provide quick **Set In** and **Set Out**
+actions while exact `HH:MM:SS.mmm` fields remain directly editable. Fast Trim is
+the default and truthfully previews any forward keyframe adjustment before Save
+is enabled. Exact Trim retains the numeric range and exposes only video presets
+that passed the active local encoder probe, with packet-copy audio as the safe
+default and explicit one-generation AAC as an option. Both modes require an
+immutable review, use the same cancellable verified-output progress surface,
+disable cancellation during commit, save to a new deterministic MKV name, and
+record a sanitized eight-state History lifecycle.
+
 The internal Fast Trim path now scans the primary video track with bounded local
 `ffprobe`, shows the first-keyframe-at-or-after adjustment for both requested
 boundaries, and refuses to call the result frame-exact. For one-video Matroska
@@ -134,8 +145,7 @@ removes only FFmpeg-synthesized statistics tags from a reviewed tag-free source,
 and repeats semantic and chapter audits after reopen. It currently fails closed
 for source tags, subtitle/data tracks, multiple video tracks, ordered editions,
 HDR/Dolby Vision, incomplete color/layout facts, unavailable encoders, and
-non-MKV inputs. The native thumbnail/numeric Fast/Exact Trim window remains
-pending.
+non-MKV inputs.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current
