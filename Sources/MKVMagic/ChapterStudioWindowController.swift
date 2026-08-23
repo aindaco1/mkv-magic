@@ -3,13 +3,25 @@ import MKVMagicCore
 import MKVMagicExecution
 import UniformTypeIdentifiers
 
+typealias ChapterSuggestionProvider =
+    @MainActor (
+        _ options: ChapterSuggestionOptions,
+        _ existingChapterStarts: [MediaTime]
+    ) async throws -> [ChapterSuggestion]
+
 @MainActor
 final class ChapterStudioWindowController: NSWindowController {
     private let studioViewController: ChapterStudioViewController
     private var completion: ((MatroskaChapterDocument?) -> Void)?
 
-    init(preview: ChapterEditPreview) {
-        studioViewController = ChapterStudioViewController(preview: preview)
+    init(
+        preview: ChapterEditPreview,
+        suggestionProvider: ChapterSuggestionProvider? = nil
+    ) {
+        studioViewController = ChapterStudioViewController(
+            preview: preview,
+            suggestionProvider: suggestionProvider
+        )
         let window = NSPanel(contentViewController: studioViewController)
         window.title = "Chapter Studio"
         window.styleMask = [.titled, .closable, .resizable]
@@ -40,6 +52,7 @@ final class ChapterStudioWindowController: NSWindowController {
     }
 
     private func finish(with document: MatroskaChapterDocument?) {
+        studioViewController.cancelAnalysis()
         guard let window else { return }
         window.sheetParent?.endSheet(window)
         completion?(document)
@@ -79,9 +92,12 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     var onUseChanges: ((MatroskaChapterDocument) -> Void)?
 
     private let preview: ChapterEditPreview
+    private let suggestionProvider: ChapterSuggestionProvider?
     private var document: MatroskaChapterDocument
     private var roots = [ChapterOutlineItem]()
     private var selectedDisplayIndex = 0
+    private var analysisTask: Task<Void, Never>?
+    private var suggestionReviewController: ChapterSuggestionReviewWindowController?
 
     private let outlineView = NSOutlineView()
     private let selectionHeading = NSTextField(labelWithString: "Select an edition or chapter")
@@ -104,12 +120,14 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
     private let nestButton = NSButton(title: "Nest", target: nil, action: nil)
     private let unnestButton = NSButton(title: "Unnest", target: nil, action: nil)
+    private let suggestButton = NSButton(title: "Suggest…", target: nil, action: nil)
     private let addDisplayButton = NSButton(title: "+", target: nil, action: nil)
     private let removeDisplayButton = NSButton(title: "−", target: nil, action: nil)
     private let useChangesButton = NSButton(title: "Use Changes", target: nil, action: nil)
 
-    init(preview: ChapterEditPreview) {
+    init(preview: ChapterEditPreview, suggestionProvider: ChapterSuggestionProvider?) {
         self.preview = preview
+        self.suggestionProvider = suggestionProvider
         document = preview.original
         super.init(nibName: nil, bundle: nil)
     }
@@ -213,10 +231,17 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         let everyButton = NSButton(
             title: "Every…", target: self, action: #selector(createIntervals))
         everyButton.toolTip = "Replace the document with evenly spaced English chapters."
+        suggestButton.target = self
+        suggestButton.action = #selector(suggestChapters)
+        suggestButton.toolTip =
+            "Analyze scene changes, black frames, and silence locally, then review suggestions."
+        suggestButton.isEnabled = suggestionProvider != nil
         let flattenButton = NSButton(
             title: "Flatten for Jellyfin", target: self, action: #selector(flattenForJellyfin))
         flattenButton.toolTip = "Explicitly replace nesting with one flat, chronological edition."
-        let secondTools = NSStackView(views: [nestButton, unnestButton, everyButton, flattenButton])
+        let secondTools = NSStackView(views: [
+            nestButton, unnestButton, everyButton, suggestButton,
+        ])
         secondTools.orientation = .horizontal
         secondTools.spacing = 6
 
@@ -225,10 +250,19 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         countLabel.textColor = .secondaryLabelColor
         let toolSpacer = NSView()
         toolSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let fileTools = NSStackView(views: [importButton, exportButton, toolSpacer, countLabel])
+        let fileTools = NSStackView(views: [
+            importButton, exportButton, flattenButton, toolSpacer, countLabel,
+        ])
         fileTools.orientation = .horizontal
         fileTools.alignment = .centerY
         fileTools.spacing = 8
+        for button in [
+            addEdition, addChapter, addChildButton, duplicateButton, removeButton,
+            nestButton, unnestButton, everyButton, suggestButton, importButton, exportButton,
+            flattenButton,
+        ] {
+            button.controlSize = .small
+        }
 
         let stack = NSStackView(views: [scroll, firstTools, secondTools, fileTools])
         stack.orientation = .vertical
@@ -243,7 +277,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         let container = NSView()
         container.addSubview(stack)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 500),
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 390),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
@@ -304,7 +338,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         grid.rowSpacing = 10
         grid.columnSpacing = 10
         grid.column(at: 0).xPlacement = .trailing
-        grid.column(at: 1).width = 280
+        grid.column(at: 1).width = 240
         let flags = NSStackView(views: [hiddenCheck, enabledCheck, defaultCheck, orderedCheck])
         flags.orientation = .vertical
         flags.alignment = .leading
@@ -325,7 +359,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         let container = NSView()
         container.addSubview(stack)
         NSLayoutConstraint.activate([
-            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 340),
+            container.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
@@ -697,6 +731,165 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         }
     }
 
+    @objc private func suggestChapters() {
+        guard let window = view.window, suggestionProvider != nil,
+            preview.source.duration.map({ $0 > .zero }) == true
+        else {
+            showError("A known positive media duration and bundled FFmpeg are required.")
+            return
+        }
+        let hasVideo = preview.source.tracks.contains { $0.kind == .video }
+        let hasAudio = preview.source.tracks.contains { $0.kind == .audio }
+        guard hasVideo || hasAudio else {
+            showError("No video or audio track is available for local analysis.")
+            return
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "Suggest chapter boundaries?"
+        alert.informativeText =
+            "MKV Magic analyzes the file locally with bundled FFmpeg. Review every timestamp before it is added; the source is never changed."
+        alert.addButton(withTitle: "Analyze")
+        alert.addButton(withTitle: "Cancel")
+        let sceneCheck = NSButton(
+            checkboxWithTitle: "Scene changes", target: nil, action: nil)
+        sceneCheck.state = hasVideo ? .on : .off
+        sceneCheck.isEnabled = hasVideo
+        let blackCheck = NSButton(
+            checkboxWithTitle: "Black frames", target: nil, action: nil)
+        blackCheck.state = hasVideo ? .on : .off
+        blackCheck.isEnabled = hasVideo
+        let silenceCheck = NSButton(
+            checkboxWithTitle: "Silence", target: nil, action: nil)
+        silenceCheck.state = hasAudio ? .on : .off
+        silenceCheck.isEnabled = hasAudio
+        let spacingField = NSTextField(string: "60")
+        spacingField.alignment = .right
+        spacingField.setAccessibilityLabel("Minimum seconds between suggestions")
+        let secondsLabel = NSTextField(labelWithString: "seconds apart")
+        let spacingRow = NSStackView(views: [
+            NSTextField(labelWithString: "Keep suggestions at least"), spacingField, secondsLabel,
+        ])
+        spacingRow.orientation = .horizontal
+        spacingRow.alignment = .centerY
+        spacingRow.spacing = 6
+        spacingField.widthAnchor.constraint(equalToConstant: 64).isActive = true
+        let choices = NSStackView(views: [sceneCheck, blackCheck, silenceCheck, spacingRow])
+        choices.orientation = .vertical
+        choices.alignment = .leading
+        choices.spacing = 8
+        choices.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 6, right: 0)
+        alert.accessoryView = choices
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self, response == .alertFirstButtonReturn else { return }
+            guard let seconds = Double(spacingField.stringValue), seconds.isFinite, seconds >= 0,
+                let spacing = MediaTime(seconds: seconds)
+            else {
+                self.showError("Minimum spacing must be a nonnegative number of seconds.")
+                return
+            }
+            var options = ChapterSuggestionOptions()
+            options.detectsSceneChanges = sceneCheck.state == .on
+            options.detectsBlackFrames = blackCheck.state == .on
+            options.detectsSilence = silenceCheck.state == .on
+            options.minimumSpacing = spacing
+            do {
+                _ = try options.validated()
+                self.runSuggestionAnalysis(options: options)
+            } catch {
+                self.showError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func runSuggestionAnalysis(options: ChapterSuggestionOptions) {
+        guard let suggestionProvider, let duration = preview.source.duration else { return }
+        analysisTask?.cancel()
+        suggestButton.isEnabled = false
+        showInfo("Analyzing locally with FFmpeg…")
+        let startsAtLaunch = allChapterStarts()
+        analysisTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let analyzed = try await suggestionProvider(options, startsAtLaunch)
+                try Task.checkCancellation()
+                let detections = analyzed.flatMap { suggestion in
+                    suggestion.signals.map {
+                        ChapterSuggestionDetection(time: suggestion.time, signal: $0)
+                    }
+                }
+                let currentSuggestions = try ChapterSuggestionConsolidator.consolidate(
+                    detections,
+                    duration: duration,
+                    existingChapterStarts: self.allChapterStarts(),
+                    options: options
+                )
+                self.analysisTask = nil
+                self.suggestButton.isEnabled = self.suggestionProvider != nil
+                guard !currentSuggestions.isEmpty else {
+                    self.showInfo("No new boundaries matched these settings.")
+                    return
+                }
+                self.presentSuggestionReview(currentSuggestions)
+            } catch is CancellationError {
+                self.analysisTask = nil
+                self.suggestButton.isEnabled = self.suggestionProvider != nil
+            } catch {
+                self.analysisTask = nil
+                self.suggestButton.isEnabled = self.suggestionProvider != nil
+                self.showError("Analysis failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func presentSuggestionReview(_ suggestions: [ChapterSuggestion]) {
+        guard let window = view.window else { return }
+        let controller = ChapterSuggestionReviewWindowController(suggestions: suggestions)
+        suggestionReviewController = controller
+        controller.beginSheet(for: window) { [weak self] selected in
+            guard let self else { return }
+            self.suggestionReviewController = nil
+            guard !selected.isEmpty else {
+                self.showInfo("No suggested chapters were selected.")
+                return
+            }
+            self.applySuggestions(selected)
+        }
+    }
+
+    private func applySuggestions(_ suggestions: [ChapterSuggestion]) {
+        let targetEditionID: UUID?
+        switch selectedItem?.kind {
+        case .edition(let id):
+            targetEditionID = id
+        case .chapter(let id):
+            targetEditionID = editionContaining(chapterID: id)?.id
+        case nil:
+            targetEditionID = document.editions.first?.id
+        }
+        do {
+            let result = try ChapterSuggestionApplicator.apply(
+                suggestions,
+                to: document,
+                editionID: targetEditionID,
+                mediaDuration: preview.source.duration
+            )
+            guard result.addedCount > 0 else {
+                showError("The selected boundaries overlap existing chapter ranges.")
+                return
+            }
+            document = result.document
+            reloadOutline(selecting: result.firstAddedChapterID)
+            let skipped =
+                result.skippedCount == 0 ? "" : " • \(result.skippedCount) overlapping skipped"
+            showInfo(
+                "Added \(result.addedCount) reviewed chapter\(result.addedCount == 1 ? "" : "s")\(skipped)."
+            )
+        } catch {
+            showError(error.localizedDescription)
+        }
+    }
+
     @objc private func flattenForJellyfin() {
         guard let window = view.window else { return }
         let flattened = document.flattenedForJellyfin()
@@ -805,7 +998,15 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     @objc private func cancel() {
+        cancelAnalysis()
         onCancel?()
+    }
+
+    func cancelAnalysis() {
+        analysisTask?.cancel()
+        analysisTask = nil
+        suggestionReviewController?.cancel()
+        suggestionReviewController = nil
     }
 
     private var selectedItem: ChapterOutlineItem? {
@@ -971,6 +1172,18 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             if let chapter = findChapter(id, in: edition.chapters) { return chapter }
         }
         return nil
+    }
+
+    private func allChapterStarts() -> [MediaTime] {
+        allChapterStarts(in: document)
+    }
+
+    private func allChapterStarts(in document: MatroskaChapterDocument) -> [MediaTime] {
+        document.editions.flatMap { allChapterStarts(in: $0.chapters) }
+    }
+
+    private func allChapterStarts(in chapters: [MatroskaChapterAtom]) -> [MediaTime] {
+        chapters.flatMap { [$0.start] + allChapterStarts(in: $0.children) }
     }
 
     private func findChapter(_ id: UUID, in chapters: [MatroskaChapterAtom])

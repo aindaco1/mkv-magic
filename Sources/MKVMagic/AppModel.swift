@@ -189,6 +189,26 @@ final class AppModel {
         ).preview(source: source)
     }
 
+    func suggestChapters(
+        in source: MediaAsset,
+        existingChapterStarts: [MediaTime],
+        options: ChapterSuggestionOptions
+    ) async throws -> [ChapterSuggestion] {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        return try await FFmpegChapterSuggestionAnalyzer(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: FoundationCommandRunner()
+        ).analyze(
+            source: source,
+            existingChapterStarts: existingChapterStarts,
+            options: options
+        )
+    }
+
     func addFiles(_ urls: [URL]) async {
         let uniqueRoots = Array(Set(urls.map(\.standardizedFileURL))).sorted {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending

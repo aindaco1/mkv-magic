@@ -901,19 +901,80 @@ final class AppPolicyTests: XCTestCase {
                     modificationDate: Date(timeIntervalSince1970: 0)
                 ),
                 canonicalSHA256: Data(repeating: 0, count: 32)
-            )
+            ),
+            suggestionProvider: { _, _ in [] }
         )
         let content = try XCTUnwrap(controller.window?.contentView)
+        controller.window?.setContentSize(NSSize(width: 820, height: 580))
+        content.layoutSubtreeIfNeeded()
         let titles = buttonTitles(in: content)
 
         for expected in [
             "Add Edition", "Add Chapter", "Add Child", "Duplicate", "Remove", "Nest",
-            "Unnest", "Every…", "Flatten for Jellyfin", "Import…", "Export…", "Use Changes",
+            "Unnest", "Every…", "Suggest…", "Flatten for Jellyfin", "Import…", "Export…",
+            "Use Changes",
         ] {
             XCTAssertTrue(titles.contains(expected), "Missing Chapter Studio action \(expected)")
         }
+        let chapterButtons = buttons(in: content)
+        XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Suggest…" }).isEnabled)
+        for button in chapterButtons where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
 
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_CHAPTER_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            controller.showWindow(nil)
+            controller.window?.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            content.layoutSubtreeIfNeeded()
+            let bounds = content.bounds
+            let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+            content.cacheDisplay(in: bounds, to: representation)
+            let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+    }
+
+    @MainActor
+    func testChapterSuggestionReviewStartsSelectedAndExposesBulkControls() throws {
+        let controller = ChapterSuggestionReviewWindowController(
+            suggestions: [
+                ChapterSuggestion(
+                    time: MediaTime(nanoseconds: 10_000_000_000),
+                    signals: [.sceneChange, .blackFrame]
+                ),
+                ChapterSuggestion(
+                    time: MediaTime(nanoseconds: 30_000_000_000),
+                    signals: [.silence]
+                ),
+            ]
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        controller.window?.setContentSize(NSSize(width: 560, height: 400))
+        content.layoutSubtreeIfNeeded()
+        let controls = buttons(in: content)
+        XCTAssertTrue(controls.contains { $0.title == "Select All" })
+        XCTAssertTrue(controls.contains { $0.title == "Select None" })
+        XCTAssertTrue(controls.contains { $0.title == "Cancel" })
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Add Selected" }).isEnabled)
+        let table = try XCTUnwrap(descendants(in: content).compactMap { $0 as? NSTableView }.first)
+        XCTAssertEqual(table.numberOfRows, 2)
+        XCTAssertGreaterThan(table.enclosingScrollView?.frame.height ?? 0, 150)
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_SUGGESTION_CAPTURE"],
             capturePath.hasPrefix("/")
         {
             controller.showWindow(nil)
@@ -970,8 +1031,17 @@ final class AppPolicyTests: XCTestCase {
 
     @MainActor
     private func buttonTitles(in view: NSView) -> [String] {
-        let own = (view as? NSButton).map { [$0.title] } ?? []
-        return own + view.subviews.flatMap(buttonTitles)
+        buttons(in: view).map(\.title)
+    }
+
+    @MainActor
+    private func buttons(in view: NSView) -> [NSButton] {
+        descendants(in: view).compactMap { $0 as? NSButton }
+    }
+
+    @MainActor
+    private func descendants(in view: NSView) -> [NSView] {
+        [view] + view.subviews.flatMap(descendants)
     }
 }
 

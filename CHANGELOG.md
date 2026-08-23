@@ -99,3 +99,11 @@ semantic versioning; public release tags are immutable and signed.
   re-extract exact chapters before commit and after reopen while independently
   verifying that tracks, duration, tags, attachments, metadata, and segment
   identity remain unchanged.
+- Add cancellable offline chapter suggestions using one bounded FFmpeg filter
+  graph for scene changes, black-frame ends, and silence ends. Merge nearby
+  signals deterministically, exclude source edges and existing chapters, honor
+  user-selected spacing, and cap the review list without modifying the source.
+- Require an explicit native checklist review before adding suggestions to the
+  selected edition. New core policy skips duplicate timestamps and boundaries
+  inside explicitly closed chapter ranges, preserving manual nesting and exact
+  validation for future workflow and batch reuse.

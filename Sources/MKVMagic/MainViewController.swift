@@ -517,7 +517,17 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     refresh()
                     return
                 }
-                let controller = ChapterStudioWindowController(preview: preview)
+                let controller = ChapterStudioWindowController(
+                    preview: preview,
+                    suggestionProvider: { [weak model] options, existingStarts in
+                        guard let model else { return [] }
+                        return try await model.suggestChapters(
+                            in: preview.source,
+                            existingChapterStarts: existingStarts,
+                            options: options
+                        )
+                    }
+                )
                 chapterStudioWindowController = controller
                 controller.beginSheet(for: parentWindow) { [weak self] desired in
                     guard let self else { return }
