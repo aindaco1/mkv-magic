@@ -16,9 +16,10 @@ and tag facts without modifying the source. The first executable action edits a
 Matroska segment title on a temporary clone, verifies that tracks, chapters,
 attachments, duration, tags, and segment identity stayed intact, then commits a
 new output without replacing the original. Its sanitized queue lifecycle is
-persisted atomically in the app's private Application Support container. Other
-editing actions remain disabled until they meet the same transaction contract.
-No public release is available yet. The canonical product and delivery plan is
+persisted atomically in the app's private Application Support container and is
+available from the lightweight History report. Other editing actions remain
+disabled until they meet the same transaction contract. No public release is
+available yet. The canonical product and delivery plan is
 [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises

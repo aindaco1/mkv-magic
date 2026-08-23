@@ -113,6 +113,41 @@ final class AppPolicyTests: XCTestCase {
         }
     }
 
+    func testHistoryPresentationSortsNewestAndShowsSanitizedLifecycle() throws {
+        let older = try makeHistoryRecord(
+            id: UUID(uuidString: "1A0DBEF0-4AF6-4B92-B813-D683D26CB18F")!,
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000)
+        )
+        let newer = try makeHistoryRecord(
+            id: UUID(uuidString: "A3E910BC-636E-45EF-BC1A-D865966E2A37")!,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+
+        XCTAssertEqual(HistoryPresentation.sorted([older, newer]).map(\.id), [newer.id, older.id])
+        XCTAssertEqual(
+            HistoryPresentation.columnValue(identifier: "state", record: newer),
+            "Succeeded"
+        )
+        let detail = HistoryPresentation.detail(for: newer)
+        XCTAssertTrue(detail.contains("Input: Movie.mkv"))
+        XCTAssertTrue(detail.contains("Output: Movie — Edited.mkv"))
+        XCTAssertTrue(detail.contains("Verified output committed and reopened."))
+        XCTAssertFalse(detail.contains(newer.id.uuidString))
+    }
+
+    @MainActor
+    func testHistoryWindowUsesCompactNativeLayout() throws {
+        let controller = HistoryWindowController(records: [])
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertTrue(window.contentViewController is HistoryViewController)
+        XCTAssertEqual(contentView.frame.size.width, 760, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 620)
+        XCTAssertEqual(window.minSize.height, 420)
+    }
+
     @MainActor
     func testMainWindowContentKeepsUsableWidthAfterLayout() throws {
         let controller = MainViewController(model: AppModel())
@@ -130,5 +165,27 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(footer.frame.height, 52, accuracy: 0.5)
         XCTAssertEqual(splitView.arrangedSubviews.count, 3)
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
+    }
+
+    private func makeHistoryRecord(id: UUID, createdAt: Date) throws -> MediaJobRecord {
+        var record = MediaJobRecord(
+            id: id,
+            createdAt: createdAt,
+            workflowID: UUID(uuidString: "6A2D7635-AB6D-4C7A-AE02-1561631121F0")!,
+            workflowName: "Edit segment title",
+            inputs: [MediaJobInput(displayName: "Movie.mkv")],
+            outputDisplayName: "Movie — Edited.mkv"
+        )
+        for state in [
+            MediaJobState.inspecting, .planned, .ready, .running, .verifying, .committing,
+            .succeeded,
+        ] {
+            try record.transition(
+                to: state,
+                at: createdAt,
+                message: state == .succeeded ? "Verified output committed and reopened." : nil
+            )
+        }
+        return record
     }
 }

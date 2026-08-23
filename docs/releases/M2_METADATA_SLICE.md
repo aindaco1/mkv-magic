@@ -52,10 +52,14 @@ not a public release.
 - A fault test refuses the committing transition from the progress observer and
   proves that failed progress persistence before commit removes the working copy
   while preserving the source and leaving no destination.
+- A packaged, sandboxed app created a synthetic verified edit, then reopened it
+  through the History sidebar button. Visual and accessibility-tree inspection
+  observed the recent-job row and every sanitized lifecycle event; the history
+  file mode was `0600`, contained no full test or user path, and the relevant
+  unified-log window contained no layout, error, or fault messages.
 
 ## Still pending in M2
 
-- Queue/History navigation and a user-visible durable execution report.
 - Track language/role editing, track removal, bulk matching, `mkvmerge` remuxing,
   Clean MKV previews, optional verified-original Trash behavior, cancellation UI,
   and privacy-safe command/details reports.

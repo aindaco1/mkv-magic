@@ -18,6 +18,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var hasPendingTitleChange = false
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
+    private var historyWindowController: HistoryWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -76,7 +77,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             sidebarLabel("Quick Actions", symbol: "wand.and.stars"),
             sidebarLabel("Workflows", symbol: "square.stack.3d.up"),
             sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
-            sidebarLabel("History", symbol: "clock.arrow.circlepath"),
+            sidebarButton(
+                "History",
+                symbol: "clock.arrow.circlepath",
+                action: #selector(showHistory)
+            ),
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -102,6 +107,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         row.orientation = .horizontal
         row.spacing = 8
         return row
+    }
+
+    private func sidebarButton(_ title: String, symbol: String, action: Selector) -> NSButton {
+        let button = NSButton(title: title, target: self, action: action)
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+        button.imagePosition = .imageLeading
+        button.alignment = .left
+        button.isBordered = false
+        button.font = .systemFont(ofSize: NSFont.systemFontSize)
+        return button
     }
 
     private func makeContent() -> NSView {
@@ -233,6 +248,22 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.canChooseFiles = true
         guard panel.runModal() == .OK else { return }
         inspect(panel.urls)
+    }
+
+    @objc private func showHistory() {
+        statusLabel.stringValue = "Loading history…"
+        Task {
+            do {
+                let records = try await model.loadHistory()
+                let controller = HistoryWindowController(records: records)
+                historyWindowController = controller
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                statusLabel.stringValue = records.isEmpty ? "No history yet" : "History loaded"
+            } catch {
+                statusLabel.stringValue = "Could not load history: \(error.localizedDescription)"
+            }
+        }
     }
 
     private func inspect(_ urls: [URL]) {

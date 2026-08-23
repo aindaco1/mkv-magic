@@ -24,3 +24,5 @@ semantic versioning; public release tags are immutable and signed.
 - Persist real edit progress through the fail-closed job lifecycle in a private
   atomic history document, with sanitized messages and no invented security
   bookmark or full media path.
+- Make History a lightweight native report with recent-job columns and the
+  selected job's complete sanitized lifecycle.
