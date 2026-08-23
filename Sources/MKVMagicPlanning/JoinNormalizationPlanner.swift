@@ -201,11 +201,36 @@ public struct JoinCompatibilityReportSnapshot: Hashable, Sendable {
     public let mapping: JoinTrackMapping
     public let disposition: JoinAppendDisposition
     public let issues: [JoinCompatibilityIssue]
+    private let inspectedSources: [MediaAsset]
 
-    public init(_ report: JoinCompatibilityReport) {
+    public init(_ report: JoinCompatibilityReport, sources: [MediaAsset]) {
         mapping = report.mapping
         disposition = report.disposition
         issues = report.issues
+        inspectedSources = sources.map(Self.normalizedSourceFacts)
+    }
+
+    private static func normalizedSourceFacts(_ source: MediaAsset) -> MediaAsset {
+        MediaAsset(
+            id: UUID(uuid: (0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)),
+            sourceURL: source.sourceURL.standardizedFileURL,
+            container: source.container,
+            formatLongName: source.formatLongName,
+            duration: source.duration,
+            fileSize: source.fileSize,
+            bitrate: source.bitrate,
+            tracks: source.tracks,
+            chapters: source.chapters,
+            attachments: source.attachments,
+            metadata: source.metadata,
+            chapterEntryCount: source.chapterEntryCount,
+            globalTagCount: source.globalTagCount,
+            trackTagCount: source.trackTagCount,
+            segmentUID: source.segmentUID,
+            muxingApplication: source.muxingApplication,
+            writingApplication: source.writingApplication,
+            warnings: source.warnings
+        )
     }
 }
 
@@ -295,7 +320,7 @@ public struct JoinNormalizationPlanner: Sendable {
             )
         }
         return JoinNormalizationProposal(
-            report: JoinCompatibilityReportSnapshot(report),
+            report: JoinCompatibilityReportSnapshot(report, sources: sources),
             videoLanes: videoLanes,
             audioLanes: audioLanes,
             subtitleLanes: subtitleLanes,
@@ -384,11 +409,21 @@ public struct JoinNormalizationPlanner: Sendable {
                 )
             )
         }
-        let canvas = safeDimensions.max { lhs, rhs in
+        let largestCanvas = safeDimensions.max { lhs, rhs in
             let leftArea = Int64(lhs.width) * Int64(lhs.height)
             let rightArea = Int64(rhs.width) * Int64(rhs.height)
             if leftArea == rightArea { return lhs.width < rhs.width }
             return leftArea < rightArea
+        }
+        let canvas = largestCanvas.flatMap(evenCanvas)
+        if largestCanvas != nil, canvas == nil {
+            blockers.append(
+                JoinNormalizationBlocker(
+                    laneIndex: laneIndex,
+                    summary:
+                        "Video lane \(laneIndex + 1) cannot produce a bounded even-sized output canvas."
+                )
+            )
         }
 
         let dynamicRanges = presentTracks.map(dynamicRange)
@@ -721,6 +756,15 @@ public struct JoinNormalizationPlanner: Sendable {
 
     private func normalized(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
+
+    private func evenCanvas(_ dimensions: MediaDimensions) -> MediaDimensions? {
+        let width = dimensions.width + dimensions.width % 2
+        let height = dimensions.height + dimensions.height % 2
+        guard width <= Self.maximumVideoDimension, height <= Self.maximumVideoDimension else {
+            return nil
+        }
+        return MediaDimensions(width: width, height: height)
     }
 
     private func videoPresetSummary(_ preset: VideoPreset) -> String {

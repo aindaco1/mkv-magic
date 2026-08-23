@@ -311,7 +311,7 @@ for architecture in arm64 x86_64; do
         fi
     done
     filters="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -filters)"
-    for filter in aformat anullsrc aresample channelmap concat format pad scale setpts; do
+    for filter in aformat anullsrc aresample asetpts atrim channelmap concat format pad scale setpts setsar; do
         if ! grep -Eq "[[:space:]]${filter}[[:space:]]" <<< "$filters"; then
             echo "missing required $architecture FFmpeg filter: $filter" >&2
             exit 1

@@ -83,15 +83,21 @@ prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results and compares the exact nested chapter XML.
 Manual ambiguity mapping, trim execution, decode spot checks, attachment
-selection, and common-format execution remain pending. When a reviewed group
+selection, and complete common-format execution remain pending. When a reviewed group
 needs normalization, the same window now previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
 local one-frame capability probe; affected audio lanes are converted once to
 verified AAC without automatic downmix; and mixed SDR/HDR, Dolby
 Vision, incomplete facts, and image-subtitle limitations fail closed or require
-explicit choices. The preview does not enable saving until the corresponding
-choice UI, encoder, and output verification path exist.
+explicit choices. Behind that read-only preview, file-specific choices are now
+bound to every inspected source fact and compiled into one bounded FFmpeg graph:
+each affected video or audio lane is encoded exactly once, ordinary audio layouts
+can be normalized without an automatic downmix, and explicitly approved missing
+audio becomes exact-duration silence. Real bundled-tool fixtures decode the HEVC
+and AAC results and prove that source bytes do not change. The preview still does
+not enable saving because native choice controls, final packet-copy/subtitle/
+attachment/chapter assembly, and verified commit are not implemented yet.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current

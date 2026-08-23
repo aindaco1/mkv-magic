@@ -864,9 +864,14 @@ current bundled runtime verifies HEVC/H.264 VideoToolbox, ProRes, and AAC, but
 contains no AV1 encoder; the native review therefore recommends HEVC as its
 verified fallback and does not imply that AV1 is executable. It fails closed for
 incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision
-transcodes, unsupported HDR, and image subtitle conversion. Manual mapping and
-attachment choices, normalization execution and verification, fast/exact
-trimming, and decode-boundary spot checks remain before the M5 gate is complete.
+transcodes, unsupported HDR, and image subtitle conversion. A revision-bound
+choice resolver and pure FFmpeg compiler now turn exact SDR video and AAC layout
+decisions into one filter graph and one process, with no repeated encode stage;
+explicit missing-audio approval produces exact-duration silence. Bundled-tool
+fixtures execute and decode both HEVC video and stereo-to-surround AAC results.
+Manual mapping, native choice controls, attachment choices, final MKV assembly,
+strict normalization verification/commit, fast/exact trimming, and join-boundary
+decode spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

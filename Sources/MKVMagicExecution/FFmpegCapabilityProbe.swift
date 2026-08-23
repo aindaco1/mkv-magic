@@ -38,8 +38,8 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
     )
 
     public static let requiredJoinFilters: Set<String> = [
-        "aformat", "anullsrc", "aresample", "channelmap", "concat", "format", "pad", "scale",
-        "setpts",
+        "aformat", "anullsrc", "aresample", "asetpts", "atrim", "channelmap", "concat",
+        "format", "pad", "scale", "setpts", "setsar",
     ]
 
     public let softwareAV1: FFmpegCapabilityStatus
@@ -89,6 +89,19 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
 
     public var recommendedVideoPreset: VideoPreset? {
         availableVideoPresets.first
+    }
+
+    public func verifiedEncoder(for preset: VideoPreset) -> String? {
+        switch preset {
+        case .av1Quality:
+            softwareAV1 == .verified ? softwareAV1Encoder : nil
+        case .hevcCompatibility:
+            hevc10VideoToolbox == .verified ? "hevc_videotoolbox" : nil
+        case .h264Compatibility:
+            h264VideoToolbox == .verified ? "h264_videotoolbox" : nil
+        case .proRes:
+            proRes == .verified ? proResEncoder : nil
+        }
     }
 }
 

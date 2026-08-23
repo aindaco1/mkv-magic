@@ -66,8 +66,10 @@ and verified sandboxed DMG packaging.
 
 ## Still pending
 
-- Concrete choice controls and a revision-bound normalization preview.
-- Fused FFmpeg filter-graph and command rendering.
+- Native choice controls and a complete normalization execution preview. The
+  revision-bound choice model is now implemented.
+- Transactional execution of the fused FFmpeg filter graph and command rendered
+  by `M5_FUSED_NORMALIZATION_COMMAND_SLICE.md`.
 - Bundled SVT-AV1 and AAC encoder execution plus cancellation.
 - HDR10 metadata transfer and strict output verification.
 - Final MKV mux, exact nested chapter verification, and verified commit.

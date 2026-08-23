@@ -31,7 +31,9 @@ let package = Package(
         ),
         .target(
             name: "MKVMagicExecution",
-            dependencies: ["MKVMagicCore", "MKVMagicMedia", "MKVMagicSystem"]
+            dependencies: [
+                "MKVMagicCore", "MKVMagicMedia", "MKVMagicPlanning", "MKVMagicSystem",
+            ]
         ),
         .executableTarget(
             name: "MKVMagic",
@@ -74,7 +76,8 @@ let package = Package(
         .testTarget(
             name: "MKVMagicExecutionTests",
             dependencies: [
-                "MKVMagicCore", "MKVMagicExecution", "MKVMagicMedia", "MKVMagicSystem",
+                "MKVMagicCore", "MKVMagicExecution", "MKVMagicMedia", "MKVMagicPlanning",
+                "MKVMagicSystem",
             ]
         ),
         .testTarget(

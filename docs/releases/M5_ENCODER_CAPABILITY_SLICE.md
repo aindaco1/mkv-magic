@@ -17,8 +17,9 @@ execution, a bundled AV1 encoder, a public release, or physical Intel acceptance
 - Cancellation propagates. A declared encoder that fails its smoke encode stays
   visible to diagnostics as `declared` but is excluded from user choices.
 - Join additionally requires `concat`, `scale`, `pad`, `format`, `setpts`,
-  `aformat`, `aresample`, `channelmap`, and `anullsrc`; a missing required filter
-  blocks the common-format preview from advancing.
+  `setsar`, `aformat`, `aresample`, `asetpts`, `atrim`, `channelmap`, and
+  `anullsrc`; a missing required filter blocks the common-format preview from
+  advancing.
 
 ## Current bundled-runtime result
 
@@ -68,8 +69,9 @@ real-library beta acceptance remain separate delivery gates.
 ## Still pending
 
 - Pinned, Universal-compatible SVT-AV1 sidecar build and licensing evidence.
-- User-facing common-format choices and revision-bound execution preview.
-- Fused FFmpeg graph/command rendering, progress, and cancellation.
+- User-facing common-format choice controls and a complete execution preview.
+- Progress, cancellation, and transactional execution of the fused FFmpeg
+  command described in `M5_FUSED_NORMALIZATION_COMMAND_SLICE.md`.
 - Strict HDR10, audio layout, final MKV, chapter, and decode-boundary output
   verification.
 - Physical Intel capability and performance acceptance.

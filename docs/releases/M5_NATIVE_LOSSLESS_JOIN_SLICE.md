@@ -74,6 +74,8 @@ the private temporary output.
 - Explicit attachment retention/removal and confirmation-only metadata policies.
 - Keyframe-aware fast trim and exact trim with truthful adjusted-boundary review.
 - Decode spot checks and copied-stream fingerprints around every join boundary.
-- Common-format choice controls and one-generation normalization execution. A
-  truthful preview is implemented in `M5_JOIN_NORMALIZATION_PLANNER_SLICE.md`.
+- Common-format choice controls, final stream/chapter assembly, verification,
+  and commit. The proposal and fused one-generation command compiler are
+  implemented in `M5_JOIN_NORMALIZATION_PLANNER_SLICE.md` and
+  `M5_FUSED_NORMALIZATION_COMMAND_SLICE.md`.
 - Private-library beta acceptance and physical Intel smoke testing.

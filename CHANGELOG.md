@@ -145,3 +145,12 @@ semantic versioning; public release tags are immutable and signed.
   verified fallback while keeping AV1 as the future quality preference.
 - Consolidate private temporary workspaces for chapter edits, chapter frames,
   joins, and capability probes behind one restrictive, symlink-resistant helper.
+- Bind common-format choices to the complete inspected joined-group facts and
+  reject missing, stale, unavailable, malformed, or extraneous decisions before
+  command rendering. Round odd video canvases safely and require explicit audio
+  layout, bitrate, rate-control, metadata, attachment, gap, and silence choices.
+- Compile every affected SDR video and audio lane into one bounded FFmpeg filter
+  graph and one process, encoding each output lane once while leaving compatible
+  packet-copy lanes for final assembly. Real bundled-tool fixtures prove HEVC
+  fit-and-pad and stereo-to-surround AAC normalization, decode both outputs, and
+  preserve every source byte.
