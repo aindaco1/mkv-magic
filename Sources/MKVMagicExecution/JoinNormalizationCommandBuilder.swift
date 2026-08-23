@@ -41,7 +41,7 @@ extension JoinNormalizationCommandError: LocalizedError {
         case .unsupportedAudioLayout(let laneIndex):
             "Audio lane \(laneIndex + 1) uses a channel layout that is not supported safely yet."
         case .unsupportedSourceDuration(let sourceIndex):
-            "Part \(sourceIndex + 1) needs a known positive duration before silence can be synthesized."
+            "Part \(sourceIndex + 1) needs a known positive duration before its normalized timeline can be compiled."
         case .commandTooLarge:
             "The fused FFmpeg preview exceeds the bounded command size."
         }
@@ -150,6 +150,13 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         laneIndex: lane.laneIndex
                     )
                 }
+                guard let duration = sources[sourceIndex].duration,
+                    duration.nanoseconds > 0
+                else {
+                    throw JoinNormalizationCommandError.unsupportedSourceDuration(
+                        sourceIndex: sourceIndex
+                    )
+                }
                 let label = "jv\(lane.laneIndex)s\(sourceIndex)"
                 graphParts.append(
                     "[\(sourceIndex):\(trackID)]setpts=PTS-STARTPTS,"
@@ -157,7 +164,10 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         + "force_original_aspect_ratio=decrease:flags=lanczos,"
                         + "pad=w=\(choice.canvas.width):h=\(choice.canvas.height):"
                         + "x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
-                        + "format=\(filterPixelFormat(choice.preset)),setsar=1[\(label)]"
+                        + "format=\(filterPixelFormat(choice.preset)),setsar=1,"
+                        + "tpad=stop_mode=clone:stop_duration=\(decimalSeconds(duration)),"
+                        + "trim=duration=\(decimalSeconds(duration)),"
+                        + "setpts=PTS-STARTPTS[\(label)]"
                 )
                 inputLabels.append("[\(label)]")
             }
@@ -206,8 +216,15 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                 }
                 guard let track = indexedTracks[sourceIndex][trackID],
                     safeAudioLayout(track.channelLayout ?? "", channels: track.channels ?? 0)
-                        != nil
+                        != nil,
+                    let duration = sources[sourceIndex].duration,
+                    duration.nanoseconds > 0
                 else {
+                    if sources[sourceIndex].duration?.nanoseconds ?? 0 <= 0 {
+                        throw JoinNormalizationCommandError.unsupportedSourceDuration(
+                            sourceIndex: sourceIndex
+                        )
+                    }
                     throw JoinNormalizationCommandError.unsupportedAudioLayout(
                         laneIndex: lane.laneIndex
                     )
@@ -218,6 +235,8 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         + "aresample=\(choice.sampleRate):first_pts=0,"
                         + "aformat=sample_fmts=\(sampleFormat):"
                         + "sample_rates=\(choice.sampleRate):channel_layouts=\(safeLayout),"
+                        + "apad=pad_dur=\(decimalSeconds(duration)),"
+                        + "atrim=end=\(decimalSeconds(duration)),"
                         + "asetpts=PTS-STARTPTS[\(label)]"
                 )
                 inputLabels.append("[\(label)]")

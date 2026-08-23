@@ -90,9 +90,10 @@ commands and verified executor. One joins different canvases into a single
 10-bit HEVC generation; the other converts stereo plus 5.1 input into one 5.1
 AAC lane. Both results inspect as expected, decode completely, commit through a
 second semantic audit, and leave every source byte-identical. The full
-bundled-tool suite passes all 292 tests with zero skips and zero failures.
+bundled-tool suite now passes all 298 tests with zero skips and zero failures,
+including the later final-assembly compiler regressions.
 
-The standard source gate passes all 292 tests with 17 intentional bundled-tool
+The standard source gate passes all 298 tests with 18 intentional bundled-tool
 skips and builds the Universal `arm64`/`x86_64` app. The isolated complete local
 gate also passes coverage collection, AddressSanitizer, ThreadSanitizer,
 inside-out signatures and entitlement checks, SBOM/checksums, ZIP/appcast
@@ -101,8 +102,9 @@ assembly, and verified sandboxed DMG packaging.
 ## Still pending
 
 - Compact native controls for exact file-specific choices.
-- Final assembly of normalized streams with compatible packet-copy lanes,
-  subtitles, selected attachments/metadata, and exact nested chapters.
+- Transactional execution and reopen verification of the later one-command
+  final assembly compiler. Tag preservation and subtitle conversion/gaps remain
+  fail-closed at that compiler boundary.
 - Decode checks around every source boundary in the final assembled MKV.
 - HDR10 execution, pinned software AV1, private-library beta acceptance, and
   physical Intel performance acceptance.

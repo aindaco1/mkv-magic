@@ -873,9 +873,16 @@ The internal executor now binds every source filesystem revision, runs FFmpeg
 once, semantically verifies the encoded-only Matroska stream bundle before
 commit and after reopen, and refuses changed sources, missing timelines, wrong
 duration/lane/codec/layout/color facts, or unexpected chapters and attachments.
-Manual mapping, native choice controls, attachment choices, final user-facing
-MKV assembly, fast/exact trimming, and join-boundary decode spot checks remain
-before the M5 gate is complete.
+Encoded segments are now padded/trimmed to each inspected source-container
+duration so mixed normalized and packet-copy lanes remain aligned. A pure final
+assembly compiler emits one bounded `mkvmerge` invocation: verified normalized
+lanes are ordered with compatible source lanes appended directly, while reviewed
+track metadata, attachment selections, the segment title, and exact external
+nested chapters are rendered once. It fails closed on unpreserved Matroska tags,
+text-subtitle conversion, subtitle gaps, changed chapter/bundle facts, unsafe
+paths, or overwrite. Manual mapping, native choice controls, the revision-bound
+final executor and reopen audit, fast/exact trimming, and join-boundary decode
+spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

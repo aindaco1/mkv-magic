@@ -99,10 +99,16 @@ and AAC results and prove that source bytes do not change. The internal
 normalization executor now binds every source to a filesystem revision, invokes
 that graph once, verifies the intermediate stream bundle's exact encoded lanes,
 duration, Matroska structure, dimensions, bit depth, SDR color, audio layout,
-and sample rate, and atomically commits only after a second reopen audit. The
-preview still does not enable saving because native choice controls and final
-packet-copy/subtitle/attachment/chapter assembly into the one user-facing MKV
-are not implemented yet.
+and sample rate, and atomically commits only after a second reopen audit. Each
+encoded segment is padded and trimmed to its reviewed source-container duration,
+so an encoded video lane remains aligned with a directly copied audio lane even
+when the source contains encoder padding. A final pure compiler now emits one
+`mkvmerge` invocation that combines those verified normalized lanes with direct
+packet-copy lanes, selected attachments and track metadata, one title, and the
+exact nested joined chapters. It refuses overwrite, changed chapters/bundles,
+unsafe paths or text, unpreserved tags, subtitle conversion, and subtitle gaps.
+The preview still does not enable saving because native choice controls and the
+revision-bound final executor/reopen audit are not implemented yet.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current

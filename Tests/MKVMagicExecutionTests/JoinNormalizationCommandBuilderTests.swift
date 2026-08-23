@@ -36,6 +36,8 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         XCTAssertEqual(graph.components(separatedBy: "scale=w=1920:h=1080").count - 1, 2)
         XCTAssertTrue(graph.contains("[0:0]setpts=PTS-STARTPTS"))
         XCTAssertTrue(graph.contains("[1:0]setpts=PTS-STARTPTS"))
+        XCTAssertEqual(graph.components(separatedBy: "tpad=stop_mode=clone").count - 1, 2)
+        XCTAssertEqual(graph.components(separatedBy: "trim=duration=1.000000000").count - 1, 2)
         XCTAssertLessThan(graph.utf8.count, 1_048_576)
         XCTAssertEqual(value(after: "-map_metadata", in: command.arguments), "-1")
         XCTAssertEqual(value(after: "-map_chapters", in: command.arguments), "-1")
@@ -81,6 +83,8 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         XCTAssertEqual(graph.components(separatedBy: "concat=n=2:v=1:a=0").count - 1, 1)
         XCTAssertEqual(graph.components(separatedBy: "concat=n=2:v=0:a=1").count - 1, 1)
         XCTAssertEqual(graph.components(separatedBy: "channel_layouts=5.1(side)").count - 1, 2)
+        XCTAssertEqual(graph.components(separatedBy: "apad=pad_dur=1.000000000").count - 1, 2)
+        XCTAssertEqual(graph.components(separatedBy: "atrim=end=1.000000000").count - 1, 2)
     }
 
     func testSynthesizesOnlyExplicitlyApprovedMissingAudioForExactPartDuration() throws {

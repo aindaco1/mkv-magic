@@ -38,8 +38,8 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
     )
 
     public static let requiredJoinFilters: Set<String> = [
-        "aformat", "anullsrc", "aresample", "asetpts", "atrim", "channelmap", "concat",
-        "format", "pad", "scale", "setpts", "setsar",
+        "aformat", "anullsrc", "apad", "aresample", "asetpts", "atrim", "channelmap",
+        "concat", "format", "pad", "scale", "setpts", "setsar", "tpad", "trim",
     ]
 
     public let softwareAV1: FFmpegCapabilityStatus

@@ -158,6 +158,197 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
                 sourceDigests
             )
+
+            let chapterSources = try sources.enumerated().map { index, source in
+                let sourceDuration = try XCTUnwrap(source.duration)
+                return JoinedChapterSource(
+                    title: "Part \(index + 1)",
+                    duration: sourceDuration,
+                    retainedStart: .zero,
+                    retainedEnd: sourceDuration,
+                    selectedEditionChapters: []
+                )
+            }
+            let chapters = try JoinedChapterComposer().compose(chapterSources)
+            let chaptersURL = root.appendingPathComponent("joined-chapters.xml")
+            try MatroskaChapterXMLCodec().serialize(chapters.document).write(to: chaptersURL)
+            let finalURL = root.appendingPathComponent("assembled.mkv")
+            let assembly = try JoinFinalAssemblyCommandBuilder().build(
+                sources: sources,
+                resolvedPlan: resolved,
+                normalizedBundle: committed,
+                chapters: chapters,
+                chaptersURL: chaptersURL,
+                outputURL: finalURL
+            )
+            let assemblyResult = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .mkvmerge),
+                    arguments: assembly.arguments,
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(assemblyResult.exitCode, 0, assemblyResult.standardError.text)
+            let assembled = try await inspector.inspect(finalURL)
+            XCTAssertEqual(assembled.tracks.count, 1)
+            XCTAssertEqual(assembled.tracks[0].codec, "hevc")
+            XCTAssertEqual(assembled.chapterEntryCount, 2)
+            XCTAssertEqual(
+                assembled.tracks[0].dimensions,
+                MediaDimensions(width: 80, height: 64)
+            )
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
+        }
+    }
+
+    func testBundledToolsAssembleNormalizedVideoWithDirectPacketCopyAudio() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.hevc10VideoToolbox == .verified,
+            capabilities.aac == .verified
+        else {
+            throw XCTSkip("Bundled HEVC and AAC capabilities did not verify on this Mac")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-fused-assembly"
+        ) { root in
+            let first = try await makeAVFixture(
+                root: root,
+                name: "first-av",
+                width: 64,
+                height: 48,
+                fill: 16,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner
+            )
+            let second = try await makeAVFixture(
+                root: root,
+                name: "second-av",
+                width: 80,
+                height: 64,
+                fill: 32,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner
+            )
+            let sourceURLs = [first, second]
+            let sourceDigests = try sourceURLs.map {
+                SHA256.hash(data: try Data(contentsOf: $0))
+            }
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            var sources = [MediaAsset]()
+            for sourceURL in sourceURLs {
+                try await sources.append(inspector.inspect(sourceURL))
+            }
+            let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+            let proposal = try JoinNormalizationPlanner().propose(
+                sources: sources,
+                mapping: mapping,
+                preferredVideoPreset: .hevcCompatibility
+            )
+            XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
+            XCTAssertTrue(try XCTUnwrap(proposal.videoLanes.first).encodesVideo)
+            XCTAssertFalse(try XCTUnwrap(proposal.audioLanes.first).encodesAudio)
+            let videoLane = try XCTUnwrap(proposal.videoLanes.first)
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(
+                    videoTargetsByLane: [
+                        videoLane.laneIndex: JoinVideoTargetChoice(
+                            preset: .hevcCompatibility,
+                            canvas: try XCTUnwrap(videoLane.recommendedCanvas),
+                            frameRatePolicy: .preserveSourceTiming,
+                            dynamicRange: .sdr,
+                            rateControl: .averageBitrate(500_000)
+                        )
+                    ]
+                ),
+                availableVideoPresets: Set(capabilities.availableVideoPresets),
+                aacAvailable: true
+            )
+            let normalizationExecutor = JoinNormalizationExecutor(
+                ffmpegURL: ffmpegURL,
+                runner: runner,
+                inspector: inspector
+            )
+            let normalizationPreview = try normalizationExecutor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            )
+            let normalized = try await normalizationExecutor.execute(
+                preview: normalizationPreview,
+                destinationURL: root.appendingPathComponent("normalized-video.mkv")
+            )
+            XCTAssertEqual(normalized.tracks.count, 1)
+            XCTAssertEqual(normalized.tracks[0].kind, .video)
+
+            let chapterSources = try sources.enumerated().map { index, source in
+                let duration = try XCTUnwrap(source.duration)
+                return JoinedChapterSource(
+                    title: "Part \(index + 1)",
+                    duration: duration,
+                    retainedStart: .zero,
+                    retainedEnd: duration,
+                    selectedEditionChapters: []
+                )
+            }
+            let chapters = try JoinedChapterComposer().compose(chapterSources)
+            let chaptersURL = root.appendingPathComponent("chapters.xml")
+            try MatroskaChapterXMLCodec().serialize(chapters.document).write(to: chaptersURL)
+            let finalURL = root.appendingPathComponent("assembled-video-and-audio.mkv")
+            let assembly = try JoinFinalAssemblyCommandBuilder().build(
+                sources: sources,
+                resolvedPlan: resolved,
+                normalizedBundle: normalized,
+                chapters: chapters,
+                chaptersURL: chaptersURL,
+                outputURL: finalURL
+            )
+            XCTAssertEqual(
+                assembly.lanes.map(\.mechanism),
+                [.normalized, .packetCopy]
+            )
+            XCTAssertTrue(assembly.arguments.contains("--append-to"))
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .mkvmerge),
+                    arguments: assembly.arguments,
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+
+            let assembled = try await inspector.inspect(finalURL)
+            XCTAssertEqual(assembled.tracks.map(\.kind), [.video, .audio])
+            XCTAssertEqual(assembled.tracks[0].codec, "hevc")
+            XCTAssertEqual(assembled.tracks[1].codec, "aac")
+            XCTAssertEqual(assembled.tracks[1].uid, sources[0].tracks[1].uid)
+            XCTAssertEqual(assembled.chapterEntryCount, 2)
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
         }
     }
 
@@ -350,6 +541,7 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                     "--set", "color-range=1",
                     "--set", "color-transfer-characteristics=1",
                     "--set", "color-primaries=1",
+                    "--tags", "all:",
                 ],
                 timeout: 60
             )
@@ -384,6 +576,66 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             )
         )
         XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+        return outputURL
+    }
+
+    private func makeAVFixture(
+        root: URL,
+        name: String,
+        width: Int,
+        height: Int,
+        fill: UInt8,
+        ffmpegURL: URL,
+        mkvpropeditURL: URL,
+        runner: FoundationCommandRunner
+    ) async throws -> URL {
+        let rawVideoURL = root.appendingPathComponent("\(name).yuv")
+        let rawAudioURL = root.appendingPathComponent("\(name).pcm")
+        let outputURL = root.appendingPathComponent("\(name).mkv")
+        let bytesPerFrame = width * height * 3 / 2
+        try Data(repeating: fill, count: bytesPerFrame * 12).write(to: rawVideoURL)
+        try Data(repeating: fill, count: 48_000 * 2).write(to: rawAudioURL)
+        let result = try await runner.run(
+            CommandRequest(
+                executableURL: ffmpegURL,
+                arguments: [
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "24",
+                    "-i", rawVideoURL.path,
+                    "-f", "s16le", "-ar", "48000", "-ac", "2",
+                    "-channel_layout", "stereo", "-i", rawAudioURL.path,
+                    "-map", "0:v:0", "-map", "1:a:0", "-frames:v", "12",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-color_primaries:v", "bt709", "-color_trc:v", "bt709",
+                    "-colorspace:v", "bt709", "-color_range:v", "tv",
+                    "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:a", "aac_at", "-b:a", "128k",
+                    "-metadata", "title=Fused Assembly Fixture",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:a:0", "title=Main Audio",
+                    outputURL.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+        let edit = try await runner.run(
+            CommandRequest(
+                executableURL: mkvpropeditURL,
+                arguments: [
+                    outputURL.path, "--edit", "track:v1",
+                    "--set", "color-matrix-coefficients=1",
+                    "--set", "color-range=1",
+                    "--set", "color-transfer-characteristics=1",
+                    "--set", "color-primaries=1",
+                    "--tags", "all:",
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(edit.exitCode, 0, edit.standardError.text)
         return outputURL
     }
 }
