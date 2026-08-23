@@ -109,6 +109,97 @@ final class MediaModelTests: XCTestCase {
         )
     }
 
+    func testPrivateBetaFactsRetainCapabilitiesWithoutPersonalMediaMetadata() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Users/private/Secret Movie.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 7_500_000_000_000),
+            fileSize: 2_000_000_000,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "hevc",
+                    title: "Secret Camera",
+                    hdrFormats: ["HDR10"]
+                ),
+                MediaTrack(id: 1, kind: .audio, codec: "eac3", channels: 6),
+                MediaTrack(id: 2, kind: .subtitle, codec: "hdmv_pgs_subtitle"),
+                MediaTrack(id: 3, kind: .audio, codec: "A_MPEG/L3", channels: 2),
+            ],
+            chapters: [
+                ChapterNode(title: "Secret Chapter", start: .zero),
+                ChapterNode(
+                    title: "Secret Parent",
+                    start: MediaTime(nanoseconds: 1_000_000_000),
+                    children: [
+                        ChapterNode(
+                            title: "Secret Child",
+                            start: MediaTime(nanoseconds: 2_000_000_000)
+                        )
+                    ]
+                ),
+            ],
+            attachments: [
+                MediaAttachment(id: 3, filename: "Secret Font.ttf")
+            ],
+            metadata: ["title": "Secret Title"],
+            warnings: ["Secret warning text"]
+        )
+
+        let facts = MediaJobInputFacts(asset: asset)
+
+        XCTAssertEqual(facts.container, .matroska)
+        XCTAssertEqual(facts.size, .from1GiBTo10GiB)
+        XCTAssertEqual(facts.duration, .over120Minutes)
+        XCTAssertEqual(facts.tracks.video, 1)
+        XCTAssertEqual(facts.tracks.audio, 2)
+        XCTAssertEqual(facts.tracks.subtitle, 1)
+        XCTAssertEqual(facts.codecs, [.eac3, .hevc, .mp3, .pgs])
+        XCTAssertEqual(facts.maximumAudioChannels, 6)
+        XCTAssertTrue(facts.hasHDR)
+        XCTAssertEqual(facts.chapterCount, 3)
+        XCTAssertEqual(facts.attachmentCount, 1)
+        XCTAssertTrue(facts.hasTags)
+        XCTAssertEqual(facts.warningCount, 1)
+
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(facts), encoding: .utf8))
+        for secret in ["Secret", "/Users", "Movie.mkv", "HDR10"] {
+            XCTAssertFalse(encoded.contains(secret))
+        }
+    }
+
+    func testOlderHistoryWithoutPrivateBetaFieldsStillDecodes() throws {
+        let input = MediaJobInput(displayName: "Movie.mkv")
+        let record = MediaJobRecord(
+            createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            workflowID: BuiltInWorkflowCatalog.trackRemoval,
+            workflowName: "Remove tracks",
+            inputs: [input]
+        )
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(record)) as? [String: Any]
+        )
+        object.removeValue(forKey: "privacySafePlan")
+        var inputs = try XCTUnwrap(object["inputs"] as? [[String: Any]])
+        inputs[0].removeValue(forKey: "privacySafeFacts")
+        object["inputs"] = inputs
+
+        let oldData = try JSONSerialization.data(withJSONObject: object)
+        let decoded = try JSONDecoder().decode(MediaJobRecord.self, from: oldData)
+
+        XCTAssertNil(decoded.privacySafePlan)
+        XCTAssertNil(decoded.inputs.first?.privacySafeFacts)
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(for: decoded.workflowID),
+            .trackRemoval
+        )
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.advancedSubtitleCleanup),
+            .subtitleCleanup
+        )
+    }
+
     func testEnglishLibraryCleanupSuggestionsPreserveAudioCommentaryAndOnlyUsefulSubtitle() {
         let asset = MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),

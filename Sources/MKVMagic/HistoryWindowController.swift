@@ -1,10 +1,14 @@
 import AppKit
 import MKVMagicCore
+import UniformTypeIdentifiers
 
 @MainActor
 final class HistoryWindowController: NSWindowController {
-    init(records: [MediaJobRecord]) {
-        let content = HistoryViewController(records: records)
+    init(
+        records: [MediaJobRecord],
+        onExport: (@MainActor @Sendable (URL) async throws -> Void)? = nil
+    ) {
+        let content = HistoryViewController(records: records, onExport: onExport)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic History"
         window.setContentSize(NSSize(width: 760, height: 560))
@@ -23,11 +27,22 @@ final class HistoryWindowController: NSWindowController {
 @MainActor
 final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private let records: [MediaJobRecord]
+    private let onExport: (@MainActor @Sendable (URL) async throws -> Void)?
     private let tableView = NSTableView()
     private let detailText = NSTextView()
+    private let exportButton = NSButton(
+        title: "Export Privacy-Safe Report…",
+        target: nil,
+        action: nil
+    )
+    private let exportStatus = NSTextField(labelWithString: "")
 
-    init(records: [MediaJobRecord]) {
+    init(
+        records: [MediaJobRecord],
+        onExport: (@MainActor @Sendable (URL) async throws -> Void)?
+    ) {
         self.records = HistoryPresentation.sorted(records)
+        self.onExport = onExport
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -44,6 +59,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             labelWithString: "Verified jobs and their sanitized execution progress."
         )
         help.textColor = .secondaryLabelColor
+        let exportHelp = NSTextField(
+            wrappingLabelWithString:
+                "The optional report contains coarse media facts, encode counts, lifecycle states, "
+                + "and app/tool versions. It excludes filenames, paths, titles, subtitle text, "
+                + "custom workflow names, raw tool output, and exact timestamps."
+        )
+        exportHelp.textColor = .secondaryLabelColor
 
         for (identifier, title, width) in [
             ("workflow", "Workflow", 170.0),
@@ -77,7 +99,20 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         detailScroll.hasVerticalScroller = true
         detailScroll.borderType = .bezelBorder
 
-        let stack = NSStackView(views: [heading, help, tableScroll, detailScroll])
+        exportButton.target = self
+        exportButton.action = #selector(exportPrivacySafeReport)
+        exportButton.isEnabled = onExport != nil
+        exportButton.setAccessibilityLabel("Export Privacy-Safe Report")
+        exportStatus.textColor = .secondaryLabelColor
+        exportStatus.lineBreakMode = .byTruncatingMiddle
+        let exportRow = NSStackView(views: [exportButton, exportStatus])
+        exportRow.orientation = .horizontal
+        exportRow.spacing = 10
+        exportRow.alignment = .centerY
+
+        let stack = NSStackView(views: [
+            heading, help, tableScroll, detailScroll, exportHelp, exportRow,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -92,9 +127,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             tableScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            tableScroll.heightAnchor.constraint(equalToConstant: 190),
+            tableScroll.heightAnchor.constraint(equalToConstant: 160),
             detailScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            detailScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 180),
+            detailScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
+            exportHelp.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            exportRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         view = root
 
@@ -127,6 +164,33 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         renderSelectedRecord()
+    }
+
+    @objc private func exportPrivacySafeReport() {
+        guard let window = view.window, let onExport else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export Privacy-Safe Support Report"
+        panel.prompt = "Export"
+        panel.nameFieldStringValue = "MKV-Magic-Support-Report.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        panel.message =
+            "Review and share this local report only if you choose. It contains no media names or paths."
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK, let self, let destinationURL = panel.url else { return }
+            self.exportButton.isEnabled = false
+            self.exportStatus.stringValue = "Building report…"
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await onExport(destinationURL)
+                    self.exportStatus.stringValue = "Privacy-safe report exported."
+                } catch {
+                    self.exportStatus.stringValue = "Export failed: \(error.localizedDescription)"
+                }
+                self.exportButton.isEnabled = true
+            }
+        }
     }
 
     private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {

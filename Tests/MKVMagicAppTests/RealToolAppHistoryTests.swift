@@ -412,6 +412,15 @@ final class RealToolAppHistoryTests: XCTestCase {
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(record.workflowName, "Join MKV files losslessly")
         XCTAssertEqual(record.inputDisplayNames, ["Part One.mkv", "Part Two.mkv"])
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(record.inputs.compactMap(\.privacySafeFacts).count, 2)
+        XCTAssertTrue(
+            record.inputs.compactMap(\.privacySafeFacts).allSatisfy {
+                $0.container == .matroska && $0.codecs == [.aac]
+            })
         XCTAssertEqual(record.outputDisplayName, "Joined.mkv")
         XCTAssertEqual(
             record.events.map(\.state),
@@ -420,6 +429,16 @@ final class RealToolAppHistoryTests: XCTestCase {
         let serialized = record.events.compactMap(\.message).joined(separator: " ")
         XCTAssertFalse(serialized.contains(fixtureRoot.path))
         XCTAssertTrue(serialized.contains("Zero encodes"))
+
+        let supportURL = fixtureRoot.appendingPathComponent("support.json")
+        try await model.exportPrivacySafeSupportReport(records: records, to: supportURL)
+        let supportData = try Data(contentsOf: supportURL)
+        let support = try JSONDecoder().decode(PrivacySafeSupportReport.self, from: supportData)
+        XCTAssertEqual(support.history.jobs.first?.workflow, .losslessJoin)
+        let supportText = try XCTUnwrap(String(data: supportData, encoding: .utf8))
+        XCTAssertFalse(supportText.contains("Part One.mkv"))
+        XCTAssertFalse(supportText.contains("Part Two.mkv"))
+        XCTAssertFalse(supportText.contains(fixtureRoot.path))
     }
 
     @MainActor
@@ -537,6 +556,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(records.count, 1)
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(record.workflowName, "Join MKV files with one normalization pass")
+        XCTAssertEqual(record.privacySafePlan?.videoEncodeGenerations, 0)
+        XCTAssertEqual(record.privacySafePlan?.audioTracksEncoded, 1)
+        XCTAssertEqual(record.inputs.compactMap(\.privacySafeFacts).count, 2)
         XCTAssertEqual(
             record.inputDisplayNames,
             candidate.sources.map { $0.sourceURL.lastPathComponent }
@@ -801,6 +823,11 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(records.count, 1)
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(record.workflowName, "Fast Trim")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(record.inputs.first?.privacySafeFacts?.container, .matroska)
         XCTAssertEqual(record.inputDisplayNames, ["Feature.mkv"])
         XCTAssertEqual(record.outputDisplayName, "Feature — Trimmed.mkv")
         XCTAssertEqual(

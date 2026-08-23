@@ -25,9 +25,9 @@ final class AppModel {
             case .metadata(_, let workflowID, _): workflowID
             case .trackRemoval(_, let workflowID, _): workflowID
             case .saved(let workflow): workflow.workflowID
-            case .externalSubtitle: AppModel.externalSubtitleMuxWorkflowID
-            case .embeddedSubtitle: AppModel.embeddedSubtitleCleanupWorkflowID
-            case .chapters: AppModel.chapterEditWorkflowID
+            case .externalSubtitle: BuiltInWorkflowCatalog.externalSubtitleMux
+            case .embeddedSubtitle: BuiltInWorkflowCatalog.embeddedSubtitleCleanup
+            case .chapters: BuiltInWorkflowCatalog.chapterEdit
             }
         }
 
@@ -78,6 +78,18 @@ final class AppModel {
             }
         }
 
+        var privacySafePlan: MediaJobPlanFacts {
+            switch self {
+            case .saved(let workflow):
+                MediaJobPlanFacts(
+                    videoEncodeGenerations: UInt(max(0, workflow.plan.impact.videoEncodeCount)),
+                    audioTracksEncoded: UInt(max(0, workflow.plan.impact.audioEncodeCount))
+                )
+            default:
+                MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+            }
+        }
+
         var externalInputURLs: [URL] {
             switch self {
             case .externalSubtitle(let preview, _): [preview.sourceURL]
@@ -117,6 +129,31 @@ final class AppModel {
 
     func loadHistory() async throws -> [MediaJobRecord] {
         try await historyRecorderFactory().load()
+    }
+
+    func exportPrivacySafeSupportReport(
+        records: [MediaJobRecord],
+        to destinationURL: URL
+    ) async throws {
+        let toolRootURL = try resolveToolRootURL()
+        let applicationVersion =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
+            ?? "development"
+        let applicationBuild =
+            Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+            ?? "development"
+        let operatingSystem = ProcessInfo.processInfo.operatingSystemVersionString
+        try await Task.detached(priority: .utility) {
+            let catalog = try ToolCatalog(rootURL: toolRootURL)
+            let report = PrivacySafeSupportReport.make(
+                applicationVersion: applicationVersion,
+                applicationBuild: applicationBuild,
+                operatingSystem: operatingSystem,
+                catalog: catalog,
+                records: records
+            )
+            try PrivacySafeSupportReportWriter.write(report, to: destinationURL)
+        }.value
     }
 
     func loadWorkflows() async throws -> [SavedWorkflow] {
@@ -446,10 +483,14 @@ final class AppModel {
         do {
             let proposal = preview.resolvedPlan.proposal
             let execution = try await beginHistory(
-                inputDisplayNames: sources.map { $0.sourceURL.lastPathComponent },
+                inputs: sources.map(Self.historyInput),
                 outputDisplayName: destinationURL.lastPathComponent,
-                workflowID: Self.commonFormatJoinWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.commonFormatJoin,
                 workflowName: "Join MKV files with one normalization pass",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: UInt(max(0, proposal.impact.videoEncodeCount)),
+                    audioTracksEncoded: UInt(max(0, proposal.impact.audioEncodeCount))
+                ),
                 inspectionMessage:
                     "Used completed inspections and exact extracted nested chapter documents.",
                 planningMessage:
@@ -547,10 +588,14 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayNames: preview.sources.map { $0.sourceURL.lastPathComponent },
+                inputs: preview.sources.map(Self.historyInput),
                 outputDisplayName: destinationURL.lastPathComponent,
-                workflowID: Self.losslessJoinWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.losslessJoin,
                 workflowName: "Join MKV files losslessly",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
                 inspectionMessage:
                     "Used exact completed inspections and extracted nested chapter documents.",
                 planningMessage:
@@ -649,9 +694,14 @@ final class AppModel {
             let planningMessage: String
             let runningMessage: String
             let workflowID: UUID
+            let privacySafePlan: MediaJobPlanFacts
             switch preview {
             case .fast(let fast):
-                workflowID = Self.fastTrimWorkflowID
+                workflowID = BuiltInWorkflowCatalog.fastTrim
+                privacySafePlan = MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                )
                 planningMessage =
                     "Zero encodes; copy every stream at reviewed keyframes "
                     + "\(ChapterTimestamp.format(fast.plan.adjusted.start, digits: 3))–"
@@ -659,7 +709,11 @@ final class AppModel {
                 runningMessage =
                     "Splitting one temporary MKV at reviewed keyframes and replacing chapters."
             case .exact(let exact):
-                workflowID = Self.exactTrimWorkflowID
+                workflowID = BuiltInWorkflowCatalog.exactTrim
+                privacySafePlan = MediaJobPlanFacts(
+                    videoEncodeGenerations: UInt(max(0, preview.videoEncodeCount)),
+                    audioTracksEncoded: UInt(exact.encodedAudioTrackIDs.count)
+                )
                 let audio =
                     exact.resolvedPlan.choice.audioPolicy == .packetCopy
                     ? "packet-copy every audio track"
@@ -674,10 +728,11 @@ final class AppModel {
                     "Encoding video once to one temporary MKV and replacing exact chapters."
             }
             let execution = try await beginHistory(
-                inputDisplayNames: [source.sourceURL.lastPathComponent],
+                inputs: [Self.historyInput(source)],
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: workflowID,
                 workflowName: preview.workflowName,
+                privacySafePlan: privacySafePlan,
                 inspectionMessage:
                     "Used the completed inspection plus exact extracted nested chapters.",
                 planningMessage: planningMessage,
@@ -951,7 +1006,7 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .metadata(
                 .segmentTitle(title),
-                workflowID: Self.segmentTitleWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.segmentTitle,
                 workflowName: "Edit segment title"
             )
         )
@@ -968,7 +1023,7 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .metadata(
                 .track(edit),
-                workflowID: Self.trackMetadataWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.trackMetadata,
                 workflowName: "Edit track metadata"
             )
         )
@@ -985,7 +1040,7 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .trackRemoval(
                 removal,
-                workflowID: Self.trackRemovalWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.trackRemoval,
                 workflowName: "Remove tracks"
             )
         )
@@ -1002,7 +1057,7 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .trackRemoval(
                 removal,
-                workflowID: Self.englishLibraryCleanupWorkflowID,
+                workflowID: BuiltInWorkflowCatalog.englishLibraryCleanup,
                 workflowName: "English Library Cleanup"
             )
         )
@@ -1100,7 +1155,7 @@ final class AppModel {
         try await executeTextSubtitleCleanup(
             sourceURL: preview.sourceURL,
             destinationURL: destinationURL,
-            workflowID: Self.subtitleCleanupWorkflowID,
+            workflowID: BuiltInWorkflowCatalog.subtitleCleanup,
             workflowName: "Clean SRT subtitle",
             planningMessage: "Zero encodes; normalize text and apply only reviewed cue changes."
         ) { execution in
@@ -1128,7 +1183,7 @@ final class AppModel {
         try await executeTextSubtitleCleanup(
             sourceURL: preview.sourceURL,
             destinationURL: destinationURL,
-            workflowID: Self.advancedSubtitleCleanupWorkflowID,
+            workflowID: BuiltInWorkflowCatalog.advancedSubtitleCleanup,
             workflowName: "Clean ASS/SSA subtitle",
             planningMessage:
                 "Zero encodes; normalize text and apply only reviewed dialogue changes while preserving styles."
@@ -1170,10 +1225,14 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayNames: [sourceURL.lastPathComponent],
+                inputs: [Self.historyInput(textSubtitleURL: sourceURL)],
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: workflowID,
                 workflowName: workflowName,
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
                 inspectionMessage: "Parsed bounded subtitle text for a deterministic review.",
                 planningMessage: planningMessage,
                 runningMessage: "Writing one normalized UTF-8 temporary subtitle."
@@ -1211,11 +1270,12 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayNames: [asset.sourceURL.lastPathComponent]
-                    + edit.externalInputURLs.map(\.lastPathComponent),
+                inputs: [Self.historyInput(asset)]
+                    + edit.externalInputURLs.map { Self.historyInput(textSubtitleURL: $0) },
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: edit.workflowID,
                 workflowName: edit.workflowName,
+                privacySafePlan: edit.privacySafePlan,
                 inspectionMessage: "Using the completed media inspection.",
                 planningMessage: edit.planningMessage,
                 runningMessage: edit.runningMessage
@@ -1366,10 +1426,11 @@ final class AppModel {
     }
 
     private func beginHistory(
-        inputDisplayNames: [String],
+        inputs: [MediaJobInput],
         outputDisplayName: String,
         workflowID: UUID,
         workflowName: String,
+        privacySafePlan: MediaJobPlanFacts,
         inspectionMessage: String,
         planningMessage: String,
         runningMessage: String
@@ -1379,8 +1440,9 @@ final class AppModel {
             createdAt: Date(),
             workflowID: workflowID,
             workflowName: workflowName,
-            inputs: inputDisplayNames.map { MediaJobInput(displayName: $0) },
-            outputDisplayName: outputDisplayName
+            inputs: inputs,
+            outputDisplayName: outputDisplayName,
+            privacySafePlan: privacySafePlan
         )
         try job.transition(to: .inspecting, at: job.createdAt, message: inspectionMessage)
         try job.transition(to: .planned, at: job.createdAt, message: planningMessage)
@@ -1556,56 +1618,37 @@ final class AppModel {
         }
     }
 
-    private static let segmentTitleWorkflowID = UUID(
-        uuidString: "6A2D7635-AB6D-4C7A-AE02-1561631121F0"
-    )!
-    private static let trackMetadataWorkflowID = UUID(
-        uuidString: "842C095A-A70A-4B81-BD33-E2857F9B87CD"
-    )!
-    private static let trackRemovalWorkflowID = UUID(
-        uuidString: "6F67B5AB-BB34-45BF-B159-E98F0C26FA3E"
-    )!
-    private static let englishLibraryCleanupWorkflowID = UUID(
-        uuidString: "853C0788-5994-491F-AC13-A0A47319CD0E"
-    )!
-    private static let subtitleCleanupWorkflowID = UUID(
-        uuidString: "7062274D-C993-42BF-903E-3DD817424EBF"
-    )!
-    private static let advancedSubtitleCleanupWorkflowID = UUID(
-        uuidString: "A15A085C-F68E-433F-A6D8-486EF1AB2F95"
-    )!
-    nonisolated private static let externalSubtitleMuxWorkflowID = UUID(
-        uuidString: "5CB3529A-967E-4B11-81E2-E5D932F1B395"
-    )!
-    nonisolated private static let embeddedSubtitleCleanupWorkflowID = UUID(
-        uuidString: "C3A2A7DD-8C17-4A91-A9BC-9750F35A9C6F"
-    )!
-    nonisolated private static let chapterEditWorkflowID = UUID(
-        uuidString: "01898D29-C2C9-44C4-A87D-B72A3AB90FF8"
-    )!
-    nonisolated private static let losslessJoinWorkflowID = UUID(
-        uuidString: "1329034D-8DA4-4D8F-82B6-C3BC42A4E4FA"
-    )!
-    nonisolated private static let commonFormatJoinWorkflowID = UUID(
-        uuidString: "754EEC4F-8989-442A-98C2-A4B17622489D"
-    )!
-    nonisolated private static let fastTrimWorkflowID = UUID(
-        uuidString: "7E551E9E-039C-46DB-A14D-E43E338A5E2A"
-    )!
-    nonisolated private static let exactTrimWorkflowID = UUID(
-        uuidString: "CA62AB88-34D1-44E0-B410-FB9DAA2FE3ED"
-    )!
+    nonisolated private static func historyInput(_ asset: MediaAsset) -> MediaJobInput {
+        MediaJobInput(
+            displayName: asset.sourceURL.lastPathComponent,
+            privacySafeFacts: MediaJobInputFacts(asset: asset)
+        )
+    }
+
+    nonisolated private static func historyInput(textSubtitleURL: URL) -> MediaJobInput {
+        let values = try? textSubtitleURL.resourceValues(forKeys: [.fileSizeKey])
+        return MediaJobInput(
+            displayName: textSubtitleURL.lastPathComponent,
+            privacySafeFacts: .textSubtitle(
+                fileSize: values?.fileSize.map(Int64.init),
+                pathExtension: textSubtitleURL.pathExtension
+            )
+        )
+    }
 
     private func makeToolCatalog() throws -> ToolCatalog {
+        try ToolCatalog(rootURL: resolveToolRootURL())
+    }
+
+    private func resolveToolRootURL() throws -> URL {
         if let explicitRoot = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"],
             explicitRoot.hasPrefix("/")
         {
-            return try ToolCatalog(rootURL: URL(fileURLWithPath: explicitRoot, isDirectory: true))
+            return URL(fileURLWithPath: explicitRoot, isDirectory: true)
         }
         guard let resourceURL = Bundle.main.resourceURL else {
             throw ToolCatalogError.unsafeRoot
         }
-        return try ToolCatalog(
-            rootURL: resourceURL.appendingPathComponent("Tools", isDirectory: true))
+        return resourceURL.appendingPathComponent("Tools", isDirectory: true)
     }
 }

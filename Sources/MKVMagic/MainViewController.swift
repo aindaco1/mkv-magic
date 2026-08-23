@@ -395,7 +395,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         Task {
             do {
                 let records = try await model.loadHistory()
-                let controller = HistoryWindowController(records: records)
+                let controller = HistoryWindowController(
+                    records: records,
+                    onExport: { [model] destinationURL in
+                        try await model.exportPrivacySafeSupportReport(
+                            records: records,
+                            to: destinationURL
+                        )
+                    }
+                )
                 historyWindowController = controller
                 controller.showWindow(nil)
                 controller.window?.makeKeyAndOrderFront(nil)

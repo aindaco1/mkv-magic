@@ -617,7 +617,7 @@ HandBrake is a UX, preset, and benchmark reference. HandBrakeCLI/libhb is not bu
 - Canonicalize and contain temporary, destination, workflow-import, attachment, and runtime paths. Reject traversal, unsafe identifiers, escaping/dangling symlinks, special files, and unexpected manifest fields.
 - Create private temporary directories with restrictive permissions. Refuse broad destructive targets, unresolved globs, root paths, and silent overwrite of existing release or user output.
 - Logs record commands and tool output locally.
-- Support export redacts home-directory usernames and optionally hashes media filenames.
+- The first support export is built only from allowlisted coarse facts; it never receives media filenames, personal paths, media/track/chapter titles, subtitle text, custom workflow names, raw tool output, persistent job/input identifiers, or exact timestamps.
 - The app displays tool versions, license texts, source links, configure flags, and checksums.
 - Secret scanning, dependency review, CodeQL, locked-dependency checks, entitlement-policy tests, and a local-only source guard run in CI.
 - The hardened runtime and an exact reviewed entitlement set are used for public releases. CI compares entitlements extracted from the signed app and signed helpers against the reviewed plist files.
@@ -632,7 +632,7 @@ HandBrake is a UX, preset, and benchmark reference. HandBrakeCLI/libhb is not bu
 
 ### 9.2 Diagnostics boundary
 
-Diagnostics remain local unless the user explicitly exports them. Reports include app/tool versions, architecture, sanitized plans, exit status, bounded tail output, verification results, and recovery state; they exclude media payloads, subtitle text by default, security bookmarks, credentials, full personal paths, and update keys. Logs are size-bounded and old logs are purged by a documented retention policy.
+Diagnostics remain local unless the user explicitly exports them. The current privacy-safe beta report includes allowlisted app/tool versions, architecture, workflow class, coarse input facts, planned encode counts, lifecycle state, result, last active stage, and elapsed-time bucket. It is capped at the 500 newest jobs and one megabyte, writes with owner-only permissions, and excludes media payloads, all filenames and paths, media/track/chapter titles, subtitle text, custom workflow names, raw tool output, security bookmarks, credentials, persistent identifiers, exact timestamps, tool source URLs, license text, and update keys. A future detailed diagnostic bundle may add a bounded sanitized tail only after its redaction boundary has equivalent adversarial tests. Logs are size-bounded and old logs are purged by a documented retention policy.
 
 ## 10. Licensing and release
 
@@ -970,6 +970,11 @@ Deliverables:
 - Tune AV1/HEVC/AAC defaults from measured time, bitrate, and quality.
 - Complete accessibility, keyboard navigation, VoiceOver, reduced motion, and error-language pass.
 - Measure launch time, idle memory, queue responsiveness, and cancellation.
+
+The privacy-safe evidence path is implemented: new History records capture only
+coarse, allowlisted input facts and encode counts, and the explicit History
+export produces a bounded local JSON report without library-identifying fields.
+This tooling does not itself claim that any private-corpus case has passed.
 
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 

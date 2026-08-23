@@ -788,6 +788,25 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testHistoryWindowExplainsAndEnablesExplicitPrivacySafeExport() throws {
+        let controller = HistoryWindowController(records: [], onExport: { _ in })
+        let contentView = try XCTUnwrap(controller.window?.contentView)
+        let export = try XCTUnwrap(
+            buttons(in: contentView).first { $0.title == "Export Privacy-Safe Report…" }
+        )
+        let labels = descendants(in: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
+        contentView.layoutSubtreeIfNeeded()
+        let exportFrame = export.convert(export.bounds, to: contentView)
+
+        XCTAssertTrue(export.isEnabled)
+        XCTAssertGreaterThanOrEqual(exportFrame.minY, 0)
+        XCTAssertLessThanOrEqual(exportFrame.maxY, contentView.bounds.maxY)
+        XCTAssertTrue(labels.contains { $0.contains("excludes filenames, paths, titles") })
+        XCTAssertTrue(labels.contains { $0.contains("raw tool output") })
+        XCTAssertTrue(labels.contains { $0.contains("exact timestamps") })
+    }
+
+    @MainActor
     func testTrackEditorWindowUsesCompactNativeLayout() throws {
         let asset = MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),

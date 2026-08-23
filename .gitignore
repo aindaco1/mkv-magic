@@ -27,6 +27,8 @@ xcuserdata/
 *.security-bookmark
 Diagnostics/
 PrivateFixtures/
+BetaReports/
+*Support-Report*.json
 .env
 .env.*
 !.env.example

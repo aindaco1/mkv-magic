@@ -168,7 +168,14 @@ verified fallback. A pinned software AV1 sidecar remains planned before AV1
 encoding can be selected.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
-History report. No public release is available yet. The canonical product and
+History report. History also offers an explicit privacy-safe JSON export for
+private beta and support work. New jobs contribute only allowlisted coarse media
+facts, planned video/audio encode counts, lifecycle states and elapsed-time
+buckets. The export excludes filenames, paths, media and track titles, subtitle
+text, custom workflow names, raw tool output, identifiers and exact timestamps;
+it remains local until the user chooses a destination. See
+[docs/beta/PRIVATE_LIBRARY_ACCEPTANCE.md](docs/beta/PRIVATE_LIBRARY_ACCEPTANCE.md)
+for the beta loop. No public release is available yet. The canonical product and
 delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises

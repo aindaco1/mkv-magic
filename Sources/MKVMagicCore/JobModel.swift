@@ -24,11 +24,18 @@ public struct MediaJobInput: Codable, Hashable, Identifiable, Sendable {
     public let id: UUID
     public let displayName: String
     public let bookmarkID: UUID?
+    public let privacySafeFacts: MediaJobInputFacts?
 
-    public init(id: UUID = UUID(), displayName: String, bookmarkID: UUID? = nil) {
+    public init(
+        id: UUID = UUID(),
+        displayName: String,
+        bookmarkID: UUID? = nil,
+        privacySafeFacts: MediaJobInputFacts? = nil
+    ) {
         self.id = id
         self.displayName = displayName
         self.bookmarkID = bookmarkID
+        self.privacySafeFacts = privacySafeFacts
     }
 }
 
@@ -60,6 +67,7 @@ public struct MediaJobRecord: Codable, Hashable, Identifiable, Sendable {
     public let workflowName: String
     public let inputs: [MediaJobInput]
     public let outputDisplayName: String?
+    public let privacySafePlan: MediaJobPlanFacts?
     public private(set) var events: [MediaJobEvent]
 
     public init(
@@ -70,6 +78,7 @@ public struct MediaJobRecord: Codable, Hashable, Identifiable, Sendable {
         workflowName: String,
         inputs: [MediaJobInput],
         outputDisplayName: String? = nil,
+        privacySafePlan: MediaJobPlanFacts? = nil,
         events: [MediaJobEvent]? = nil
     ) {
         self.schemaVersion = schemaVersion
@@ -79,6 +88,7 @@ public struct MediaJobRecord: Codable, Hashable, Identifiable, Sendable {
         self.workflowName = workflowName
         self.inputs = inputs
         self.outputDisplayName = outputDisplayName
+        self.privacySafePlan = privacySafePlan
         self.events = events ?? [MediaJobEvent(state: .queued, timestamp: createdAt)]
     }
 
