@@ -111,3 +111,8 @@ semantic versioning; public release tags are immutable and signed.
   five seconds before and after where available. Extract one bounded local JPEG
   at a time with bundled FFmpeg, reject stale or malformed results, and require
   an explicit native choice before changing the in-memory chapter start.
+- Add the pure joined-chapter composition policy: explicitly selected source
+  edition trees are trimmed, clamped, rebased to one output timeline, nested
+  under source-part parents, assigned fresh identities, and validated as one
+  bounded default edition. Chapterless sources receive numbered boundary
+  children; no muxing or source write is implied by this policy slice.

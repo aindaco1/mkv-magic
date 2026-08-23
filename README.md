@@ -63,6 +63,11 @@ chapter text. The reviewed tree is written only to a temporary clone with
 `mkvpropedit`, then re-extracted for exact hierarchy, UID, timestamp, language,
 and flag comparison before commit and after reopen. Synchronized timeline
 dragging and frame/keyframe snapping remain M4 work.
+The first M5 policy foundation can also compose explicitly selected source
+chapter trees for a future hard join: it intersects retained ranges, rebases
+nested timestamps, creates source-part parents and missing boundary children,
+regenerates identities, and validates one final default edition. This core
+policy is tested but is not yet exposed as a join UI or file executor.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and
