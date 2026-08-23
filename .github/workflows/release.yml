@@ -63,6 +63,9 @@ jobs:
             "$GITHUB_WORKSPACE/.github/allowed_signers"
           ./scripts/release/validate-tag.sh "$RELEASE_TAG"
 
+      - name: Install source-gate dependencies
+        run: brew install shellcheck
+
       - name: Validate source
         run: ./scripts/ci/local-gate.sh
 
