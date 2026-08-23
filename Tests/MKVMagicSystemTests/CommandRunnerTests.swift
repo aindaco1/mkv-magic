@@ -144,6 +144,149 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertEqual(digest.sha256, Data(SHA256.hash(data: Data(canonical.utf8))))
     }
 
+    func testStreamsIntegerKeyedDigestsAcrossCommandsWithoutMixingLanes() async throws {
+        let a = String(repeating: "a", count: 64)
+        let b = String(repeating: "b", count: 64)
+        let c = String(repeating: "c", count: 64)
+        let d = String(repeating: "d", count: 64)
+        let ignored = String(repeating: "e", count: 64)
+        let runner = FoundationCommandRunner()
+
+        let digests = try await runner.digestIntegerKeyedLines(
+            [
+                CommandIntegerKeyedDigestRequest(
+                    command: CommandRequest(
+                        executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                        arguments: [
+                            "%s",
+                            "0,SHA256:\(a),side data\n1,SHA256:\(b)\n9,ignored \(ignored)\n",
+                        ],
+                        outputLimit: 1_024
+                    ),
+                    emittedKeyToDigestKey: [0: 10, 1: 20]
+                ),
+                CommandIntegerKeyedDigestRequest(
+                    command: CommandRequest(
+                        executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                        arguments: ["%s", "4,SHA256:\(c)\n5,SHA256:\(d)\n"],
+                        outputLimit: 1_024
+                    ),
+                    emittedKeyToDigestKey: [4: 10, 5: 20]
+                ),
+            ],
+            policy: CommandIntegerKeyedLineDigestPolicy(
+                keySeparator: 44,
+                requiredPrefix: "SHA256:",
+                hexDigestByteCount: 64,
+                allowedSuffixSeparator: 44
+            )
+        )
+
+        XCTAssertEqual(digests[10]?.lineCount, 2)
+        XCTAssertEqual(digests[20]?.lineCount, 2)
+        XCTAssertEqual(
+            digests[10]?.sha256,
+            Data(SHA256.hash(data: Data("SHA256:\(a)\nSHA256:\(c)\n".utf8)))
+        )
+        XCTAssertEqual(
+            digests[20]?.sha256,
+            Data(SHA256.hash(data: Data("SHA256:\(b)\nSHA256:\(d)\n".utf8)))
+        )
+    }
+
+    func testIntegerKeyedDigestRejectsMissingAndAmbiguousLanes() async throws {
+        let hash = String(repeating: "a", count: 64)
+        let runner = FoundationCommandRunner()
+        let command = CommandRequest(
+            executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+            arguments: ["%s", "0,SHA256:\(hash)\n"]
+        )
+        let policy = CommandIntegerKeyedLineDigestPolicy(
+            keySeparator: 44,
+            requiredPrefix: "SHA256:",
+            hexDigestByteCount: 64
+        )
+
+        do {
+            _ = try await runner.digestIntegerKeyedLines(
+                [CommandIntegerKeyedDigestRequest(command: command, emittedKeyToDigestKey: [1: 1])],
+                policy: policy
+            )
+            XCTFail("Expected a missing requested lane to fail closed")
+        } catch {
+            XCTAssertEqual(error as? CommandLineDigestError, .emptyOutput)
+        }
+        do {
+            _ = try await runner.digestIntegerKeyedLines(
+                [
+                    CommandIntegerKeyedDigestRequest(
+                        command: command,
+                        emittedKeyToDigestKey: [0: 1, 1: 1]
+                    )
+                ],
+                policy: policy
+            )
+            XCTFail("Expected duplicate logical lanes to be rejected")
+        } catch {
+            XCTAssertEqual(error as? CommandLineDigestError, .invalidPolicy)
+        }
+    }
+
+    func testIntegerKeyedDigestRejectsMalformedLinesAndToolFailure() async throws {
+        let hash = String(repeating: "a", count: 64)
+        let runner = FoundationCommandRunner()
+        let policy = CommandIntegerKeyedLineDigestPolicy(
+            keySeparator: 44,
+            requiredPrefix: "SHA256:",
+            hexDigestByteCount: 64
+        )
+        let malformedOutputs = [
+            "bad,SHA256:\(hash)\n",
+            "0,SHA256:short\n",
+            "0,SHA256:\(String(repeating: "a", count: 5_000))\n",
+        ]
+        for output in malformedOutputs {
+            do {
+                _ = try await runner.digestIntegerKeyedLines(
+                    [
+                        CommandIntegerKeyedDigestRequest(
+                            command: CommandRequest(
+                                executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                                arguments: ["%s", output]
+                            ),
+                            emittedKeyToDigestKey: [0: 0]
+                        )
+                    ],
+                    policy: policy
+                )
+                XCTFail("Expected malformed keyed output to fail closed")
+            } catch {
+                XCTAssertEqual(error as? CommandLineDigestError, .malformedOutput)
+            }
+        }
+
+        do {
+            _ = try await runner.digestIntegerKeyedLines(
+                [
+                    CommandIntegerKeyedDigestRequest(
+                        command: CommandRequest(
+                            executableURL: URL(fileURLWithPath: "/usr/bin/false"),
+                            arguments: []
+                        ),
+                        emittedKeyToDigestKey: [0: 0]
+                    )
+                ],
+                policy: policy
+            )
+            XCTFail("Expected a failed keyed digest command to fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? CommandLineDigestError,
+                .commandFailed(index: 0, exitCode: 1, message: "Unknown tool error")
+            )
+        }
+    }
+
     func testTimeoutTerminatesProcess() async {
         do {
             _ = try await FoundationCommandRunner().run(

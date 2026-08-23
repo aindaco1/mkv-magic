@@ -26,8 +26,11 @@ chapter audits:
 The packet listing never accumulates in memory. A shared cancellable process
 runner validates each exact executable and timeout, drains output continuously,
 canonicalizes one bounded hash line at a time, and retains only the incremental
-digest and line count. Malformed output, an empty stream, non-zero tools,
-oversized diagnostics, timeouts, and cancellation all fail closed.
+digest and line count. Exact lanes in the same stream family subsequently moved
+to one scan per source/output with per-stream hash demultiplexing, recorded in
+`M5_JOIN_AUDIT_PERFORMANCE_SLICE.md`. Malformed output, an empty requested
+stream, non-zero tools, oversized diagnostics, timeouts, and cancellation all
+fail closed.
 
 ## Codec-aware packet truthfulness
 
@@ -72,10 +75,10 @@ DMG packaging.
 
 ## Still pending
 
-- Single-pass multi-lane fingerprint demux optimization for unusually large
-  track counts; the current implementation is memory-bounded but scans once per
-  copied lane.
 - Private-library beta, physical Intel performance acceptance, and public release.
 
 Manual mapping for ambiguous track lanes was subsequently completed in
 `M5_MANUAL_TRACK_MAPPING_SLICE.md`.
+
+The multi-lane scan optimization was subsequently completed in
+`M5_JOIN_AUDIT_PERFORMANCE_SLICE.md`.

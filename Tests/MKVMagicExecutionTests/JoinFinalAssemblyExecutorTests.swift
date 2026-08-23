@@ -81,6 +81,18 @@ private actor JoinFinalToolRunner: CommandRunning, CommandLineDigesting {
         return CommandLineDigest(sha256: Data(repeating: 9, count: 32), lineCount: 12)
     }
 
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        self.requests.append(contentsOf: requests.map(\.command))
+        let keys = Set(requests.flatMap { $0.emittedKeyToDigestKey.values })
+        return Dictionary(
+            uniqueKeysWithValues: keys.map {
+                ($0, CommandLineDigest(sha256: Data(repeating: 9, count: 32), lineCount: 12))
+            })
+    }
+
     func capturedRequests() -> [CommandRequest] { requests }
 
     private func result(exitCode: Int32) -> CommandResult {

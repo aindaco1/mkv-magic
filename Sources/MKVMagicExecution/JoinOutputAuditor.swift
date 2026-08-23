@@ -3,7 +3,8 @@ import MKVMagicCore
 import MKVMagicSystem
 
 private let joinAuditMaximumHalfWindowNanoseconds: Int64 = 1_000_000_000
-private let joinAuditPacketHashPolicy = CommandLineDigestPolicy(
+private let joinAuditKeyedPacketHashPolicy = CommandIntegerKeyedLineDigestPolicy(
+    keySeparator: 44,
     requiredPrefix: "SHA256:",
     hexDigestByteCount: 64,
     allowedSuffixSeparator: Character(",").asciiValue
@@ -50,6 +51,7 @@ public enum JoinOutputAuditError: Error, Equatable, Sendable {
     case decodeFailed(boundaryIndex: Int, exitCode: Int32, message: String)
     case truncatedDecodeDiagnostics(boundaryIndex: Int)
     case packetFingerprintFailed(laneIndex: Int, reason: String)
+    case packetFingerprintBatchFailed(laneIndices: [Int], reason: String)
     case packetCountChanged(laneIndex: Int)
     case packetPayloadChanged(laneIndex: Int)
 }
@@ -70,6 +72,10 @@ extension JoinOutputAuditError: LocalizedError {
             "Boundary \(boundaryIndex + 1) emitted more decode diagnostics than the safety limit."
         case .packetFingerprintFailed(let laneIndex, let reason):
             "Packet fingerprinting failed for lane \(laneIndex + 1): \(reason)"
+        case .packetFingerprintBatchFailed(let laneIndices, let reason):
+            "Packet fingerprinting failed for lanes "
+                + laneIndices.map { String($0 + 1) }.joined(separator: ", ")
+                + ": \(reason)"
         case .packetCountChanged(let laneIndex):
             "The packet count changed while lane \(laneIndex + 1) was copied."
         case .packetPayloadChanged(let laneIndex):
@@ -105,12 +111,16 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         else {
             throw JoinOutputAuditError.unsafeInput
         }
+        let sourceURLs = sources.map { $0.sourceURL.standardizedFileURL }
         guard Set(lanes.map(\.laneIndex)).count == lanes.count,
             Set(lanes.map(\.outputTrackID)).count == lanes.count,
             lanes.allSatisfy({ lane in
                 lane.laneIndex >= 0 && lane.outputTrackID >= 0
-                    && !lane.expectedInputs.isEmpty
+                    && lane.expectedInputs.count == sources.count
                     && lane.expectedInputs.allSatisfy({ $0.trackID >= 0 })
+                    && zip(lane.expectedInputs, sourceURLs).allSatisfy {
+                        $0.fileURL.standardizedFileURL == $1
+                    }
             })
         else {
             throw JoinOutputAuditError.invalidLanePlan
@@ -132,47 +142,59 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
             trackIDs: output.tracks.filter { $0.kind == .video || $0.kind == .audio }
                 .map(\.id)
         )
-        for lane in lanes.sorted(by: { $0.laneIndex < $1.laneIndex }) {
+        let sortedLanes = lanes.sorted(by: { $0.laneIndex < $1.laneIndex })
+        var canonicalVideoLanes = [JoinPacketAuditLane]()
+        var exactPacketLanes = [JoinPacketAuditLane]()
+        for lane in sortedLanes {
+            if lane.kind == .video,
+                canonicalVideoBitstreamFilter(outputTracks[lane.outputTrackID]) != nil
+            {
+                canonicalVideoLanes.append(lane)
+            } else {
+                exactPacketLanes.append(lane)
+            }
+        }
+        try await auditCanonicalVideoLanes(
+            canonicalVideoLanes,
+            outputURL: output.sourceURL,
+            outputTracks: outputTracks
+        )
+        try await auditExactPacketLanes(
+            exactPacketLanes,
+            sources: sources,
+            outputURL: output.sourceURL
+        )
+    }
+
+    private func auditCanonicalVideoLanes(
+        _ lanes: [JoinPacketAuditLane],
+        outputURL: URL,
+        outputTracks: [Int: MediaTrack]
+    ) async throws {
+        for lane in lanes {
             try Task.checkCancellation()
             let expected: CommandLineDigest
             let actual: CommandLineDigest
             do {
                 let outputInput = JoinPacketFingerprintInput(
-                    fileURL: output.sourceURL,
+                    fileURL: outputURL,
                     trackID: lane.outputTrackID
                 )
-                if lane.kind == .video,
+                guard
                     let filter = canonicalVideoBitstreamFilter(
                         outputTracks[lane.outputTrackID]
                     )
-                {
-                    expected = try await runner.digestTrailingHexLines(
-                        lane.expectedInputs.map {
-                            videoFingerprintRequest($0, bitstreamFilter: filter)
-                        },
-                        policy: joinAuditFrameHashPolicy
-                    )
-                    actual = try await runner.digestTrailingHexLines(
-                        [videoFingerprintRequest(outputInput, bitstreamFilter: filter)],
-                        policy: joinAuditFrameHashPolicy
-                    )
-                } else {
-                    expected = try await runner.digestLines(
-                        lane.expectedInputs.map { fingerprintRequest($0) },
-                        policy: joinAuditPacketHashPolicy
-                    )
-                    actual = try await runner.digestLines(
-                        [
-                            fingerprintRequest(
-                                JoinPacketFingerprintInput(
-                                    fileURL: output.sourceURL,
-                                    trackID: lane.outputTrackID
-                                )
-                            )
-                        ],
-                        policy: joinAuditPacketHashPolicy
-                    )
-                }
+                else { throw JoinOutputAuditError.invalidLanePlan }
+                expected = try await runner.digestTrailingHexLines(
+                    lane.expectedInputs.map {
+                        videoFingerprintRequest($0, bitstreamFilter: filter)
+                    },
+                    policy: joinAuditFrameHashPolicy
+                )
+                actual = try await runner.digestTrailingHexLines(
+                    [videoFingerprintRequest(outputInput, bitstreamFilter: filter)],
+                    policy: joinAuditFrameHashPolicy
+                )
             } catch {
                 throw JoinOutputAuditError.packetFingerprintFailed(
                     laneIndex: lane.laneIndex,
@@ -183,6 +205,81 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
                 throw JoinOutputAuditError.packetCountChanged(laneIndex: lane.laneIndex)
             }
             guard expected.sha256 == actual.sha256 else {
+                throw JoinOutputAuditError.packetPayloadChanged(laneIndex: lane.laneIndex)
+            }
+        }
+    }
+
+    private func auditExactPacketLanes(
+        _ lanes: [JoinPacketAuditLane],
+        sources: [MediaAsset],
+        outputURL: URL
+    ) async throws {
+        guard !lanes.isEmpty else { return }
+        try Task.checkCancellation()
+
+        let laneGroups = Dictionary(grouping: lanes, by: \.kind)
+            .sorted { $0.key.rawValue < $1.key.rawValue }
+        let expectedRequests = try sources.indices.flatMap { sourceIndex in
+            try laneGroups.map { kind, groupedLanes in
+                var mapping = [Int: Int]()
+                for lane in groupedLanes {
+                    let input = lane.expectedInputs[sourceIndex]
+                    guard mapping.updateValue(lane.laneIndex, forKey: input.trackID) == nil else {
+                        throw JoinOutputAuditError.invalidLanePlan
+                    }
+                }
+                return CommandIntegerKeyedDigestRequest(
+                    command: multiTrackFingerprintRequest(
+                        sources[sourceIndex].sourceURL,
+                        kind: kind
+                    ),
+                    emittedKeyToDigestKey: mapping
+                )
+            }
+        }
+        let outputRequests = try laneGroups.map { kind, groupedLanes in
+            var mapping = [Int: Int]()
+            for lane in groupedLanes {
+                guard mapping.updateValue(lane.laneIndex, forKey: lane.outputTrackID) == nil
+                else { throw JoinOutputAuditError.invalidLanePlan }
+            }
+            return CommandIntegerKeyedDigestRequest(
+                command: multiTrackFingerprintRequest(outputURL, kind: kind),
+                emittedKeyToDigestKey: mapping
+            )
+        }
+
+        let expected: [Int: CommandLineDigest]
+        let actual: [Int: CommandLineDigest]
+        do {
+            expected = try await runner.digestIntegerKeyedLines(
+                expectedRequests,
+                policy: joinAuditKeyedPacketHashPolicy
+            )
+            actual = try await runner.digestIntegerKeyedLines(
+                outputRequests,
+                policy: joinAuditKeyedPacketHashPolicy
+            )
+        } catch {
+            throw JoinOutputAuditError.packetFingerprintBatchFailed(
+                laneIndices: lanes.map(\.laneIndex),
+                reason: String(error.localizedDescription.prefix(240))
+            )
+        }
+        for lane in lanes {
+            guard let expectedDigest = expected[lane.laneIndex],
+                let actualDigest = actual[lane.laneIndex]
+            else {
+                throw JoinOutputAuditError.packetFingerprintFailed(
+                    laneIndex: lane.laneIndex,
+                    reason: CommandLineDigestError.emptyOutput.localizedDescription
+                )
+            }
+            guard expectedDigest.lineCount == actualDigest.lineCount else {
+                throw JoinOutputAuditError.packetCountChanged(laneIndex: lane.laneIndex)
+            }
+            guard expectedDigest.sha256 == actualDigest.sha256 else {
                 throw JoinOutputAuditError.packetPayloadChanged(laneIndex: lane.laneIndex)
             }
         }
@@ -231,21 +328,38 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         }
     }
 
-    private func fingerprintRequest(_ input: JoinPacketFingerprintInput) -> CommandRequest {
-        CommandRequest(
+    private func multiTrackFingerprintRequest(
+        _ fileURL: URL,
+        kind: MediaTrackKind
+    ) -> CommandRequest {
+        var arguments = ["-v", "error"]
+        if let selector = streamSelector(for: kind) {
+            arguments.append(contentsOf: ["-select_streams", selector])
+        }
+        arguments.append(contentsOf: [
+            "-show_packets",
+            "-show_entries", "packet=stream_index,data_hash",
+            "-show_data_hash", "sha256",
+            "-of", "csv=p=0",
+            fileURL.standardizedFileURL.path,
+        ])
+        return CommandRequest(
             executableURL: ffprobeURL,
-            arguments: [
-                "-v", "error",
-                "-select_streams", String(input.trackID),
-                "-show_packets",
-                "-show_entries", "packet=data_hash",
-                "-show_data_hash", "sha256",
-                "-of", "csv=p=0",
-                input.fileURL.standardizedFileURL.path,
-            ],
+            arguments: arguments,
             timeout: 24 * 60 * 60,
             outputLimit: 1_048_576
         )
+    }
+
+    private func streamSelector(for kind: MediaTrackKind) -> String? {
+        switch kind {
+        case .video: "v"
+        case .audio: "a"
+        case .subtitle: "s"
+        case .data: "d"
+        case .attachment: "t"
+        case .unknown: nil
+        }
     }
 
     private func videoFingerprintRequest(

@@ -923,8 +923,11 @@ bounded window spanning every source boundary before commit and again after
 reopen. Direct packet-copy lanes also receive streaming ordered payload
 fingerprints: audio, subtitles, and other codecs use exact FFprobe packet hashes;
 H.264/HEVC video removes only muxer-managed parameter-set units before hashing
-the retained encoded packet bodies. This remains memory-bounded for long media
-and fails on packet loss, reordering, or payload changes. Ambiguous automatic
+the retained encoded packet bodies. Exact packet lanes in one stream family now
+share one input scan and are demultiplexed into isolated bounded SHA-256 states,
+instead of rescanning the container for every lane. This remains memory-bounded
+for long media and fails on missing lanes, packet loss, reordering, or payload
+changes. Ambiguous automatic
 matches now open a native lane-by-source table. Each explicit edit moves or
 swaps a same-type track while preserving the exhaustive exactly-once mapping;
 the confirmed map is bound to the exact source identities and order. A real

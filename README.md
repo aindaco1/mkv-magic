@@ -116,7 +116,9 @@ verified-output transaction, semantically audits the temporary MKV, re-extracts
 and canonically compares its full nested chapter XML, decodes every join
 boundary, fingerprints direct packet-copy lanes without retaining film-length
 packet listings in memory, commits atomically, then repeats the complete audit
-after reopening the saved path. A real mixed-lane
+after reopening the saved path. Exact packet lanes of the same stream family
+share one FFprobe scan per source/output while their hashes remain isolated by
+track; H.264/HEVC retain their codec-aware canonical scan. A real mixed-lane
 fixture passes this transaction without changing either original. The native
 review now enables **Review Common Format…** only when those exact contracts are
 executable. A compact second sheet lists the resolved targets, nested chapter
@@ -204,6 +206,17 @@ swift run MKVMagic
 Media tools are resolved only from an explicit development tool root or from
 the packaged app. The runtime never silently uses `/opt/homebrew`,
 `/usr/local`, or the process `PATH`.
+
+Compare the old per-lane copied-packet scan pattern with the current bounded
+stream-family demultiplexer on a local, unchanged media file:
+
+```sh
+./scripts/performance/benchmark-join-packet-audit.sh "/absolute/input.mkv" a 1 2
+```
+
+The script withholds the media path from its report. It uses only the pinned
+FFprobe for the running architecture, never writes to the input, and rejects
+measurements if the source revision changes while it runs.
 
 ## License
 

@@ -114,6 +114,38 @@ public struct CommandTrailingHexDigestPolicy: Equatable, Sendable {
     }
 }
 
+/// Describes one command whose output lines begin with an integer stream key.
+/// The mapping translates command-local stream keys into stable digest keys so
+/// several media inputs can continue the same bounded per-lane digest.
+public struct CommandIntegerKeyedDigestRequest: Sendable {
+    public let command: CommandRequest
+    public let emittedKeyToDigestKey: [Int: Int]
+
+    public init(command: CommandRequest, emittedKeyToDigestKey: [Int: Int]) {
+        self.command = command
+        self.emittedKeyToDigestKey = emittedKeyToDigestKey
+    }
+}
+
+public struct CommandIntegerKeyedLineDigestPolicy: Equatable, Sendable {
+    public let keySeparator: UInt8
+    public let requiredPrefix: String
+    public let hexDigestByteCount: Int
+    public let allowedSuffixSeparator: UInt8?
+
+    public init(
+        keySeparator: UInt8,
+        requiredPrefix: String,
+        hexDigestByteCount: Int,
+        allowedSuffixSeparator: UInt8? = nil
+    ) {
+        self.keySeparator = keySeparator
+        self.requiredPrefix = requiredPrefix
+        self.hexDigestByteCount = hexDigestByteCount
+        self.allowedSuffixSeparator = allowedSuffixSeparator
+    }
+}
+
 public struct CommandLineDigest: Equatable, Sendable {
     public let sha256: Data
     public let lineCount: Int
@@ -162,6 +194,11 @@ public protocol CommandLineDigesting: Sendable {
         _ requests: [CommandRequest],
         policy: CommandTrailingHexDigestPolicy
     ) async throws -> CommandLineDigest
+
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest]
 }
 
 public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
@@ -228,6 +265,62 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
         )
     }
 
+    public func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        let prefix = Data(policy.requiredPrefix.utf8)
+        guard !requests.isEmpty,
+            !prefix.isEmpty, prefix.count <= 128,
+            policy.hexDigestByteCount >= 1, policy.hexDigestByteCount <= 256,
+            policy.keySeparator != 10, policy.keySeparator != 13
+        else {
+            throw requests.isEmpty
+                ? CommandLineDigestError.noCommands
+                : CommandLineDigestError.invalidPolicy
+        }
+
+        var digestKeys = Set<Int>()
+        for request in requests {
+            try validate(request.command)
+            let mapping = request.emittedKeyToDigestKey
+            guard !mapping.isEmpty,
+                mapping.keys.allSatisfy({ $0 >= 0 }),
+                mapping.values.allSatisfy({ $0 >= 0 }),
+                Set(mapping.values).count == mapping.count
+            else {
+                throw CommandLineDigestError.invalidPolicy
+            }
+            digestKeys.formUnion(mapping.values)
+        }
+
+        let accumulator = IntegerKeyedLineDigestAccumulator(keys: digestKeys)
+        let linePolicy = CanonicalDigestLinePolicy.prefixedHex(
+            prefix: prefix,
+            hexDigestByteCount: policy.hexDigestByteCount,
+            allowedSuffixSeparator: policy.allowedSuffixSeparator
+        )
+        for (index, request) in requests.enumerated() {
+            let processResult = try await runDigestCommand(request.command) {
+                try await executeStreamingDigest(request.command) { output in
+                    try readIntegerKeyedDigestLines(
+                        output,
+                        emittedKeyToDigestKey: request.emittedKeyToDigestKey,
+                        keySeparator: policy.keySeparator,
+                        accumulator: accumulator,
+                        policy: linePolicy
+                    )
+                }
+            }
+            try validateDigestProcessResult(processResult, index: index)
+        }
+        let digests = accumulator.finalize()
+        guard digests.count == digestKeys.count else {
+            throw CommandLineDigestError.emptyOutput
+        }
+        return digests
+    }
+
     private func digest(
         _ requests: [CommandRequest],
         policy: CanonicalDigestLinePolicy
@@ -237,43 +330,39 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
 
         let accumulator = CanonicalLineDigestAccumulator()
         for (index, request) in requests.enumerated() {
-            let processResult = try await withThrowingTaskGroup(
-                of: DigestProcessResult.self
-            ) { group in
-                group.addTask {
-                    try await executeDigest(
-                        request,
+            let processResult = try await runDigestCommand(request) {
+                try await executeStreamingDigest(request) { output in
+                    try readCanonicalDigestLines(
+                        output,
                         accumulator: accumulator,
                         policy: policy
                     )
                 }
-                group.addTask {
-                    let nanoseconds = UInt64(request.timeout * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: nanoseconds)
-                    throw CommandRunnerError.timedOut
-                }
-                guard let first = try await group.next() else {
-                    throw CommandRunnerError.launchFailed("Command produced no result")
-                }
-                group.cancelAll()
-                return first
             }
-            guard !processResult.standardError.wasTruncated else {
-                throw CommandLineDigestError.truncatedStandardError(index: index)
-            }
-            guard processResult.exitCode == 0 else {
-                let message = processResult.standardError.text
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                throw CommandLineDigestError.commandFailed(
-                    index: index,
-                    exitCode: processResult.exitCode,
-                    message: String((message.isEmpty ? "Unknown tool error" : message).prefix(240))
-                )
-            }
+            try validateDigestProcessResult(processResult, index: index)
         }
         let digest = accumulator.finalize()
         guard digest.lineCount > 0 else { throw CommandLineDigestError.emptyOutput }
         return digest
+    }
+
+    private func runDigestCommand(
+        _ request: CommandRequest,
+        operation: @escaping @Sendable () async throws -> DigestProcessResult
+    ) async throws -> DigestProcessResult {
+        try await withThrowingTaskGroup(of: DigestProcessResult.self) { group in
+            group.addTask(operation: operation)
+            group.addTask {
+                let nanoseconds = UInt64(request.timeout * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanoseconds)
+                throw CommandRunnerError.timedOut
+            }
+            guard let first = try await group.next() else {
+                throw CommandRunnerError.launchFailed("Command produced no result")
+            }
+            group.cancelAll()
+            return first
+        }
     }
 }
 
@@ -352,6 +441,11 @@ private enum CanonicalDigestLinePolicy: Sendable {
     )
 }
 
+private enum CanonicalDigestLine {
+    case skip
+    case digest(Data)
+}
+
 private final class CanonicalLineDigestAccumulator: @unchecked Sendable {
     private let lock = NSLock()
     private var hasher = SHA256()
@@ -370,6 +464,46 @@ private final class CanonicalLineDigestAccumulator: @unchecked Sendable {
         let count = lineCount
         lock.unlock()
         return CommandLineDigest(sha256: digest, lineCount: count)
+    }
+}
+
+private final class IntegerKeyedLineDigestAccumulator: @unchecked Sendable {
+    private let accumulators: [Int: CanonicalLineDigestAccumulator]
+
+    init(keys: Set<Int>) {
+        accumulators = Dictionary(
+            uniqueKeysWithValues: keys.map {
+                ($0, CanonicalLineDigestAccumulator())
+            })
+    }
+
+    func update(key: Int, canonicalLine: Data) {
+        accumulators[key]?.update(canonicalLine)
+    }
+
+    func finalize() -> [Int: CommandLineDigest] {
+        accumulators.reduce(into: [:]) { result, entry in
+            let digest = entry.value.finalize()
+            if digest.lineCount > 0 { result[entry.key] = digest }
+        }
+    }
+}
+
+private func validateDigestProcessResult(
+    _ processResult: DigestProcessResult,
+    index: Int
+) throws {
+    guard !processResult.standardError.wasTruncated else {
+        throw CommandLineDigestError.truncatedStandardError(index: index)
+    }
+    guard processResult.exitCode == 0 else {
+        let message = processResult.standardError.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        throw CommandLineDigestError.commandFailed(
+            index: index,
+            exitCode: processResult.exitCode,
+            message: String((message.isEmpty ? "Unknown tool error" : message).prefix(240))
+        )
     }
 }
 
@@ -451,19 +585,14 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
     )
 }
 
-private func executeDigest(
+private func executeStreamingDigest(
     _ request: CommandRequest,
-    accumulator: CanonicalLineDigestAccumulator,
-    policy: CanonicalDigestLinePolicy
+    outputConsumer: @escaping @Sendable (FileHandle) throws -> Void
 ) async throws -> DigestProcessResult {
     try Task.checkCancellation()
     let launched = try launch(request)
     let outputTask = Task.detached {
-        try readCanonicalDigestLines(
-            launched.standardOutput.fileHandleForReading,
-            accumulator: accumulator,
-            policy: policy
-        )
+        try outputConsumer(launched.standardOutput.fileHandleForReading)
     }
     let errorTask = Task.detached {
         try readBounded(
@@ -512,38 +641,72 @@ private func readCanonicalDigestLines(
         guard firstError == nil else { return }
         var line = rawLine
         if line.last == 13 { line.removeLast() }
-        let canonical: Data
-        switch policy {
-        case .prefixedHex(let prefix, let hexDigestByteCount, let suffix):
-            let retainedByteCount = prefix.count + hexDigestByteCount
-            guard line.count >= retainedByteCount,
-                line.starts(with: prefix),
-                line[prefix.count..<retainedByteCount].allSatisfy(isASCIIHex),
-                line.count == retainedByteCount || suffix == line[retainedByteCount]
-            else {
-                firstError = .malformedOutput
-                return
-            }
-            canonical = Data(line.prefix(retainedByteCount))
-        case .trailingHex(let commentPrefix, let separator, let hexDigestByteCount):
-            if line.first == commentPrefix { return }
-            guard let fieldStart = line.lastIndex(of: separator) else {
-                firstError = .malformedOutput
-                return
-            }
-            let rawField = line[line.index(after: fieldStart)...]
-            let field = rawField.drop(while: { $0 == 32 || $0 == 9 })
-            guard field.count == hexDigestByteCount, field.allSatisfy(isASCIIHex) else {
-                firstError = .malformedOutput
-                return
-            }
-            canonical = Data(field)
+        guard let parsed = canonicalDigestLine(line, policy: policy) else {
+            firstError = .malformedOutput
+            return
         }
+        guard case .digest(let canonical) = parsed else { return }
         var terminated = canonical
         terminated.append(10)
         accumulator.update(terminated)
     }
 
+    let oversizedLine = try readBoundedLines(handle, pending: &pending, consume: consume)
+    if oversizedLine, firstError == nil { firstError = .malformedOutput }
+    if let firstError { throw firstError }
+}
+
+private func readIntegerKeyedDigestLines(
+    _ handle: FileHandle,
+    emittedKeyToDigestKey: [Int: Int],
+    keySeparator: UInt8,
+    accumulator: IntegerKeyedLineDigestAccumulator,
+    policy: CanonicalDigestLinePolicy
+) throws {
+    var pending = Data()
+    var firstError: CommandLineDigestError?
+
+    func consume(_ rawLine: Data) {
+        guard firstError == nil else { return }
+        var line = rawLine
+        if line.last == 13 { line.removeLast() }
+        guard let separatorIndex = line.firstIndex(of: keySeparator),
+            separatorIndex > line.startIndex
+        else {
+            firstError = .malformedOutput
+            return
+        }
+        let rawKey = line[..<separatorIndex]
+        guard rawKey.allSatisfy({ (48...57).contains($0) }),
+            let emittedKey = Int(String(decoding: rawKey, as: UTF8.self))
+        else {
+            firstError = .malformedOutput
+            return
+        }
+        guard let digestKey = emittedKeyToDigestKey[emittedKey] else { return }
+        let rawPayload = Data(line[line.index(after: separatorIndex)...])
+        guard let parsed = canonicalDigestLine(rawPayload, policy: policy),
+            case .digest(let canonical) = parsed
+        else {
+            firstError = .malformedOutput
+            return
+        }
+        var terminated = canonical
+        terminated.append(10)
+        accumulator.update(key: digestKey, canonicalLine: terminated)
+    }
+
+    let oversizedLine = try readBoundedLines(handle, pending: &pending, consume: consume)
+    if oversizedLine, firstError == nil { firstError = .malformedOutput }
+    if let firstError { throw firstError }
+}
+
+private func readBoundedLines(
+    _ handle: FileHandle,
+    pending: inout Data,
+    consume: (Data) -> Void
+) throws -> Bool {
+    var oversizedLine = false
     while let chunk = try handle.read(upToCount: 65_536), !chunk.isEmpty {
         pending.append(chunk)
         while let newline = pending.firstIndex(of: 10) {
@@ -551,12 +714,37 @@ private func readCanonicalDigestLines(
             pending.removeSubrange(...newline)
         }
         if pending.count > 4_096 {
-            firstError = .malformedOutput
+            oversizedLine = true
             pending.removeAll(keepingCapacity: false)
         }
     }
     if !pending.isEmpty { consume(pending) }
-    if let firstError { throw firstError }
+    return oversizedLine
+}
+
+private func canonicalDigestLine(
+    _ line: Data,
+    policy: CanonicalDigestLinePolicy
+) -> CanonicalDigestLine? {
+    switch policy {
+    case .prefixedHex(let prefix, let hexDigestByteCount, let suffix):
+        let retainedByteCount = prefix.count + hexDigestByteCount
+        guard line.count >= retainedByteCount,
+            line.starts(with: prefix),
+            line[prefix.count..<retainedByteCount].allSatisfy(isASCIIHex),
+            line.count == retainedByteCount || suffix == line[retainedByteCount]
+        else { return nil }
+        return .digest(Data(line.prefix(retainedByteCount)))
+    case .trailingHex(let commentPrefix, let separator, let hexDigestByteCount):
+        if line.first == commentPrefix { return .skip }
+        guard let fieldStart = line.lastIndex(of: separator) else { return nil }
+        let rawField = line[line.index(after: fieldStart)...]
+        let field = rawField.drop(while: { $0 == 32 || $0 == 9 })
+        guard field.count == hexDigestByteCount, field.allSatisfy(isASCIIHex) else {
+            return nil
+        }
+        return .digest(Data(field))
+    }
 }
 
 private func isASCIIHex(_ byte: UInt8) -> Bool {

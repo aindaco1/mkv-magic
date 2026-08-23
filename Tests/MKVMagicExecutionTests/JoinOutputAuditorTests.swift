@@ -9,6 +9,7 @@ private actor JoinAuditRunner: CommandRunning, CommandLineDigesting {
         case matching
         case wrongCount
         case wrongPayload
+        case keyedFailure
     }
 
     private let decodeExitCode: Int32
@@ -16,6 +17,7 @@ private actor JoinAuditRunner: CommandRunning, CommandLineDigesting {
     private let fingerprintBehavior: FingerprintBehavior
     private var commandRequests = [CommandRequest]()
     private var digestRequests = [[CommandRequest]]()
+    private var keyedDigestRequests = [[CommandIntegerKeyedDigestRequest]]()
 
     init(
         decodeExitCode: Int32 = 0,
@@ -70,8 +72,39 @@ private actor JoinAuditRunner: CommandRunning, CommandLineDigesting {
         )
     }
 
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        keyedDigestRequests.append(requests)
+        if case .keyedFailure = fingerprintBehavior {
+            throw CommandLineDigestError.commandFailed(
+                index: 0,
+                exitCode: 2,
+                message: "fixture keyed failure"
+            )
+        }
+        let isOutput =
+            requests.count == 1
+            && requests[0].command.arguments.contains(where: { $0.hasSuffix("output.mkv") })
+        let digest: CommandLineDigest
+        switch (fingerprintBehavior, isOutput) {
+        case (.wrongCount, true):
+            digest = CommandLineDigest(sha256: Data(repeating: 1, count: 32), lineCount: 19)
+        case (.wrongPayload, true):
+            digest = CommandLineDigest(sha256: Data(repeating: 2, count: 32), lineCount: 20)
+        default:
+            digest = CommandLineDigest(sha256: Data(repeating: 1, count: 32), lineCount: 20)
+        }
+        let keys = Set(requests.flatMap { $0.emittedKeyToDigestKey.values })
+        return Dictionary(uniqueKeysWithValues: keys.map { ($0, digest) })
+    }
+
     func capturedCommands() -> [CommandRequest] { commandRequests }
     func capturedDigests() -> [[CommandRequest]] { digestRequests }
+    func capturedKeyedDigests() -> [[CommandIntegerKeyedDigestRequest]] {
+        keyedDigestRequests
+    }
 }
 
 final class JoinOutputAuditorTests: XCTestCase {
@@ -177,9 +210,9 @@ final class JoinOutputAuditorTests: XCTestCase {
     }
 
     func testUsesH264CanonicalUnitsAndExactOtherVideoPackets() async throws {
-        for (codec, codecID, expectedTool, expectedMarker) in [
-            ("h264", "V_MPEG4/ISO/AVC", "ffmpeg", "filter_units=remove_types=7|8|9"),
-            ("vp9", "V_VP9", "ffprobe", "packet=data_hash"),
+        for (codec, codecID, canonicalFilter) in [
+            ("h264", "V_MPEG4/ISO/AVC", "filter_units=remove_types=7|8|9"),
+            ("vp9", "V_VP9", nil),
         ] {
             let fixture = try makeFixture(codec: codec, codecID: codecID)
             defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -196,13 +229,119 @@ final class JoinOutputAuditorTests: XCTestCase {
                 lanes: [fixture.lane]
             )
 
-            let digests = await runner.capturedDigests()
-            XCTAssertEqual(digests.count, 2)
-            XCTAssertTrue(
-                digests.flatMap { $0 }.allSatisfy {
-                    $0.executableURL.lastPathComponent == expectedTool
-                        && $0.arguments.contains(expectedMarker)
-                })
+            if let canonicalFilter {
+                let digests = await runner.capturedDigests()
+                XCTAssertEqual(digests.count, 2)
+                XCTAssertTrue(
+                    digests.flatMap { $0 }.allSatisfy {
+                        $0.executableURL.lastPathComponent == "ffmpeg"
+                            && $0.arguments.contains(canonicalFilter)
+                    })
+            } else {
+                let digests = await runner.capturedKeyedDigests()
+                XCTAssertEqual(digests.count, 2)
+                XCTAssertEqual(digests[0].count, fixture.sources.count)
+                XCTAssertEqual(digests[1].count, 1)
+                XCTAssertTrue(
+                    digests.flatMap { $0 }.allSatisfy {
+                        $0.command.executableURL.lastPathComponent == "ffprobe"
+                            && $0.command.arguments.contains("packet=stream_index,data_hash")
+                            && value(after: "-select_streams", in: $0.command.arguments) == "v"
+                    })
+            }
+        }
+    }
+
+    func testExactPacketLanesShareOneBoundedScanPerInputAndOutput() async throws {
+        let fixture = try makeFixture(codec: "vp9", codecID: "V_VP9")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let audio = MediaTrack(
+            id: 1,
+            kind: .audio,
+            codec: "aac",
+            codecID: "A_AAC",
+            channels: 2,
+            sampleRate: 48_000
+        )
+        let alternateAudio = MediaTrack(
+            id: 2,
+            kind: .audio,
+            codec: "aac",
+            codecID: "A_AAC",
+            language: "spa",
+            channels: 2,
+            sampleRate: 48_000
+        )
+        let sources = fixture.sources.map {
+            MediaAsset(
+                sourceURL: $0.sourceURL,
+                container: $0.container,
+                duration: $0.duration,
+                fileSize: $0.fileSize,
+                tracks: [audio, alternateAudio]
+            )
+        }
+        let output = MediaAsset(
+            sourceURL: fixture.output.sourceURL,
+            container: fixture.output.container,
+            duration: fixture.output.duration,
+            fileSize: fixture.output.fileSize,
+            tracks: [audio, alternateAudio]
+        )
+        let lanes = [
+            JoinPacketAuditLane(
+                laneIndex: 4,
+                kind: .audio,
+                outputTrackID: 1,
+                expectedInputs: sources.map {
+                    JoinPacketFingerprintInput(fileURL: $0.sourceURL, trackID: 1)
+                }
+            ),
+            JoinPacketAuditLane(
+                laneIndex: 7,
+                kind: .audio,
+                outputTrackID: 2,
+                expectedInputs: sources.map {
+                    JoinPacketFingerprintInput(fileURL: $0.sourceURL, trackID: 2)
+                }
+            ),
+        ]
+        let runner = JoinAuditRunner()
+        let auditor = JoinOutputAuditor(
+            ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
+            runner: runner
+        )
+
+        try await auditor.audit(sources: sources, output: output, lanes: lanes)
+
+        let batches = await runner.capturedKeyedDigests()
+        XCTAssertEqual(batches.count, 2)
+        XCTAssertEqual(batches[0].count, sources.count)
+        XCTAssertEqual(batches[1].count, 1)
+        XCTAssertTrue(
+            batches[0].allSatisfy {
+                $0.emittedKeyToDigestKey == [1: 4, 2: 7]
+                    && value(after: "-select_streams", in: $0.command.arguments) == "a"
+            })
+        XCTAssertEqual(batches[1][0].emittedKeyToDigestKey, [1: 4, 2: 7])
+
+        let failingRunner = JoinAuditRunner(fingerprintBehavior: .keyedFailure)
+        let failingAuditor = JoinOutputAuditor(
+            ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
+            runner: failingRunner
+        )
+        await XCTAssertThrowsJoinAuditError(
+            try await failingAuditor.audit(sources: sources, output: output, lanes: lanes)
+        ) { error in
+            XCTAssertEqual(
+                error,
+                .packetFingerprintBatchFailed(
+                    laneIndices: [4, 7],
+                    reason: "Digest command 1 failed (code 2): fixture keyed failure"
+                )
+            )
         }
     }
 

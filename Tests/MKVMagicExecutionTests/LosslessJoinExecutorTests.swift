@@ -80,6 +80,18 @@ private actor LosslessJoinToolRunner: CommandRunning, CommandLineDigesting {
         return CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 8)
     }
 
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        self.requests.append(contentsOf: requests.map(\.command))
+        let keys = Set(requests.flatMap { $0.emittedKeyToDigestKey.values })
+        return Dictionary(
+            uniqueKeysWithValues: keys.map {
+                ($0, CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 8))
+            })
+    }
+
     func capturedRequests() -> [CommandRequest] { requests }
 
     private func result(exitCode: Int32) -> CommandResult {
