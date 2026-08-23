@@ -99,6 +99,7 @@ final class AppModel {
     private(set) var assets: [MediaAsset] = []
     private(set) var state: State = .ready
     var didChange: (() -> Void)?
+    private var cachedEncodingCapabilities: FFmpegEncodingCapabilities?
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
 
@@ -238,6 +239,27 @@ final class AppModel {
             state = .failed("Could not prepare the join review: \(error.localizedDescription)")
             didChange?()
             throw error
+        }
+    }
+
+    func probeEncodingCapabilities() async -> FFmpegEncodingCapabilities {
+        if let cachedEncodingCapabilities { return cachedEncodingCapabilities }
+        state = .executing("Checking which bundled encoders work on this Mac…")
+        didChange?()
+        do {
+            let catalog = try makeToolCatalog()
+            let capabilities = try await FFmpegCapabilityProbe(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                runner: FoundationCommandRunner()
+            ).probe()
+            cachedEncodingCapabilities = capabilities
+            state = .ready
+            didChange?()
+            return capabilities
+        } catch {
+            state = .ready
+            didChange?()
+            return .unavailable
         }
     }
 

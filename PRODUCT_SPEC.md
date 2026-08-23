@@ -856,13 +856,17 @@ Current implementation: complete full-file, gap-free `losslessCandidate` joins
 have a native include/order/chapter-edition/track-lane review, deterministic MKV
 output naming, cancellable pre-commit progress, multi-input History, and exact
 post-reopen verification. A pure common-format planner now previews packet-copy
-lanes, one-generation AV1 10-bit video normalization, per-lane AAC conversion,
+lanes, one-generation video normalization, per-lane AAC conversion,
 largest-layout audio preservation, silent missing audio sections, text-subtitle
-normalization, and explicit format decisions. It fails closed for incomplete
-copy facts, missing video, Dolby Vision transcodes, unsupported HDR, and image
-subtitle conversion. Manual mapping and attachment choices, normalization
-execution and verification, fast/exact trimming, and decode-boundary spot checks
-remain before the M5 gate is complete.
+normalization, and explicit format decisions. A bounded active FFmpeg probe now
+admits only encoders and required filters that work on the running Mac. The
+current bundled runtime verifies HEVC/H.264 VideoToolbox, ProRes, and AAC, but
+contains no AV1 encoder; the native review therefore recommends HEVC as its
+verified fallback and does not imply that AV1 is executable. It fails closed for
+incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision
+transcodes, unsupported HDR, and image subtitle conversion. Manual mapping and
+attachment choices, normalization execution and verification, fast/exact
+trimming, and decode-boundary spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

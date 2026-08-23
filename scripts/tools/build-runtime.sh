@@ -304,9 +304,16 @@ for architecture in arm64 x86_64; do
     "${runner[@]}" "$output_root/$architecture/mkvextract" --version >/dev/null
 
     encoders="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -encoders)"
-    for encoder in aac h264_videotoolbox hevc_videotoolbox; do
+    for encoder in aac aac_at h264_videotoolbox hevc_videotoolbox prores_ks; do
         if ! grep -Eq "[[:space:]]${encoder}[[:space:]]" <<< "$encoders"; then
             echo "missing required $architecture FFmpeg encoder: $encoder" >&2
+            exit 1
+        fi
+    done
+    filters="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -filters)"
+    for filter in aformat anullsrc aresample channelmap concat format pad scale setpts; do
+        if ! grep -Eq "[[:space:]]${filter}[[:space:]]" <<< "$filters"; then
+            echo "missing required $architecture FFmpeg filter: $filter" >&2
             exit 1
         fi
     done

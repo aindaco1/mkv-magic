@@ -35,7 +35,8 @@ struct LosslessJoinReviewSnapshot: Equatable, Sendable {
 
 enum LosslessJoinReviewBuilder {
     static func make(
-        selections: [LosslessJoinSourceSelection]
+        selections: [LosslessJoinSourceSelection],
+        encodingCapabilities: FFmpegEncodingCapabilities? = nil
     ) -> LosslessJoinReviewSnapshot {
         guard selections.count >= 2 else {
             return blocked("Select at least two inspected Matroska files.")
@@ -150,7 +151,8 @@ enum LosslessJoinReviewBuilder {
                 sources: sources,
                 mapping: proposal.mapping,
                 report: report,
-                hasAmbiguities: !proposal.ambiguities.isEmpty
+                hasAmbiguities: !proposal.ambiguities.isEmpty,
+                encodingCapabilities: encodingCapabilities
             ),
             blockerSummaries: blockers
         )
@@ -170,7 +172,8 @@ enum LosslessJoinReviewBuilder {
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         report: JoinCompatibilityReport,
-        hasAmbiguities: Bool
+        hasAmbiguities: Bool,
+        encodingCapabilities: FFmpegEncodingCapabilities?
     ) -> [String] {
         switch report.disposition {
         case .losslessCandidate:
@@ -191,13 +194,16 @@ enum LosslessJoinReviewBuilder {
             let proposal = try? JoinNormalizationPlanner().propose(
                 sources: sources,
                 mapping: mapping,
-                reviewedReport: report
+                reviewedReport: report,
+                preferredVideoPreset: encodingCapabilities?.recommendedVideoPreset
+                    ?? .av1Quality
             )
         else {
             return ["The common-format proposal could not be bound to this review."]
         }
         var summaries = [String]()
         for lane in proposal.videoLanes where lane.encodesVideo {
+            let preset = lane.recommendedPreset.map(videoPresetSummary) ?? "format needs review"
             let canvas =
                 lane.recommendedCanvas.map { "\($0.width)×\($0.height) fit/pad" }
                 ?? "canvas needs review"
@@ -206,7 +212,7 @@ enum LosslessJoinReviewBuilder {
                     $0 == .hdr10 ? "HDR10" : "SDR"
                 } ?? "choose SDR or HDR10"
             summaries.append(
-                "Video lane \(lane.laneIndex + 1): one AV1 10-bit generation • \(canvas) • \(range) • preserve source timing."
+                "Video lane \(lane.laneIndex + 1): one \(preset) generation • \(canvas) • \(range) • preserve source timing."
             )
         }
         for lane in proposal.audioLanes where lane.encodesAudio {
@@ -231,14 +237,49 @@ enum LosslessJoinReviewBuilder {
         summaries.append(
             "Impact: \(proposal.impact.videoEncodeCount) video generation • \(proposal.impact.audioEncodeCount) audio lane encode(s)."
         )
-        if let blocker = proposal.blockers.first {
+        let needsVideoEncode = proposal.videoLanes.contains(where: \.encodesVideo)
+        let needsAudioEncode = proposal.audioLanes.contains(where: \.encodesAudio)
+        if let capabilities = encodingCapabilities,
+            needsVideoEncode, capabilities.recommendedVideoPreset == nil
+        {
+            summaries.append("Blocked: no bundled video encoder passed the active local probe.")
+        } else if let capabilities = encodingCapabilities,
+            needsAudioEncode, capabilities.aac != .verified
+        {
+            summaries.append("Blocked: no bundled AAC encoder passed the active local probe.")
+        } else if let capabilities = encodingCapabilities,
+            needsVideoEncode || needsAudioEncode,
+            let missingFilter = capabilities.missingJoinFilters.first
+        {
+            summaries.append(
+                "Blocked: bundled FFmpeg did not report the required \(missingFilter) filter."
+            )
+        } else if let blocker = proposal.blockers.first {
             summaries.append("Blocked: \(blocker.summary)")
         } else {
+            if let capabilities = encodingCapabilities,
+                needsVideoEncode,
+                capabilities.softwareAV1 != .verified,
+                let fallback = capabilities.recommendedVideoPreset
+            {
+                summaries.append(
+                    "AV1 remains preferred, but this runtime has no verified AV1 encoder; \(videoPresetSummary(fallback)) is the verified fallback."
+                )
+            }
             summaries.append(
                 "Planning preview only; every listed target still requires explicit approval before execution."
             )
         }
         return summaries
+    }
+
+    private static func videoPresetSummary(_ preset: VideoPreset) -> String {
+        switch preset {
+        case .av1Quality: "AV1 10-bit"
+        case .hevcCompatibility: "HEVC 10-bit VideoToolbox"
+        case .h264Compatibility: "H.264 8-bit"
+        case .proRes: "ProRes 10-bit"
+        }
     }
 
     private static func laneSummaries(
@@ -323,8 +364,14 @@ final class LosslessJoinWindowController: NSWindowController {
     private let joinViewController: LosslessJoinViewController
     private var completion: ((LosslessJoinCandidate?) -> Void)?
 
-    init(options: [LosslessJoinSourceOption]) {
-        joinViewController = LosslessJoinViewController(options: options)
+    init(
+        options: [LosslessJoinSourceOption],
+        encodingCapabilities: FFmpegEncodingCapabilities? = nil
+    ) {
+        joinViewController = LosslessJoinViewController(
+            options: options,
+            encodingCapabilities: encodingCapabilities
+        )
         let window = NSPanel(contentViewController: joinViewController)
         window.title = "Join MKV Files"
         window.styleMask = [.titled, .closable, .resizable]
@@ -371,6 +418,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     var onContinue: ((LosslessJoinCandidate) -> Void)?
 
     private var options: [LosslessJoinSourceOption]
+    private let encodingCapabilities: FFmpegEncodingCapabilities?
     private var includedIDs: Set<UUID>
     private var editionIDs = [UUID: UUID]()
     private var snapshot = LosslessJoinReviewSnapshot(
@@ -387,8 +435,12 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
 
-    init(options: [LosslessJoinSourceOption]) {
+    init(
+        options: [LosslessJoinSourceOption],
+        encodingCapabilities: FFmpegEncodingCapabilities?
+    ) {
         self.options = options
+        self.encodingCapabilities = encodingCapabilities
         includedIDs = Set(options.map { $0.source.id })
         for option in options where option.editions.count == 1 {
             editionIDs[option.source.id] = option.editions[0].id
@@ -632,7 +684,10 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
                 editionID: editionIDs[option.source.id]
             )
         }
-        snapshot = LosslessJoinReviewBuilder.make(selections: selections)
+        snapshot = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            encodingCapabilities: encodingCapabilities
+        )
         var lines = ["TRACK LANES"]
         lines.append(
             contentsOf: snapshot.laneSummaries.isEmpty

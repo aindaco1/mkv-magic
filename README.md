@@ -86,11 +86,17 @@ Manual ambiguity mapping, trim execution, decode spot checks, attachment
 selection, and common-format execution remain pending. When a reviewed group
 needs normalization, the same window now previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
-affected video is bounded to one AV1 10-bit generation; affected audio lanes are
-converted once to AAC without automatic downmix; and mixed SDR/HDR, Dolby
+affected video is bounded to one generation using an encoder that passed a
+local one-frame capability probe; affected audio lanes are converted once to
+verified AAC without automatic downmix; and mixed SDR/HDR, Dolby
 Vision, incomplete facts, and image-subtitle limitations fail closed or require
 explicit choices. The preview does not enable saving until the corresponding
 choice UI, encoder, and output verification path exist.
+The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
+and the required join filters on the running Mac. It has AV1 decoding but no AV1
+encoder, so AV1 is not presented as available: HEVC 10-bit is the current
+verified fallback. A pinned software AV1 sidecar remains planned before AV1
+encoding can be selected.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

@@ -436,8 +436,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         Task {
             do {
                 let options = try await model.loadLosslessJoinSourceOptions(sources)
+                let capabilities = await model.probeEncodingCapabilities()
                 guard view.window === parentWindow else { return }
-                let controller = LosslessJoinWindowController(options: options)
+                let controller = LosslessJoinWindowController(
+                    options: options,
+                    encodingCapabilities: capabilities
+                )
                 losslessJoinWindowController = controller
                 controller.beginSheet(for: parentWindow) { [weak self] candidate in
                     guard let self else { return }

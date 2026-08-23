@@ -63,6 +63,17 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         XCTAssertTrue(
             proposal.impact.warnings.contains { $0.contains("one final encoded generation") }
         )
+
+        let h264Fallback = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+            ]),
+            preferredVideoPreset: .h264Compatibility
+        )
+        XCTAssertEqual(h264Fallback.videoLanes[0].recommendedPreset, .h264Compatibility)
+        XCTAssertEqual(h264Fallback.videoLanes[0].outputPixelFormat, "yuv420p")
+        XCTAssertEqual(h264Fallback.videoLanes[0].outputBitDepth, 8)
     }
 
     func testAudioMismatchPreservesLargestLayoutWithOneAACLaneEncode() throws {

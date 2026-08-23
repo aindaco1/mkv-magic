@@ -275,6 +275,45 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(save.isEnabled)
     }
 
+    @MainActor
+    func testLosslessJoinWindowShowsActivelyVerifiedHEVCFallbackInsteadOfUnavailableAV1()
+        throws
+    {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let controller = LosslessJoinWindowController(
+            options: [
+                losslessJoinVideoOption(part: 1, codec: "h264", width: 1_920, height: 1_080),
+                losslessJoinVideoOption(part: 2, codec: "hevc", width: 3_840, height: 2_160),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let review = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        ).string
+        XCTAssertTrue(review.contains("one HEVC 10-bit VideoToolbox generation"))
+        XCTAssertTrue(review.contains("AV1 remains preferred"))
+        XCTAssertTrue(review.contains("verified fallback"))
+        XCTAssertFalse(review.contains("one AV1 10-bit generation"))
+        XCTAssertFalse(
+            try XCTUnwrap(
+                buttons(in: content).first { $0.title == "Continue to Save…" }
+            ).isEnabled
+        )
+    }
+
     func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {
         XCTAssertEqual(
             try ExternalSubtitleMuxPresentation.metadata(
@@ -1269,6 +1308,54 @@ final class AppPolicyTests: XCTestCase {
             chapterPreview: ChapterEditPreview(
                 source: source,
                 original: MatroskaChapterDocument(editions: chapters),
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 1)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
+    }
+
+    private func losslessJoinVideoOption(
+        part: Int,
+        codec: String,
+        width: Int,
+        height: Int
+    ) -> LosslessJoinSourceOption {
+        let isH264 = codec == "h264"
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Part \(part).mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: codec,
+                    codecID: isH264 ? "V_MPEG4/ISO/AVC" : "V_MPEGH/ISO/HEVC",
+                    profile: isH264 ? "High" : "Main 10",
+                    level: isH264 ? 40 : 153,
+                    uid: UInt64(part),
+                    isDefault: true,
+                    dimensions: MediaDimensions(width: width, height: height),
+                    displayDimensions: MediaDimensions(width: width, height: height),
+                    pixelFormat: isH264 ? "yuv420p" : "yuv420p10le",
+                    bitDepth: isH264 ? 8 : 10,
+                    frameRate: "24000/1001",
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                )
+            ]
+        )
+        return LosslessJoinSourceOption(
+            chapterPreview: ChapterEditPreview(
+                source: source,
+                original: MatroskaChapterDocument(editions: []),
                 sourceRevision: ChapterSourceRevision(
                     fileSize: 1,
                     modificationDate: Date(timeIntervalSince1970: 1)

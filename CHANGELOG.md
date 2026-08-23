@@ -138,3 +138,10 @@ semantic versioning; public release tags are immutable and signed.
   audio layout without automatic downmix; require an explicit mixed SDR/HDR
   choice; and reject unsafe Dolby Vision or image-subtitle normalization. This is
   a truthful planning preview only and cannot execute yet.
+- Probe bundled FFmpeg encoder and filter declarations, then prove each offered
+  video/audio path with a bounded one-frame local encode before recommending it.
+  The current runtime verifies HEVC and H.264 VideoToolbox, ProRes, and AAC;
+  because it does not contain an AV1 encoder, Join truthfully shows HEVC as the
+  verified fallback while keeping AV1 as the future quality preference.
+- Consolidate private temporary workspaces for chapter edits, chapter frames,
+  joins, and capability probes behind one restrictive, symlink-resistant helper.

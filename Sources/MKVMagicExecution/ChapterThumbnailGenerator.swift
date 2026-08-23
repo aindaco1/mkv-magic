@@ -161,16 +161,9 @@ public struct FFmpegChapterThumbnailGenerator<Runner: CommandRunning>: Sendable 
     private func withPrivateDirectory<T: Sendable>(
         _ operation: (URL) async throws -> T
     ) async throws -> T {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "mkv-magic-thumbnails-\(UUID().uuidString)",
-            isDirectory: true
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-thumbnails",
+            operation
         )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        return try await operation(directory)
     }
 }

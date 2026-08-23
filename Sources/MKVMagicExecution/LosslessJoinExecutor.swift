@@ -420,17 +420,10 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
     private func withPrivateDirectory<T: Sendable>(
         _ operation: (URL) async throws -> T
     ) async throws -> T {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
-            "mkv-magic-lossless-join-\(UUID().uuidString)",
-            isDirectory: true
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-lossless-join",
+            operation
         )
-        try FileManager.default.createDirectory(
-            at: directory,
-            withIntermediateDirectories: false,
-            attributes: [.posixPermissions: 0o700]
-        )
-        defer { try? FileManager.default.removeItem(at: directory) }
-        return try await operation(directory)
     }
 }
 

@@ -215,7 +215,8 @@ public struct JoinNormalizationPlanner: Sendable {
     public func propose(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
-        reviewedReport: JoinCompatibilityReport? = nil
+        reviewedReport: JoinCompatibilityReport? = nil,
+        preferredVideoPreset: VideoPreset = .av1Quality
     ) throws -> JoinNormalizationProposal {
         let report = try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: mapping)
         if let reviewedReport, reviewedReport != report {
@@ -243,6 +244,7 @@ public struct JoinNormalizationPlanner: Sendable {
                         laneIndex: laneIndex,
                         tracks: tracks,
                         issues: issues,
+                        preferredPreset: preferredVideoPreset,
                         decisions: &decisions,
                         blockers: &blockers
                     )
@@ -312,6 +314,7 @@ public struct JoinNormalizationPlanner: Sendable {
         laneIndex: Int,
         tracks: [MediaTrack?],
         issues: [JoinCompatibilityIssue],
+        preferredPreset: VideoPreset,
         decisions: inout [JoinNormalizationDecisionRequirement],
         blockers: inout [JoinNormalizationBlocker]
     ) -> JoinVideoLaneProposal {
@@ -429,19 +432,32 @@ public struct JoinNormalizationPlanner: Sendable {
                 kind: .videoTarget,
                 laneIndex: laneIndex,
                 summary:
-                    "Confirm AV1 10-bit, fit-and-pad canvas, source timing, pixel format, and color target for video lane \(laneIndex + 1)."
+                    "Confirm \(videoPresetSummary(preferredPreset)), fit-and-pad canvas, source timing, pixel format, and color target for video lane \(laneIndex + 1)."
             )
         )
+        let pixelFormat: String
+        let bitDepth: Int
+        switch preferredPreset {
+        case .av1Quality, .hevcCompatibility:
+            pixelFormat = "yuv420p10le"
+            bitDepth = 10
+        case .h264Compatibility:
+            pixelFormat = "yuv420p"
+            bitDepth = 8
+        case .proRes:
+            pixelFormat = "yuv422p10le"
+            bitDepth = 10
+        }
         return JoinVideoLaneProposal(
             laneIndex: laneIndex,
             sourceActions: tracks.map { $0 == nil ? .emptyTimeline : .encodeOnce },
-            recommendedPreset: .av1Quality,
+            recommendedPreset: preferredPreset,
             recommendedCanvas: canvas,
             recommendedFrameRatePolicy: .preserveSourceTiming,
             recommendedDynamicRange: recommendedDynamicRange,
             dynamicRangeChoices: dynamicRangeChoices,
-            outputPixelFormat: "yuv420p10le",
-            outputBitDepth: 10
+            outputPixelFormat: pixelFormat,
+            outputBitDepth: bitDepth
         )
     }
 
@@ -705,6 +721,15 @@ public struct JoinNormalizationPlanner: Sendable {
 
     private func normalized(_ value: String?) -> String {
         value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
+
+    private func videoPresetSummary(_ preset: VideoPreset) -> String {
+        switch preset {
+        case .av1Quality: "AV1 10-bit"
+        case .hevcCompatibility: "HEVC 10-bit VideoToolbox"
+        case .h264Compatibility: "H.264 8-bit"
+        case .proRes: "ProRes 10-bit"
+        }
     }
 
     private func stableUnique<T: Hashable>(_ values: [T]) -> [T] {
