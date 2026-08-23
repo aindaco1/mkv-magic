@@ -1,0 +1,220 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing signed semantic-version tag to release
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, notarize, verify, and publish
+    runs-on: macos-15
+    timeout-minutes: 180
+    environment: release
+    env:
+      RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+      EXPECTED_TEAM_ID: ${{ vars.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Select pinned release Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          test "$(xcodebuild -version | head -1)" = "Xcode 26.3"
+          swift --version
+
+      - name: Define ephemeral release paths
+        run: |
+          {
+            printf 'MKV_MAGIC_VERSION=%s\n' "${RELEASE_TAG#v}"
+            printf 'MKV_MAGIC_BUILD_NUMBER=%s\n' "$GITHUB_RUN_NUMBER"
+            printf 'MKV_MAGIC_RELEASE_ROOT=%s\n' "$RUNNER_TEMP/mkv-magic-release"
+            printf 'MKV_MAGIC_TOOL_SOURCE_ROOT=%s\n' "$RUNNER_TEMP/mkv-magic-tools"
+            printf 'MKV_MAGIC_TOOL_CACHE=%s\n' "$RUNNER_TEMP/mkv-magic-tool-sources"
+            printf 'MKV_MAGIC_REQUIRE_TOOLS=1\n'
+            printf 'SIGNING_CERTIFICATE_PATH=%s\n' "$RUNNER_TEMP/mkv-magic-signing.p12"
+            printf 'SIGNING_KEYCHAIN_PATH=%s\n' "$RUNNER_TEMP/mkv-magic-signing.keychain-db"
+            printf 'NOTARY_KEY_PATH=%s\n' "$RUNNER_TEMP/mkv-magic-notary.p8"
+            printf 'SPARKLE_KEY_PATH=%s\n' "$RUNNER_TEMP/mkv-magic-sparkle.key"
+          } >> "$GITHUB_ENV"
+
+      - name: Validate signed tag
+        run: |
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile \
+            "$GITHUB_WORKSPACE/.github/allowed_signers"
+          ./scripts/release/validate-tag.sh "$RELEASE_TAG"
+
+      - name: Validate source
+        run: ./scripts/ci/local-gate.sh
+
+      - name: Build verified Universal media runtime
+        run: ./scripts/tools/build-runtime.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
+
+      - name: Build app with required tools
+        run: ./scripts/release/build-app.sh
+
+      - name: Import Developer ID identity
+        env:
+          CERTIFICATE_P12_BASE64: ${{ secrets.CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.RELEASE_KEYCHAIN_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+        run: |
+          umask 077
+          printf '%s' "$CERTIFICATE_P12_BASE64" | base64 --decode \
+            > "$SIGNING_CERTIFICATE_PATH"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$SIGNING_KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
+          security import "$SIGNING_CERTIFICATE_PATH" -k "$SIGNING_KEYCHAIN_PATH" \
+            -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$SIGNING_KEYCHAIN_PATH"
+          security list-keychains -d user -s "$SIGNING_KEYCHAIN_PATH"
+          /bin/rm -f "$SIGNING_CERTIFICATE_PATH"
+          ./scripts/release/check-signing-certificate.sh \
+            "$SIGNING_IDENTITY" "$SIGNING_KEYCHAIN_PATH"
+
+      - name: Materialize notarization and update keys
+        env:
+          APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+          SPARKLE_ED25519_PRIVATE_KEY: ${{ secrets.SPARKLE_ED25519_PRIVATE_KEY }}
+        run: |
+          umask 077
+          printf '%s' "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$NOTARY_KEY_PATH"
+          printf '%s' "$SPARKLE_ED25519_PRIVATE_KEY" > "$SPARKLE_KEY_PATH"
+
+      - name: Sign app inside out
+        env:
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+        run: |
+          test -n "$EXPECTED_TEAM_ID"
+          ./scripts/release/sign-app.sh \
+            "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" "$SIGNING_IDENTITY" timestamp
+
+      - name: Notarize and staple app
+        env:
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          ./scripts/release/notarize.sh \
+            "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" \
+            "$NOTARY_KEY_PATH" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" \
+            "$MKV_MAGIC_RELEASE_ROOT/NOTARIZATION-APP.json"
+
+      - name: Package signed release
+        env:
+          MKV_MAGIC_REQUIRE_STAPLED: "1"
+        run: ./scripts/release/package.sh
+
+      - name: Sign, notarize, and staple DMG
+        env:
+          SIGNING_IDENTITY: ${{ secrets.DEVELOPER_ID_APPLICATION }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          dmg="$MKV_MAGIC_RELEASE_ROOT/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg"
+          ./scripts/release/sign-dmg.sh "$dmg" "$SIGNING_IDENTITY"
+          ./scripts/release/notarize.sh \
+            "$dmg" "$NOTARY_KEY_PATH" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" \
+            "$MKV_MAGIC_RELEASE_ROOT/NOTARIZATION-DMG.json"
+          MKV_MAGIC_REQUIRE_DISTRIBUTION=1 \
+          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
+            ./scripts/release/verify-dmg.sh "$dmg"
+
+      - name: Bundle corresponding source
+        run: ./scripts/release/bundle-corresponding-source.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
+
+      - name: Generate signed manual-update feed
+        run: ./scripts/release/generate-appcast.sh "$RELEASE_TAG" "$SPARKLE_KEY_PATH"
+
+      - name: Finalize evidence and checksums
+        run: |
+          ./scripts/release/write-artifact-sizes.sh
+          ./scripts/release/checksum-artifacts.sh
+          (cd "$MKV_MAGIC_RELEASE_ROOT" && shasum -a 256 -c SHA256SUMS)
+
+      - name: Attest release artifacts
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8
+        with:
+          subject-path: |
+            ${{ env.MKV_MAGIC_RELEASE_ROOT }}/MKV-Magic-${{ env.MKV_MAGIC_VERSION }}-universal.zip
+            ${{ env.MKV_MAGIC_RELEASE_ROOT }}/MKV-Magic-${{ env.MKV_MAGIC_VERSION }}-universal.dmg
+            ${{ env.MKV_MAGIC_RELEASE_ROOT }}/MKV-Magic-${{ env.MKV_MAGIC_VERSION }}-corresponding-source.zip
+            ${{ env.MKV_MAGIC_RELEASE_ROOT }}/appcast.xml
+            ${{ env.MKV_MAGIC_RELEASE_ROOT }}/SBOM.cdx.json
+
+      - name: Create draft GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          root="$MKV_MAGIC_RELEASE_ROOT"
+          gh release create "$RELEASE_TAG" \
+            "$root/MKV-Magic-$MKV_MAGIC_VERSION-universal.zip" \
+            "$root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg" \
+            "$root/MKV-Magic-$MKV_MAGIC_VERSION-corresponding-source.zip" \
+            "$root/appcast.xml" \
+            "$root/SHA256SUMS" \
+            "$root/Package.resolved" \
+            "$root/THIRD-PARTY-NOTICES.md" \
+            "$root/SUPPORTED-SYSTEMS.md" \
+            "$root/BUILD-METADATA.txt" \
+            "$root/ARTIFACT-SIZES.json" \
+            "$root/SBOM.cdx.json" \
+            "$root/NOTARIZATION-APP.json" \
+            "$root/NOTARIZATION-DMG.json" \
+            --draft --verify-tag \
+            --notes-file "docs/releases/$MKV_MAGIC_VERSION.md" \
+            --title "MKV Magic $MKV_MAGIC_VERSION"
+
+      - name: Download and independently verify draft assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          download_root="$RUNNER_TEMP/mkv-magic-downloaded-release"
+          mkdir "$download_root"
+          gh release download "$RELEASE_TAG" --dir "$download_root"
+          (cd "$download_root" && shasum -a 256 -c SHA256SUMS)
+          for artifact in \
+            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.zip" \
+            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg" \
+            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-corresponding-source.zip" \
+            "$download_root/appcast.xml" \
+            "$download_root/SBOM.cdx.json"
+          do
+            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
+          done
+          MKV_MAGIC_REQUIRE_DISTRIBUTION=1 \
+          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
+            ./scripts/release/verify-dmg.sh \
+              "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg"
+
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+
+      - name: Remove temporary signing material
+        if: always()
+        run: |
+          /bin/rm -f "$SIGNING_CERTIFICATE_PATH" "$NOTARY_KEY_PATH" "$SPARKLE_KEY_PATH"
+          security delete-keychain "$SIGNING_KEYCHAIN_PATH" || true

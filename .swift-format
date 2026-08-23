@@ -1,0 +1,28 @@
+{
+  "indentation": {
+    "spaces": 4
+  },
+  "lineLength": 100,
+  "maximumBlankLines": 1,
+  "respectsExistingLineBreaks": true,
+  "rules": {
+    "DoNotUseSemicolons": true,
+    "FileScopedDeclarationPrivacy": true,
+    "NoAccessLevelOnExtensionDeclaration": true,
+    "NoBlockComments": true,
+    "NoCasesWithOnlyFallthrough": true,
+    "NoEmptyTrailingClosureParentheses": true,
+    "NoLabelsInCasePatterns": true,
+    "NoLeadingUnderscores": true,
+    "NoParensAroundConditions": true,
+    "NoPlaygroundLiterals": true,
+    "NoVoidReturnOnFunctionSignature": true,
+    "OmitExplicitReturns": false,
+    "OneCasePerLine": true,
+    "OrderedImports": true,
+    "UseLetInEveryBoundCaseVariable": true,
+    "UseShorthandTypeNames": true
+  },
+  "tabWidth": 4,
+  "version": 1
+}

@@ -1,0 +1,73 @@
+// swift-tools-version:6.0
+import PackageDescription
+
+let package = Package(
+    name: "MKVMagic",
+    platforms: [.macOS(.v13)],
+    products: [
+        .library(name: "MKVMagicCore", targets: ["MKVMagicCore"]),
+        .library(name: "MKVMagicSystem", targets: ["MKVMagicSystem"]),
+        .library(name: "MKVMagicMedia", targets: ["MKVMagicMedia"]),
+        .library(name: "MKVMagicPlanning", targets: ["MKVMagicPlanning"]),
+        .executable(name: "MKVMagic", targets: ["MKVMagic"]),
+    ],
+    dependencies: [
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5")
+    ],
+    targets: [
+        .target(name: "MKVMagicCore"),
+        .target(
+            name: "MKVMagicSystem",
+            dependencies: ["MKVMagicCore"]
+        ),
+        .target(
+            name: "MKVMagicMedia",
+            dependencies: ["MKVMagicCore", "MKVMagicSystem"]
+        ),
+        .target(
+            name: "MKVMagicPlanning",
+            dependencies: ["MKVMagicCore"]
+        ),
+        .executableTarget(
+            name: "MKVMagic",
+            dependencies: [
+                "MKVMagicCore",
+                "MKVMagicMedia",
+                "MKVMagicPlanning",
+                "MKVMagicSystem",
+                .product(name: "Sparkle", package: "Sparkle"),
+            ],
+            exclude: ["Info.plist"],
+            linkerSettings: [
+                .unsafeFlags([
+                    "-Xlinker", "-sectcreate",
+                    "-Xlinker", "__TEXT",
+                    "-Xlinker", "__info_plist",
+                    "-Xlinker", "Sources/MKVMagic/Info.plist",
+                    "-Xlinker", "-rpath",
+                    "-Xlinker", "@executable_path/../Frameworks",
+                ])
+            ]
+        ),
+        .testTarget(
+            name: "MKVMagicCoreTests",
+            dependencies: ["MKVMagicCore"]
+        ),
+        .testTarget(
+            name: "MKVMagicSystemTests",
+            dependencies: ["MKVMagicCore", "MKVMagicSystem"]
+        ),
+        .testTarget(
+            name: "MKVMagicMediaTests",
+            dependencies: ["MKVMagicCore", "MKVMagicMedia", "MKVMagicSystem"]
+        ),
+        .testTarget(
+            name: "MKVMagicPlanningTests",
+            dependencies: ["MKVMagicCore", "MKVMagicPlanning"]
+        ),
+        .testTarget(
+            name: "MKVMagicAppTests",
+            dependencies: ["MKVMagic"]
+        ),
+    ]
+)

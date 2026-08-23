@@ -1,0 +1,88 @@
+import AppKit
+
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private let model = AppModel()
+    private let updateController: UpdateChecking
+    private var windowController: NSWindowController?
+
+    init(updateController: UpdateChecking = AppUpdateController()) {
+        self.updateController = updateController
+        super.init()
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.mainMenu = makeMainMenu()
+
+        let content = MainViewController(model: model)
+        let window = NSWindow(contentViewController: content)
+        window.title = "MKV Magic"
+        window.setContentSize(NSSize(width: 1080, height: 680))
+        window.minSize = NSSize(width: 820, height: 520)
+        window.center()
+        window.tabbingMode = .disallowed
+        let controller = NSWindowController(window: window)
+        windowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    @objc private func checkForUpdates() {
+        updateController.checkForUpdates()
+    }
+
+    private func makeMainMenu() -> NSMenu {
+        let main = NSMenu()
+        let appItem = NSMenuItem()
+        main.addItem(appItem)
+        let appMenu = NSMenu()
+        appMenu.addItem(
+            withTitle: "About MKV Magic",
+            action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        appMenu.addItem(.separator())
+        let update = NSMenuItem(
+            title: "Check for Updates…",
+            action: #selector(checkForUpdates),
+            keyEquivalent: ""
+        )
+        update.target = self
+        appMenu.addItem(update)
+        appMenu.addItem(.separator())
+        appMenu.addItem(
+            withTitle: "Hide MKV Magic", action: #selector(NSApplication.hide(_:)),
+            keyEquivalent: "h")
+        appMenu.addItem(
+            withTitle: "Quit MKV Magic", action: #selector(NSApplication.terminate(_:)),
+            keyEquivalent: "q")
+        appItem.submenu = appMenu
+
+        let fileItem = NSMenuItem()
+        main.addItem(fileItem)
+        let fileMenu = NSMenu(title: "File")
+        fileMenu.addItem(withTitle: "Open…", action: nil, keyEquivalent: "o")
+        fileMenu.addItem(.separator())
+        fileMenu.addItem(
+            withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        fileItem.submenu = fileMenu
+
+        let editItem = NSMenuItem()
+        main.addItem(editItem)
+        let editMenu = NSMenu(title: "Edit")
+        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
+        editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "Z")
+        editMenu.addItem(.separator())
+        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(
+            withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(
+            withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editItem.submenu = editMenu
+        return main
+    }
+}

@@ -1,0 +1,8 @@
+Trim 2 seconds from the beginning of a video
+ffmpeg -i input.mp4 -ss 2 -vcodec copy -acodec copy output.mp4
+
+Extract SRT from MKV
+mkvextract tracks <your_mkv_video> <track_numer>:<subtitle_file.srt>
+
+Extract TX3G subtitles from mp4 to ASS
+ffmpeg -i ABC.mp4 xyz.ass

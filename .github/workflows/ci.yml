@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Source, tests, Universal build, and package
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Report toolchain
+        run: |
+          swift --version
+          xcodebuild -version
+          shellcheck --version
+
+      - name: Validate source and Universal binary
+        run: ./scripts/ci/validate.sh
+
+      - name: Exercise app package and signed update feed
+        run: ./scripts/ci/package-gate.sh
+
+  coverage:
+    name: Swift coverage
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Collect coverage
+        run: ./scripts/ci/coverage.sh
+
+  sanitizers:
+    name: Address and thread sanitizers
+    runs-on: macos-15
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Run sanitizers
+        run: ./scripts/ci/sanitizers.sh
+
+  bundled-runtime:
+    name: Bundled ARM64 and Intel media runtime
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+
+      - name: Select pinned runtime-build Xcode
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
+          test "$(xcodebuild -version | head -1)" = "Xcode 26.3"
+
+      - name: Build, package, and execute bundled tools
+        env:
+          MKV_MAGIC_TOOL_SOURCE_ROOT: ${{ runner.temp }}/mkv-magic-tools
+          MKV_MAGIC_TOOL_CACHE: ${{ runner.temp }}/mkv-magic-tool-sources
+          MKV_MAGIC_RELEASE_ROOT: ${{ runner.temp }}/mkv-magic-runtime-package
+          MKV_MAGIC_REQUIRE_TOOLS: "1"
+          MKV_MAGIC_VERSION: 0.0.0
+          MKV_MAGIC_BUILD_NUMBER: 1
+        run: |
+          ./scripts/tools/build-runtime.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
+          ./scripts/release/build-app.sh
+          ./scripts/release/sign-app.sh \
+            "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" - none
+          ./scripts/release/package.sh
+          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
+            ./scripts/release/verify-dmg.sh \
+              "$MKV_MAGIC_RELEASE_ROOT/MKV-Magic-0.0.0-universal.dmg"
+
+  dependency-review:
+    name: Dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
+        with:
+          fail-on-severity: moderate
+          allow-licenses: >-
+            GPL-2.0-or-later, GPL-3.0-or-later, LGPL-3.0-only,
+            BSD-2-Clause, BSD-3-Clause, MIT
