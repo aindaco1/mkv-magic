@@ -68,6 +68,13 @@ chapter trees for a future hard join: it intersects retained ranges, rebases
 nested timestamps, creates source-part parents and missing boundary children,
 regenerates identities, and validates one final default edition. This core
 policy is tested but is not yet exposed as a join UI or file executor.
+M5 also has a bounded joined-track mapping foundation. It proposes only unique
+codec/parameter or language/role matches, leaves indistinguishable tracks in
+separate visible lanes, requires every appendable track exactly once, and
+classifies gaps or stream differences before work begins. A static
+`losslessCandidate` is not an execution guarantee: bundled `mkvmerge` and final
+output verification remain mandatory. The mapping table and join executor are
+still pending.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

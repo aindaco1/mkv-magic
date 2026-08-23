@@ -116,3 +116,9 @@ semantic versioning; public release tags are immutable and signed.
   under source-part parents, assigned fresh identities, and validated as one
   bounded default edition. Chapterless sources receive numbered boundary
   children; no muxing or source write is implied by this policy slice.
+- Add deterministic joined-track mapping and conservative lossless-append
+  compatibility policy. Every video, audio, and subtitle track must appear
+  exactly once; unique identity/language/role matches are proposed, ambiguous
+  duplicates stay visibly unresolved, stream differences are classified as
+  confirmation, normalization, or unsupported, and final codec compatibility
+  remains gated on bundled MKVToolNix plus output verification.
