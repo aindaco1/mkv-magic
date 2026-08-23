@@ -98,6 +98,14 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testEmbeddedSubtitleCleanupOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.cleanedMKVFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.WEBM")),
+            "Movie — Cleaned.mkv"
+        )
+    }
+
     func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {
         XCTAssertEqual(
             try ExternalSubtitleMuxPresentation.metadata(
@@ -531,6 +539,98 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 640)
         XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    @MainActor
+    func testEmbeddedSubtitlePickerUsesReadableTrackLabelsAndCompactLayout() throws {
+        let tracks = [
+            MediaTrack(
+                id: 1,
+                kind: .subtitle,
+                codec: "subrip",
+                codecID: "S_TEXT/UTF8",
+                uid: 42,
+                language: "en",
+                title: "English SDH",
+                isDefault: true,
+                isHearingImpaired: true
+            ),
+            MediaTrack(
+                id: 2,
+                kind: .subtitle,
+                codec: "PGS",
+                codecID: "S_HDMV/PGS",
+                uid: 43,
+                language: "fr"
+            ),
+        ]
+        XCTAssertEqual(
+            EmbeddedSubtitleTrackPickerViewController.title(tracks[0]),
+            "#2 • SRT • en • English SDH • default, SDH"
+        )
+        let controller = EmbeddedSubtitleTrackPickerWindowController(tracks: tracks)
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertEqual(window.title, "Choose Embedded Subtitle")
+        XCTAssertTrue(
+            window.contentViewController is EmbeddedSubtitleTrackPickerViewController)
+        XCTAssertEqual(contentView.frame.size.width, 620, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 280, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 540)
+        XCTAssertEqual(window.minSize.height, 260)
+    }
+
+    @MainActor
+    func testEmbeddedSRTUsesSharedReviewWindowAndTrackLanguageExplanation() throws {
+        let cue = SubRipCue(
+            id: 0,
+            start: SubRipTimestamp(milliseconds: 0),
+            end: SubRipTimestamp(milliseconds: 1_000),
+            lines: [" y0u "]
+        )
+        let track = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 42,
+            language: "en",
+            title: "English"
+        )
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska",
+            tracks: [track]
+        )
+        let preview = EmbeddedSubtitleCleanupPreview.subRip(
+            EmbeddedSubRipCleanupPreview(
+                source: source,
+                track: track,
+                sourceRevision: EmbeddedSubtitleSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 0)
+                ),
+                extractedSHA256: Data(),
+                packetTimelineSHA256: Data(),
+                encoding: .utf8,
+                diagnostics: [],
+                cleanup: SubtitleCleanupPolicy().preview(SubRipDocument(cues: [cue])),
+                appliesEnglishOCRRules: true
+            ))
+        let controller = SubtitleCleanupWindowController(preview: preview)
+        let window = try XCTUnwrap(controller.window)
+
+        XCTAssertEqual(window.title, "Clean Embedded SRT Subtitle")
+        XCTAssertTrue(window.contentViewController is SubtitleCleanupViewController)
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.embeddedNormalization(
+                format: .subRip,
+                track: track,
+                appliesEnglishOCRRules: true,
+                diagnosticCount: 0
+            ).contains("same position")
+        )
     }
 
     @MainActor

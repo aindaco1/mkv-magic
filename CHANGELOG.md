@@ -80,3 +80,13 @@ semantic versioning; public release tags are immutable and signed.
   unchecked for explicit review, preserve case and apostrophe style, protect
   markup/override tags/URLs/email, and skip the English rules when a filename has
   an explicit non-English language suffix.
+- Add embedded SRT, ASS, and SSA cleanup for inspected Matroska files through
+  the shared native review. Choose among multiple editable tracks, extract
+  privately, and replace the reviewed track at its original position in one
+  zero-encode remux while restoring its stable Matroska UID and all metadata
+  flags.
+- Verify embedded cleanup before commit and after reopen by re-extracting the
+  exact payload and comparing all track, chapter, tag, attachment, duration, and
+  segment facts. Preserve contiguous packet timelines at nanosecond precision;
+  avoid MKVToolNix's timestamp override for gapped or non-contiguous retained
+  cues because it would incorrectly extend a preceding subtitle.

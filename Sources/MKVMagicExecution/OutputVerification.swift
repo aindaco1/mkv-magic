@@ -258,6 +258,58 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
     }
 }
 
+public struct EmbeddedSubtitleReplacementOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        replacedTrackUID: UInt64,
+        expectedFormat: ExternalTextSubtitleFormat
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard remuxDurationsMatch(original.duration, output.duration) else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID != nil,
+            original.segmentUID == nil || output.segmentUID != original.segmentUID
+        else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard originalTracks.filter({ $0.uid == replacedTrackUID }).count == 1,
+            outputTracks.filter({ $0.uid == replacedTrackUID }).count == 1,
+            let replaced = outputTracks.first(where: { $0.uid == replacedTrackUID }),
+            EmbeddedTextSubtitlePolicy.format(for: replaced) == expectedFormat,
+            outputTracks.map(RemuxTrackSnapshot.init)
+                == originalTracks.map(RemuxTrackSnapshot.init)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+    }
+}
+
 public enum SegmentTitleExpectation: Equatable, Sendable {
     case preserve
     case set(String?)

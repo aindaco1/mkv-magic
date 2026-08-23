@@ -395,6 +395,80 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testEmbeddedSubtitleReplacementVerifierAcceptsSameTrackAtSamePositionAndUID() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", codecID: "V_AV1", uid: 10)
+        let subtitle = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 20,
+            language: "en",
+            title: "English",
+            isDefault: true
+        )
+        let audio = MediaTrack(id: 2, kind: .audio, codec: "aac", uid: 30, language: "en")
+        let original = asset(title: "Movie", tracks: [video, subtitle, audio])
+        let output = asset(
+            title: "Movie",
+            tracks: [video, subtitle, audio],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+
+        XCTAssertNoThrow(
+            try EmbeddedSubtitleReplacementOutputVerifier().verify(
+                original: original,
+                output: output,
+                replacedTrackUID: 20,
+                expectedFormat: .subRip
+            ))
+    }
+
+    func testEmbeddedSubtitleReplacementVerifierRejectsUIDMetadataOrOrderDrift() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", codecID: "V_AV1", uid: 10)
+        let subtitle = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 20,
+            language: "en",
+            isForced: true
+        )
+        let audio = MediaTrack(id: 2, kind: .audio, codec: "aac", uid: 30)
+        let replacementWithNewUID = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 99,
+            language: "en"
+        )
+        let verifier = EmbeddedSubtitleReplacementOutputVerifier()
+
+        for tracks in [
+            [video, replacementWithNewUID, audio],
+            [video, audio, subtitle],
+        ] {
+            XCTAssertThrowsError(
+                try verifier.verify(
+                    original: asset(title: "Movie", tracks: [video, subtitle, audio]),
+                    output: asset(
+                        title: "Movie",
+                        tracks: tracks,
+                        segmentUID: "2233",
+                        encoder: "mkvmerge"
+                    ),
+                    replacedTrackUID: 20,
+                    expectedFormat: .subRip
+                )
+            ) { error in
+                XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+            }
+        }
+    }
+
     private func asset(
         title: String,
         tracks: [MediaTrack] = [

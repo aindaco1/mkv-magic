@@ -1,7 +1,8 @@
 # M3 ASS/SSA subtitle slice
 
 This records engineering acceptance of style-preserving ASS and SSA cleanup and
-external Matroska muxing. It is not acceptance of embedded-track extraction,
+external Matroska muxing. Embedded cleanup is accepted separately in
+`M3_EMBEDDED_SUBTITLE_SLICE.md`. This document is not acceptance of
 image-subtitle conversion, batch execution, or a public release. Deterministic
 English OCR cleanup is accepted separately in `M3_ENGLISH_OCR_SLICE.md`.
 
@@ -75,7 +76,7 @@ English OCR cleanup is accepted separately in `M3_ENGLISH_OCR_SLICE.md`.
 
 ## Still pending
 
-- Embedded text-subtitle extraction, cleanup, and remux workflow actions.
+- Embedded-cleanup saved-workflow and batch actions.
 - Image-subtitle pass-through/mux operations; image-to-text OCR remains roadmap.
 - Packaged VoiceOver, full keyboard-only, physical Intel, and real-library beta
   acceptance, plus the eventual signed/notarized public release.

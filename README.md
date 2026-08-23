@@ -42,6 +42,16 @@ encoding. Existing tracks, chapters, tags, and attachments are verified before
 and after commit. Styled subtitles receive an additional `mkvextract` audit of
 their header, styles, layout, timing, and text; both selected inputs remain
 unchanged.
+An inspected Matroska file with embedded SRT, ASS, or SSA tracks can use the
+same **Clean Subtitle…** review without first exporting a sidecar. A chooser
+appears when more than one editable text track is present. MKV Magic privately
+extracts the selected track, applies only the reviewed changes, and replaces it
+at the same track position in one zero-encode remux. Track UID, name, language,
+playback/accessibility flags, every other track, chapters, tags, attachments,
+and the original file are preserved. The replacement is re-extracted before
+commit and after reopen; compatible contiguous packet timelines receive an
+additional exact nanosecond timing audit, while gapped timelines avoid an unsafe
+timestamp override and retain the subtitle format's own timing semantics.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and
@@ -53,6 +63,8 @@ delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
   copying can satisfy the request.
 - Encode video no more than once for each final output.
 - Preserve originals until a result passes its declared verification contract.
+- Preserve embedded subtitle identity, ordering, metadata, text/style payload,
+  and timing without encoding; refuse a result that fails its declared audit.
 - Process locally without telemetry, accounts, uploads, LLMs, or an ambient
   Homebrew/runtime dependency.
 - Ship as a Universal Developer ID-signed and Apple-notarized macOS app.

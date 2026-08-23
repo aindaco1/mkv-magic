@@ -14,6 +14,8 @@ private struct SubtitleCleanupReviewChange {
 private enum SubtitleCleanupReviewPreview {
     case subRip(SubtitleCleanupFilePreview)
     case advanced(AdvancedSubtitleCleanupFilePreview)
+    case embeddedSubRip(EmbeddedSubRipCleanupPreview)
+    case embeddedAdvanced(EmbeddedAdvancedSubtitleCleanupPreview)
 
     var changes: [SubtitleCleanupReviewChange] {
         switch self {
@@ -43,6 +45,32 @@ private enum SubtitleCleanupReviewPreview {
                     )
                 )
             }
+        case .embeddedSubRip(let preview):
+            preview.cleanup.changes.map { change in
+                SubtitleCleanupReviewChange(
+                    id: change.id,
+                    title: SubtitleCleanupPresentation.title(change),
+                    detail: SubtitleCleanupPresentation.detail(change),
+                    start: change.before.start,
+                    end: change.before.end,
+                    selectedByDefault: SubtitleCleanupPresentation.selectedByDefault(
+                        reasons: change.reasons
+                    )
+                )
+            }
+        case .embeddedAdvanced(let preview):
+            preview.cleanup.changes.map { change in
+                SubtitleCleanupReviewChange(
+                    id: change.id,
+                    title: SubtitleCleanupPresentation.title(change),
+                    detail: SubtitleCleanupPresentation.detail(change),
+                    start: change.before.start,
+                    end: change.before.end,
+                    selectedByDefault: SubtitleCleanupPresentation.selectedByDefault(
+                        reasons: change.reasons
+                    )
+                )
+            }
         }
     }
 
@@ -50,6 +78,8 @@ private enum SubtitleCleanupReviewPreview {
         switch self {
         case .subRip(let preview): preview.cleanup.original.cues.count
         case .advanced(let preview): preview.cleanup.original.events.count
+        case .embeddedSubRip(let preview): preview.cleanup.original.cues.count
+        case .embeddedAdvanced(let preview): preview.cleanup.original.events.count
         }
     }
 
@@ -59,15 +89,15 @@ private enum SubtitleCleanupReviewPreview {
 
     var itemName: String {
         switch self {
-        case .subRip: "cues"
-        case .advanced: "events"
+        case .subRip, .embeddedSubRip: "cues"
+        case .advanced, .embeddedAdvanced: "events"
         }
     }
 
     var itemSingular: String {
         switch self {
-        case .subRip: "cue"
-        case .advanced: "event"
+        case .subRip, .embeddedSubRip: "cue"
+        case .advanced, .embeddedAdvanced: "event"
         }
     }
 
@@ -77,6 +107,10 @@ private enum SubtitleCleanupReviewPreview {
             "Deterministic ad, whitespace, and high-confidence local English OCR fixes are selected. Possible spelling corrections start unselected. Uncheck any selected change to restore that cue. Cue timing is never changed."
         case .advanced:
             "Deterministic ad, whitespace, and high-confidence local English OCR fixes are selected. Possible spelling corrections start unselected. Uncheck any selected change to restore that event. Styles, override tags, layout fields, and timing are never changed."
+        case .embeddedSubRip:
+            "Review the extracted text before MKV Magic replaces this one embedded SRT track in a new MKV. Existing track order, metadata, chapters, attachments, tags, video, and audio are preserved without encoding."
+        case .embeddedAdvanced:
+            "Review the extracted dialogue before MKV Magic replaces this one embedded styled track in a new MKV. Styles, override tags, track order, metadata, timing, chapters, attachments, video, and audio are preserved without encoding."
         }
     }
 
@@ -84,21 +118,45 @@ private enum SubtitleCleanupReviewPreview {
         switch self {
         case .subRip(let preview): SubtitleCleanupPresentation.normalization(preview)
         case .advanced(let preview): SubtitleCleanupPresentation.normalization(preview)
+        case .embeddedSubRip(let preview):
+            SubtitleCleanupPresentation.embeddedNormalization(
+                format: .subRip,
+                track: preview.track,
+                appliesEnglishOCRRules: preview.appliesEnglishOCRRules,
+                diagnosticCount: preview.diagnostics.count
+            )
+        case .embeddedAdvanced(let preview):
+            SubtitleCleanupPresentation.embeddedNormalization(
+                format: preview.format,
+                track: preview.track,
+                appliesEnglishOCRRules: preview.appliesEnglishOCRRules,
+                diagnosticCount: preview.diagnostics.count
+            )
         }
     }
 
     func canConfirm(appliedChangeIDs: Set<Int>) -> Bool {
         switch self {
         case .subRip(let preview):
-            SubtitleCleanupPresentation.canConfirm(
+            return SubtitleCleanupPresentation.canConfirm(
                 preview: preview,
                 appliedChangeIDs: appliedChangeIDs
             )
         case .advanced(let preview):
-            SubtitleCleanupPresentation.canConfirm(
+            return SubtitleCleanupPresentation.canConfirm(
                 preview: preview,
                 appliedChangeIDs: appliedChangeIDs
             )
+        case .embeddedSubRip(let preview):
+            let allChangeIDs = Set(preview.cleanup.changes.map(\.id))
+            return !preview.cleanup.document(
+                restoringCueIDs: allChangeIDs.subtracting(appliedChangeIDs)
+            ).cues.isEmpty
+        case .embeddedAdvanced(let preview):
+            let allChangeIDs = Set(preview.cleanup.changes.map(\.id))
+            return !preview.cleanup.document(
+                restoringEventIDs: allChangeIDs.subtracting(appliedChangeIDs)
+            ).events.isEmpty
         }
     }
 }
@@ -113,6 +171,18 @@ final class SubtitleCleanupWindowController: NSWindowController {
 
     convenience init(preview: AdvancedSubtitleCleanupFilePreview) {
         self.init(review: .advanced(preview), title: "Clean ASS/SSA Subtitle")
+    }
+
+    convenience init(preview: EmbeddedSubtitleCleanupPreview) {
+        switch preview {
+        case .subRip(let preview):
+            self.init(review: .embeddedSubRip(preview), title: "Clean Embedded SRT Subtitle")
+        case .advanced(let preview):
+            self.init(
+                review: .embeddedAdvanced(preview),
+                title: "Clean Embedded \(preview.format.displayName) Subtitle"
+            )
+        }
     }
 
     private init(review: SubtitleCleanupReviewPreview, title: String) {
@@ -385,6 +455,26 @@ enum SubtitleCleanupPresentation {
         }
         if !preview.diagnostics.isEmpty {
             details.append("Structural normalization: \(preview.diagnostics.count) item(s)")
+        }
+        return details.joined(separator: " • ")
+    }
+
+    static func embeddedNormalization(
+        format: ExternalTextSubtitleFormat,
+        track: MediaTrack,
+        appliesEnglishOCRRules: Bool,
+        diagnosticCount: Int
+    ) -> String {
+        var details = [
+            "Track #\(track.id + 1): \(format.displayName) • output: verified MKV replacement at the same position"
+        ]
+        details.append(
+            appliesEnglishOCRRules
+                ? "Local English OCR review enabled from track language"
+                : "English OCR review skipped: track language identifies another language"
+        )
+        if diagnosticCount > 0 {
+            details.append("Structural normalization: \(diagnosticCount) item(s)")
         }
         return details.joined(separator: " • ")
     }

@@ -32,6 +32,8 @@ final class RealToolAppHistoryTests: XCTestCase {
         let removalOutput = fixtureRoot.appendingPathComponent("source — Track Removed.mkv")
         let muxOutput = fixtureRoot.appendingPathComponent("source — Subtitled.mkv")
         let styledMuxOutput = fixtureRoot.appendingPathComponent("source — Styled.mkv")
+        let embeddedCleanupOutput = fixtureRoot.appendingPathComponent(
+            "source — Embedded Cleaned.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
         try Data("1\n00:00:00,000 --> 00:00:00,500\nBonjour\n".utf8).write(to: subtitle)
         try Data(
@@ -39,7 +41,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                 + "[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial\n"
                 + "[Events]\n"
                 + "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-                + "Dialogue: 0,0:00:00.00,0:00:00.50,Default,,0,0,0,,{\\an8}Hello\n").utf8
+                + "Dialogue: 0,0:00:00.00,0:00:00.50,Default,,0,0,0,,{\\an8}HE11O\n").utf8
         ).write(to: styledSubtitle)
 
         let createResult = try await runner.run(
@@ -176,10 +178,26 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(styledMuxAsset.tracks.last?.codecID, "S_TEXT/ASS")
         XCTAssertEqual(styledMuxAsset.tracks.last?.title, "English Styled")
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+        let styledTrackUID = try XCTUnwrap(styledMuxAsset.tracks.last?.uid)
+        let embeddedPreview = try await model.previewEmbeddedSubtitleCleanup(
+            in: styledMuxAsset,
+            trackUID: styledTrackUID
+        )
+        XCTAssertEqual(embeddedPreview.cleanupChangeCount, 1)
+        let embeddedCleanedAsset = try await model.cleanEmbeddedSubtitle(
+            preview: embeddedPreview,
+            restoringIDs: [],
+            destinationURL: embeddedCleanupOutput
+        )
+        XCTAssertEqual(
+            embeddedCleanedAsset.tracks.compactMap(\.uid),
+            styledMuxAsset.tracks.compactMap(\.uid)
+        )
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
 
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 6)
+        XCTAssertEqual(records.count, 7)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
@@ -244,6 +262,23 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(styledMuxRecord.outputDisplayName, "source — Styled.mkv")
         XCTAssertEqual(
             styledMuxRecord.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let embeddedCleanupRecord = records[6]
+        XCTAssertEqual(embeddedCleanupRecord.workflowName, "Clean embedded ASS subtitle")
+        XCTAssertEqual(embeddedCleanupRecord.inputDisplayNames, ["source — Styled.mkv"])
+        XCTAssertEqual(
+            embeddedCleanupRecord.outputDisplayName,
+            "source — Embedded Cleaned.mkv"
+        )
+        XCTAssertTrue(
+            embeddedCleanupRecord.events.contains {
+                $0.state == .planned
+                    && $0.message?.contains("original position") == true
+            }
+        )
+        XCTAssertEqual(
+            embeddedCleanupRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
 

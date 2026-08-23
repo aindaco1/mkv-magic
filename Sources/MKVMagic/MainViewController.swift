@@ -17,6 +17,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             restoringEventIDs: Set<Int>
         )
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
+        case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
     }
 
     private enum SubtitleCleanupCandidate {
@@ -93,6 +94,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var workflowWindowController: WorkflowWindowController?
     private var subtitleCleanupWindowController: SubtitleCleanupWindowController?
     private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
+    private var embeddedSubtitleTrackPickerWindowController:
+        EmbeddedSubtitleTrackPickerWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -517,6 +520,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         guard let asset = selectedAsset, Self.canCleanSubtitle(asset),
             let parentWindow = view.window
         else { return }
+        guard Self.isStandaloneTextSubtitle(asset) else {
+            presentEmbeddedSubtitleCleanup(asset: asset, parentWindow: parentWindow)
+            return
+        }
         statusLabel.stringValue = "Reading \(asset.sourceURL.lastPathComponent)…"
         cleanSubtitleButton.isEnabled = false
         Task {
@@ -583,6 +590,117 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue =
                     "Could not preview subtitle: \(error.localizedDescription)"
                 cleanSubtitleButton.isEnabled = true
+                clearPendingChange()
+            }
+        }
+    }
+
+    private func presentEmbeddedSubtitleCleanup(asset: MediaAsset, parentWindow: NSWindow) {
+        let tracks = EmbeddedTextSubtitlePolicy.editableTracks(in: asset)
+        guard !tracks.isEmpty else { return }
+        if tracks.count == 1, let trackUID = tracks[0].uid {
+            previewEmbeddedSubtitleCleanup(
+                asset: asset,
+                trackUID: trackUID,
+                parentWindow: parentWindow
+            )
+            return
+        }
+        let controller = EmbeddedSubtitleTrackPickerWindowController(tracks: tracks)
+        embeddedSubtitleTrackPickerWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] trackUID in
+            guard let self else { return }
+            self.embeddedSubtitleTrackPickerWindowController = nil
+            guard let trackUID else {
+                self.refresh()
+                return
+            }
+            guard self.selectedAsset?.id == asset.id else {
+                self.clearPendingChange()
+                self.refresh()
+                return
+            }
+            self.previewEmbeddedSubtitleCleanup(
+                asset: asset,
+                trackUID: trackUID,
+                parentWindow: parentWindow
+            )
+        }
+    }
+
+    private func previewEmbeddedSubtitleCleanup(
+        asset: MediaAsset,
+        trackUID: UInt64,
+        parentWindow: NSWindow
+    ) {
+        statusLabel.stringValue = "Extracting embedded subtitle for review…"
+        cleanSubtitleButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewEmbeddedSubtitleCleanup(
+                    in: asset,
+                    trackUID: trackUID
+                )
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                guard preview.cleanupChangeCount > 0 else {
+                    statusLabel.stringValue =
+                        "This embedded \(preview.format.displayName) subtitle is already clean"
+                    impactLabel.stringValue = "No changes needed"
+                    cleanSubtitleButton.isEnabled = true
+                    clearPendingChange()
+                    return
+                }
+                let controller = SubtitleCleanupWindowController(preview: preview)
+                subtitleCleanupWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] restoredIDs in
+                    guard let self else { return }
+                    self.subtitleCleanupWindowController = nil
+                    self.cleanSubtitleButton.isEnabled = true
+                    guard let restoredIDs else {
+                        self.refresh()
+                        return
+                    }
+                    guard self.selectedAsset?.id == asset.id else {
+                        self.clearPendingChange()
+                        self.refresh()
+                        return
+                    }
+                    guard
+                        Self.embeddedPreviewHasRemainingText(
+                            preview,
+                            restoringIDs: restoredIDs
+                        )
+                    else {
+                        self.impactLabel.stringValue = "Restore at least one subtitle event"
+                        self.clearPendingChange()
+                        return
+                    }
+                    let appliedCount = preview.cleanupChangeCount - restoredIDs.count
+                    guard appliedCount > 0 else {
+                        self.impactLabel.stringValue = "No cleanup changes selected"
+                        self.clearPendingChange()
+                        return
+                    }
+                    self.pendingChange = .embeddedSubtitle(
+                        preview,
+                        restoringIDs: restoredIDs
+                    )
+                    self.pendingAssetID = asset.id
+                    self.impactLabel.stringValue =
+                        "0 video encodes • 1 embedded \(preview.format.displayName) track replaced in place • \(appliedCount) reviewed changes"
+                    self.statusLabel.stringValue = "Embedded subtitle cleanup plan ready"
+                    self.runButton.isEnabled = true
+                    self.runButton.toolTip =
+                        "Remux once, restore the original track UID and position, verify the MKV and extracted subtitle, then commit it."
+                }
+            } catch {
+                statusLabel.stringValue =
+                    "Could not preview embedded subtitle: \(error.localizedDescription)"
+                cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
                 clearPendingChange()
             }
         }
@@ -733,6 +851,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isSubtitleMux = false
         }
+        let isEmbeddedSubtitleCleanup: Bool
+        if case .embeddedSubtitle = pendingChange {
+            isEmbeddedSubtitleCleanup = true
+        } else {
+            isEmbeddedSubtitleCleanup = false
+        }
         panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = "Save Verified Copy"
         panel.canCreateDirectories = true
@@ -741,6 +865,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 for: asset.sourceURL)
         } else if isSubtitleMux {
             panel.nameFieldStringValue = OutputNamingPolicy.subtitledFilename(for: asset.sourceURL)
+        } else if isEmbeddedSubtitleCleanup {
+            panel.nameFieldStringValue = OutputNamingPolicy.cleanedMKVFilename(for: asset.sourceURL)
         } else {
             panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
         }
@@ -748,7 +874,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let outputExtension =
             isSubtitleCleanup
             ? asset.sourceURL.pathExtension.lowercased()
-            : (isSubtitleMux ? "mkv" : asset.sourceURL.pathExtension)
+            : ((isSubtitleMux || isEmbeddedSubtitleCleanup)
+                ? "mkv" : asset.sourceURL.pathExtension)
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -814,6 +941,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         in: asset,
                         subtitlePreview: preview,
                         metadata: metadata,
+                        destinationURL: destinationURL
+                    ).sourceURL
+                case .embeddedSubtitle(let preview, let restoringIDs):
+                    outputURL = try await model.cleanEmbeddedSubtitle(
+                        preview: preview,
+                        restoringIDs: restoringIDs,
                         destinationURL: destinationURL
                     ).sourceURL
                 }
@@ -964,9 +1097,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             : "No deterministic English-library subtitle removals are suggested."
         cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
         cleanSubtitleButton.toolTip =
-            cleanSubtitleButton.isEnabled
+            Self.isStandaloneTextSubtitle(asset)
             ? "Normalize and review deterministic SRT/ASS/SSA text cleanup without changing timing or styles."
-            : "Text cleanup is available when an inspected SRT, ASS, or SSA file is selected."
+            : (cleanSubtitleButton.isEnabled
+                ? "Extract, review, and replace one embedded SRT/ASS/SSA track in a verified zero-encode MKV copy."
+                : "Text cleanup requires a standalone subtitle or an MKV with an editable SRT, ASS, or SSA track.")
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         addSubtitleButton.toolTip =
             addSubtitleButton.isEnabled
@@ -1071,7 +1206,25 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private static func canCleanSubtitle(_ asset: MediaAsset) -> Bool {
+        isStandaloneTextSubtitle(asset)
+            || (MatroskaEditingPolicy.supports(asset)
+                && !EmbeddedTextSubtitlePolicy.editableTracks(in: asset).isEmpty)
+    }
+
+    private static func isStandaloneTextSubtitle(_ asset: MediaAsset) -> Bool {
         ["srt", "ass", "ssa"].contains(asset.sourceURL.pathExtension.lowercased())
+    }
+
+    private static func embeddedPreviewHasRemainingText(
+        _ preview: EmbeddedSubtitleCleanupPreview,
+        restoringIDs: Set<Int>
+    ) -> Bool {
+        switch preview {
+        case .subRip(let preview):
+            !preview.cleanup.document(restoringCueIDs: restoringIDs).cues.isEmpty
+        case .advanced(let preview):
+            !preview.cleanup.document(restoringEventIDs: restoringIDs).events.isEmpty
+        }
     }
 
     private static func canAddExternalSubtitle(to asset: MediaAsset) -> Bool {
@@ -1113,5 +1266,9 @@ enum OutputNamingPolicy {
 
     static func subtitledFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Subtitled.mkv"
+    }
+
+    static func cleanedMKVFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Cleaned.mkv"
     }
 }

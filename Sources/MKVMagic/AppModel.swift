@@ -17,6 +17,7 @@ final class AppModel {
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
         case saved(CompiledSavedWorkflow)
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
+        case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
 
         var workflowID: UUID {
             switch self {
@@ -24,6 +25,7 @@ final class AppModel {
             case .trackRemoval(_, let workflowID, _): workflowID
             case .saved(let workflow): workflow.workflowID
             case .externalSubtitle: AppModel.externalSubtitleMuxWorkflowID
+            case .embeddedSubtitle: AppModel.embeddedSubtitleCleanupWorkflowID
             }
         }
 
@@ -34,6 +36,8 @@ final class AppModel {
             case .saved(let workflow): workflow.workflowName
             case .externalSubtitle(let preview, _):
                 "Add external \(preview.format.displayName) subtitle"
+            case .embeddedSubtitle(let preview, _):
+                "Clean embedded \(preview.format.displayName) subtitle"
             }
         }
 
@@ -47,6 +51,8 @@ final class AppModel {
                     : "All video-affecting steps are fused into one encode."
             case .externalSubtitle(let preview, _):
                 "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
+            case .embeddedSubtitle(let preview, _):
+                "Zero encodes; replace one reviewed embedded \(preview.format.displayName) track at its original position in one verified remux."
             }
         }
 
@@ -60,6 +66,8 @@ final class AppModel {
                     : "Applying all workflow steps to one temporary remux."
             case .externalSubtitle:
                 "Adding one reviewed subtitle to a temporary MKV remux."
+            case .embeddedSubtitle:
+                "Replacing one reviewed embedded subtitle in a temporary MKV remux."
             }
         }
 
@@ -127,6 +135,31 @@ final class AppModel {
             if accessed { sourceURL.stopAccessingSecurityScopedResource() }
         }
         return try await AdvancedSubtitleCleanupExecutor().preview(sourceURL: sourceURL)
+    }
+
+    func previewEmbeddedSubtitleCleanup(
+        in source: MediaAsset,
+        trackUID: UInt64
+    ) async throws -> EmbeddedSubtitleCleanupPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try await EmbeddedSubtitleCleanupExecutor(
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source, trackUID: trackUID)
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -328,6 +361,19 @@ final class AppModel {
             in: asset,
             destinationURL: destinationURL,
             edit: .externalSubtitle(subtitlePreview, metadata)
+        )
+    }
+
+    @discardableResult
+    func cleanEmbeddedSubtitle(
+        preview: EmbeddedSubtitleCleanupPreview,
+        restoringIDs: Set<Int>,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: preview.source,
+            destinationURL: destinationURL,
+            edit: .embeddedSubtitle(preview, restoringIDs: restoringIDs)
         )
     }
 
@@ -547,6 +593,27 @@ final class AppModel {
                         )
                     }
                 )
+            case .embeddedSubtitle(let preview, let restoringIDs):
+                let executor = EmbeddedSubtitleCleanupExecutor(
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    mkvextractURL: try catalog.url(for: .mkvextract),
+                    ffprobeURL: try catalog.url(for: .ffprobe),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    preview: preview,
+                    restoringIDs: restoringIDs,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    }
+                )
             }
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
@@ -683,6 +750,11 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? EmbeddedSubtitleCleanupError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         return "Edit stopped before a verified commit."
     }
 
@@ -729,6 +801,9 @@ final class AppModel {
     )!
     nonisolated private static let externalSubtitleMuxWorkflowID = UUID(
         uuidString: "5CB3529A-967E-4B11-81E2-E5D932F1B395"
+    )!
+    nonisolated private static let embeddedSubtitleCleanupWorkflowID = UUID(
+        uuidString: "C3A2A7DD-8C17-4A91-A9BC-9750F35A9C6F"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

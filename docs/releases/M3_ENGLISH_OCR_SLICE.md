@@ -2,8 +2,9 @@
 
 This records engineering acceptance of the first entirely local English OCR
 cleanup policy for external SRT, ASS, and SSA files. It is not acceptance of
-image-subtitle OCR, a general-purpose grammar checker, embedded-track cleanup,
-batch execution, real-library beta testing, or a public release.
+image-subtitle OCR, a general-purpose grammar checker, batch execution,
+real-library beta testing, or a public release. Embedded-track cleanup is
+accepted separately in `M3_EMBEDDED_SUBTITLE_SLICE.md`.
 
 ## User-facing scope
 
@@ -78,7 +79,7 @@ batch execution, real-library beta testing, or a public release.
 
 ## Still pending
 
-- Embedded text-subtitle extraction, cleanup, and remux workflow actions.
+- Embedded-cleanup saved-workflow and batch actions.
 - Additional curated OCR patterns informed by real-library false-positive and
   false-negative fixtures.
 - Packaged VoiceOver, full keyboard-only, physical Intel, and real-library beta

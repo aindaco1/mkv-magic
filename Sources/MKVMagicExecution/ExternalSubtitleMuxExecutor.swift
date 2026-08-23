@@ -370,7 +370,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
     }
 }
 
-private struct AdvancedSubtitleMuxPayloadVerifier {
+struct AdvancedSubtitleMuxPayloadVerifier {
     func verify(
         original: AdvancedSubStationAlphaDocument,
         extracted: AdvancedSubStationAlphaDocument
