@@ -8,7 +8,7 @@ import MKVMagicSystem
 import XCTest
 
 final class RealToolJoinNormalizationCommandTests: XCTestCase {
-    func testBundledFFmpegExecutesOneHEVCGenerationForTwoDifferentCanvases() async throws {
+    func testBundledFFmpegAndVerifiedExecutorNormalizeTwoDifferentCanvases() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
         }
@@ -130,6 +130,34 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 )
             )
             XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+
+            let executor = JoinNormalizationExecutor(
+                ffmpegURL: ffmpegURL,
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            )
+            let committedURL = root.appendingPathComponent("verified-normalized-video.mkv")
+            let committed = try await executor.execute(
+                preview: preview,
+                destinationURL: committedURL
+            )
+            XCTAssertEqual(committed.sourceURL, committedURL)
+            XCTAssertEqual(committed.tracks.count, 1)
+            XCTAssertEqual(committed.tracks[0].codec, "hevc")
+            XCTAssertEqual(
+                committed.tracks[0].dimensions,
+                MediaDimensions(width: 80, height: 64)
+            )
+            XCTAssertEqual(committed.tracks[0].bitDepth, 10)
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
         }
     }
 
@@ -251,6 +279,32 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 )
             )
             XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+
+            let executor = JoinNormalizationExecutor(
+                ffmpegURL: ffmpegURL,
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            )
+            let committedURL = root.appendingPathComponent("verified-normalized-audio.mkv")
+            let committed = try await executor.execute(
+                preview: preview,
+                destinationURL: committedURL
+            )
+            XCTAssertEqual(committed.sourceURL, committedURL)
+            XCTAssertEqual(committed.tracks.count, 1)
+            XCTAssertEqual(committed.tracks[0].codec, "aac")
+            XCTAssertEqual(committed.tracks[0].channels, 6)
+            XCTAssertEqual(committed.tracks[0].channelLayout, "5.1")
+            XCTAssertEqual(committed.tracks[0].sampleRate, 48_000)
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
         }
     }
 

@@ -869,9 +869,13 @@ choice resolver and pure FFmpeg compiler now turn exact SDR video and AAC layout
 decisions into one filter graph and one process, with no repeated encode stage;
 explicit missing-audio approval produces exact-duration silence. Bundled-tool
 fixtures execute and decode both HEVC video and stereo-to-surround AAC results.
-Manual mapping, native choice controls, attachment choices, final MKV assembly,
-strict normalization verification/commit, fast/exact trimming, and join-boundary
-decode spot checks remain before the M5 gate is complete.
+The internal executor now binds every source filesystem revision, runs FFmpeg
+once, semantically verifies the encoded-only Matroska stream bundle before
+commit and after reopen, and refuses changed sources, missing timelines, wrong
+duration/lane/codec/layout/color facts, or unexpected chapters and attachments.
+Manual mapping, native choice controls, attachment choices, final user-facing
+MKV assembly, fast/exact trimming, and join-boundary decode spot checks remain
+before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

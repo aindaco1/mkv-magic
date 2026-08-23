@@ -1,9 +1,10 @@
 # M5 fused common-format command slice
 
-This records engineering acceptance of the exact-choice resolver and pure
-FFmpeg command compiler for common-format joins. It does not claim a native
-choice screen, a complete joined MKV, transactional execution, HDR conversion,
-subtitle conversion, public release, or physical Intel acceptance.
+This records engineering acceptance of the exact-choice resolver, pure FFmpeg
+command compiler, and its later verified intermediate-bundle executor for
+common-format joins. It does not claim a native choice screen, a complete joined
+MKV, HDR conversion, subtitle conversion, public release, or physical Intel
+acceptance.
 
 ## Revision-bound choices
 
@@ -55,6 +56,27 @@ silence. HDR10 preservation or tone mapping remains blocked until its pixel,
 color, and metadata verification contract is complete. Dolby Vision and
 image-subtitle conversion retain their existing fail-closed behavior.
 
+## Verified intermediate execution
+
+- Every inspected source is bound to file size, modification time, and stable
+  filesystem identity before FFmpeg starts. A source changed before or during
+  processing invalidates the preview and removes the private temporary output.
+- The executor runs the fused command exactly once. It requires a known positive
+  duration for every part and never asks FFmpeg to overwrite a destination.
+- The encoded-only Matroska bundle must contain exactly the planned video lanes
+  followed by planned audio lanes. Video codec, coded and display canvas, bit
+  depth, empty HDR set, and BT.709 limited-range signaling must match; AAC
+  channel count, exact layout, and sample rate must match.
+- The inspected duration must equal the summed source timeline within a bounded
+  encode tolerance. Chapters, attachments, subtitle tracks, and other unplanned
+  structure are refused.
+- Only a non-empty bundle that passes the semantic audit can be atomically
+  committed. The committed path is reopened and audited again; a failure there
+  is reported as a saved-but-failed final audit instead of being mislabeled as
+  no output.
+- The shared verified-output pipeline now checks task cancellation at every
+  production, inspection, verification, and commit boundary for every executor.
+
 ## Regression evidence
 
 Pure regressions cover exact-choice completion, active encoder/AAC availability,
@@ -64,12 +86,13 @@ audio-layout conversion, exact-duration silence, missing filters, capability
 regression, existing output, and HDR refusal.
 
 Two bundled-tool tests create real Matroska inputs and execute the compiled
-commands. One joins different canvases into a single 10-bit HEVC generation; the
-other converts stereo plus 5.1 input into one 5.1 AAC lane. Both results inspect
-as expected, decode completely, and leave every source byte-identical. The full
-bundled-tool suite passes all 285 tests with zero skips and zero failures.
+commands and verified executor. One joins different canvases into a single
+10-bit HEVC generation; the other converts stereo plus 5.1 input into one 5.1
+AAC lane. Both results inspect as expected, decode completely, commit through a
+second semantic audit, and leave every source byte-identical. The full
+bundled-tool suite passes all 292 tests with zero skips and zero failures.
 
-The standard source gate passes all 285 tests with 17 intentional bundled-tool
+The standard source gate passes all 292 tests with 17 intentional bundled-tool
 skips and builds the Universal `arm64`/`x86_64` app. The isolated complete local
 gate also passes coverage collection, AddressSanitizer, ThreadSanitizer,
 inside-out signatures and entitlement checks, SBOM/checksums, ZIP/appcast
@@ -78,10 +101,8 @@ assembly, and verified sandboxed DMG packaging.
 ## Still pending
 
 - Compact native controls for exact file-specific choices.
-- A private transactional executor with progress and cancellation.
 - Final assembly of normalized streams with compatible packet-copy lanes,
   subtitles, selected attachments/metadata, and exact nested chapters.
-- Strict pre-commit and post-reopen output verification, including decode checks
-  around every source boundary.
+- Decode checks around every source boundary in the final assembled MKV.
 - HDR10 execution, pinned software AV1, private-library beta acceptance, and
   physical Intel performance acceptance.

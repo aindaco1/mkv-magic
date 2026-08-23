@@ -154,3 +154,8 @@ semantic versioning; public release tags are immutable and signed.
   packet-copy lanes for final assembly. Real bundled-tool fixtures prove HEVC
   fit-and-pad and stereo-to-surround AAC normalization, decode both outputs, and
   preserve every source byte.
+- Execute the fused normalization command through a revision-bound verified
+  transaction. Refuse missing timelines or sources changed before/during work;
+  validate duration, lane count/order, codec, canvas, display size, bit depth,
+  BT.709 SDR signaling, AAC layout/rate, and absent chapters/attachments before
+  commit and after reopen; and cancel safely at every shared pipeline boundary.

@@ -95,9 +95,14 @@ bound to every inspected source fact and compiled into one bounded FFmpeg graph:
 each affected video or audio lane is encoded exactly once, ordinary audio layouts
 can be normalized without an automatic downmix, and explicitly approved missing
 audio becomes exact-duration silence. Real bundled-tool fixtures decode the HEVC
-and AAC results and prove that source bytes do not change. The preview still does
-not enable saving because native choice controls, final packet-copy/subtitle/
-attachment/chapter assembly, and verified commit are not implemented yet.
+and AAC results and prove that source bytes do not change. The internal
+normalization executor now binds every source to a filesystem revision, invokes
+that graph once, verifies the intermediate stream bundle's exact encoded lanes,
+duration, Matroska structure, dimensions, bit depth, SDR color, audio layout,
+and sample rate, and atomically commits only after a second reopen audit. The
+preview still does not enable saving because native choice controls and final
+packet-copy/subtitle/attachment/chapter assembly into the one user-facing MKV
+are not implemented yet.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current

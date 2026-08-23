@@ -45,49 +45,6 @@ extension LosslessJoinExecutionError: LocalizedError {
     }
 }
 
-public struct LosslessJoinSourceRevision: Equatable, Sendable {
-    public let fileSize: Int64
-    public let modificationDate: Date
-    public let fileNumber: UInt64?
-    public let systemNumber: UInt64?
-
-    public init(
-        fileSize: Int64,
-        modificationDate: Date,
-        fileNumber: UInt64? = nil,
-        systemNumber: UInt64? = nil
-    ) {
-        self.fileSize = fileSize
-        self.modificationDate = modificationDate
-        self.fileNumber = fileNumber
-        self.systemNumber = systemNumber
-    }
-
-    static func read(_ rawURL: URL) throws -> Self {
-        let url = rawURL.standardizedFileURL
-        guard url.isFileURL, url.path.hasPrefix("/"),
-            let values = try? url.resourceValues(forKeys: [
-                .isRegularFileKey, .isSymbolicLinkKey,
-            ]),
-            values.isRegularFile == true, values.isSymbolicLink != true
-        else {
-            throw LosslessJoinExecutionError.invalidPath
-        }
-        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
-        guard let size = (attributes[.size] as? NSNumber)?.int64Value,
-            let modificationDate = attributes[.modificationDate] as? Date
-        else {
-            throw LosslessJoinExecutionError.invalidPath
-        }
-        return Self(
-            fileSize: size,
-            modificationDate: modificationDate,
-            fileNumber: (attributes[.systemFileNumber] as? NSNumber)?.uint64Value,
-            systemNumber: (attributes[.systemNumber] as? NSNumber)?.uint64Value
-        )
-    }
-}
-
 public struct LosslessJoinPreview: Equatable, Sendable {
     public let sources: [MediaAsset]
     public let mapping: JoinTrackMapping
@@ -255,7 +212,14 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
             mapping: mapping,
             chapters: chapters
         )
-        let revisions = try sources.map { try LosslessJoinSourceRevision.read($0.sourceURL) }
+        let revisions: [LosslessJoinSourceRevision]
+        do {
+            revisions = try sources.map {
+                try LosslessJoinSourceRevision.read($0.sourceURL)
+            }
+        } catch {
+            throw LosslessJoinExecutionError.invalidPath
+        }
         for (source, revision) in zip(sources, revisions) {
             if let inspectedSize = source.fileSize, inspectedSize != revision.fileSize {
                 throw LosslessJoinExecutionError.staleSource
@@ -357,7 +321,9 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
             throw LosslessJoinExecutionError.staleSource
         }
         for (source, expected) in zip(preview.sources, preview.sourceRevisions) {
-            guard try LosslessJoinSourceRevision.read(source.sourceURL) == expected else {
+            guard
+                (try? LosslessJoinSourceRevision.read(source.sourceURL)) == expected
+            else {
                 throw LosslessJoinExecutionError.staleSource
             }
         }
