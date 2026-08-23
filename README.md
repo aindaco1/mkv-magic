@@ -123,7 +123,18 @@ rebases the complete nested chapter tree, writes that reviewed tree to the
 temporary output, and verifies streams, metadata, attachments, duration,
 segment identity, and canonical re-extracted chapters before commit and after
 reopen. It rejects ordered editions and changed sources rather than guessing.
-The native thumbnail/numeric Trim window and frame-exact encoding path remain
+The internal Exact Trim path retains the user's numeric boundaries, encodes the
+BT.709 SDR video exactly once with the first selected encoder that passed the
+active local probe, and packet-copies every audio track by default. Explicit AAC
+conversion preserves each reviewed channel layout and sample rate while encoding
+each selected audio track once. Output-side seeking makes the reviewed boundary
+apply to copied audio as well as encoded video. The same transaction preserves
+track metadata and attachments, clips and rebases the exact nested chapter tree,
+removes only FFmpeg-synthesized statistics tags from a reviewed tag-free source,
+and repeats semantic and chapter audits after reopen. It currently fails closed
+for source tags, subtitle/data tracks, multiple video tracks, ordered editions,
+HDR/Dolby Vision, incomplete color/layout facts, unavailable encoders, and
+non-MKV inputs. The native thumbnail/numeric Fast/Exact Trim window remains
 pending.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1

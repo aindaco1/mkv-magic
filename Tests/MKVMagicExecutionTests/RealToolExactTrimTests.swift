@@ -1,0 +1,257 @@
+import CryptoKit
+import Foundation
+import MKVMagicCore
+import MKVMagicExecution
+import MKVMagicMedia
+import MKVMagicPlanning
+import MKVMagicSystem
+import XCTest
+
+final class RealToolExactTrimTests: XCTestCase {
+    func testBundledToolsExactTrimOnceAtRequestedTimesWithPreservedAudioAttachmentAndChapters()
+        async throws
+    {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard !capabilities.availableVideoPresets.isEmpty,
+            capabilities.h264VideoToolbox == .verified
+        else {
+            throw XCTSkip("No bundled Exact Trim and H.264 fixture encoder verified on this Mac")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-exact-trim"
+        ) { root in
+            let sourceURL = try await makeFixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner
+            )
+            let destinationURL = root.appendingPathComponent("Exact Trimmed.mkv")
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            XCTAssertEqual(source.tracks.map(\.kind), [.video, .audio])
+            XCTAssertEqual(source.attachments.count, 1)
+            XCTAssertEqual(source.chapterEntryCount, 1)
+            XCTAssertEqual(source.globalTagCount, 0)
+            XCTAssertEqual(source.trackTagCount, 0)
+
+            let planner = ExactTrimPlanner()
+            let choice = try XCTUnwrap(
+                planner.recommendedChoice(
+                    for: source,
+                    availableVideoPresets: capabilities.availableVideoPresets
+                )
+            )
+            let requested = MediaTrimRange(
+                start: MediaTime(nanoseconds: 3_250_000_000),
+                end: MediaTime(nanoseconds: 7_750_000_000)
+            )
+            let executor = ExactTrimExecutor(
+                ffmpegURL: ffmpegURL,
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try await executor.preview(
+                source: source,
+                range: requested,
+                choice: choice,
+                capabilities: capabilities
+            )
+
+            XCTAssertEqual(preview.resolvedPlan.range, requested)
+            XCTAssertEqual(preview.resolvedPlan.videoEncodeCount, 1)
+            XCTAssertEqual(preview.resolvedPlan.audioEncodeCount, 0)
+            XCTAssertEqual(preview.encodedAudioTrackIDs, [])
+            XCTAssertEqual(preview.copiedAudioTrackIDs, [source.tracks[1].id])
+            XCTAssertEqual(preview.trimmedChapters.editions[0].chapters[0].start, .zero)
+            XCTAssertEqual(
+                preview.trimmedChapters.editions[0].chapters[0].end,
+                MediaTime(nanoseconds: 4_500_000_000)
+            )
+            XCTAssertEqual(
+                preview.trimmedChapters.editions[0].chapters[0].children[1].start,
+                MediaTime(nanoseconds: 1_750_000_000)
+            )
+
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: destinationURL
+            )
+
+            XCTAssertEqual(output.sourceURL, destinationURL)
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])
+            XCTAssertEqual(output.tracks[0].codec, expectedCodec(choice.videoPreset))
+            XCTAssertEqual(output.tracks[1].codec, source.tracks[1].codec)
+            XCTAssertEqual(output.attachments.count, 1)
+            XCTAssertEqual(output.attachments[0].filename, "fixture.bin")
+            XCTAssertEqual(output.attachments[0].description, "Exact Trim fixture")
+            XCTAssertEqual(output.chapterEntryCount, 1)
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+            let duration = try XCTUnwrap(output.duration?.nanoseconds)
+            XCTAssertGreaterThanOrEqual(duration, 4_400_000_000)
+            XCTAssertLessThanOrEqual(duration, 4_600_000_000)
+
+            let outputChapters = try await ChapterEditExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            ).preview(source: output)
+            let codec = MatroskaChapterXMLCodec()
+            XCTAssertEqual(
+                try codec.serialize(outputChapters.original),
+                try codec.serialize(preview.trimmedChapters)
+            )
+
+            let decode = try await runner.run(
+                CommandRequest(
+                    executableURL: ffmpegURL,
+                    arguments: [
+                        "-hide_banner", "-nostdin", "-loglevel", "error",
+                        "-i", destinationURL.path,
+                        "-map", "0:v:0", "-map", "0:a:0", "-f", "null", "-",
+                    ],
+                    timeout: 120
+                )
+            )
+            XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+        }
+    }
+
+    private func makeFixture(
+        root: URL,
+        ffmpegURL: URL,
+        mkvpropeditURL: URL,
+        runner: FoundationCommandRunner
+    ) async throws -> URL {
+        let rawVideoURL = root.appendingPathComponent("frames.yuv")
+        let rawAudioURL = root.appendingPathComponent("audio.pcm")
+        let sourceURL = root.appendingPathComponent("Source.mkv")
+        let width = 128
+        let height = 96
+        let frameCount = 100
+        let bytesPerFrame = width * height * 3 / 2
+        var video = Data()
+        video.reserveCapacity(bytesPerFrame * frameCount)
+        for frame in 0..<frameCount {
+            video.append(Data(repeating: UInt8(16 + (frame % 32)), count: bytesPerFrame))
+        }
+        try video.write(to: rawVideoURL)
+        try Data(repeating: 0, count: 48_000 * 2 * 2 * 10).write(to: rawAudioURL)
+
+        let encode = try await runner.run(
+            CommandRequest(
+                executableURL: ffmpegURL,
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideoURL.path,
+                    "-f", "s16le", "-ar", "48000", "-ac", "2",
+                    "-i", rawAudioURL.path,
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-g", "20", "-bf", "0", "-b:v", "500000",
+                    "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-color_range", "tv",
+                    "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:a", "aac", "-b:a", "192000",
+                    "-metadata", "title=Exact Trim Fixture",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:a:0", "title=Original Mix",
+                    "-disposition:a:0", "default",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+
+        let chapterURL = root.appendingPathComponent("source-chapters.xml")
+        try MatroskaChapterXMLCodec().serialize(nestedChapters()).write(to: chapterURL)
+        let attachmentURL = root.appendingPathComponent("fixture.bin")
+        try Data("attachment payload".utf8).write(to: attachmentURL)
+        let edit = try await runner.run(
+            CommandRequest(
+                executableURL: mkvpropeditURL,
+                arguments: [
+                    "--abort-on-warnings", sourceURL.path,
+                    "--edit", "track:v1",
+                    "--set", "color-matrix-coefficients=1",
+                    "--set", "color-range=1",
+                    "--set", "color-transfer-characteristics=1",
+                    "--set", "color-primaries=1",
+                    "--chapters", chapterURL.path,
+                    "--attachment-name", "fixture.bin",
+                    "--attachment-mime-type", "application/octet-stream",
+                    "--attachment-description", "Exact Trim fixture",
+                    "--add-attachment", attachmentURL.path,
+                    "--tags", "all:",
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(edit.exitCode, 0, edit.standardError.text)
+        return sourceURL
+    }
+
+    private func nestedChapters() -> MatroskaChapterDocument {
+        let duration = MediaTime(nanoseconds: 10_000_000_000)
+        return MatroskaChapterDocument(editions: [
+            MatroskaChapterEdition(
+                isDefault: true,
+                chapters: [
+                    MatroskaChapterAtom(
+                        start: .zero,
+                        end: duration,
+                        displays: [ChapterDisplay(title: "Feature")],
+                        children: [
+                            MatroskaChapterAtom(
+                                start: .zero,
+                                end: MediaTime(nanoseconds: 5_000_000_000),
+                                displays: [ChapterDisplay(title: "First Half")]
+                            ),
+                            MatroskaChapterAtom(
+                                start: MediaTime(nanoseconds: 5_000_000_000),
+                                end: duration,
+                                displays: [ChapterDisplay(title: "Second Half")]
+                            ),
+                        ]
+                    )
+                ]
+            )
+        ])
+    }
+
+    private func expectedCodec(_ preset: VideoPreset) -> String {
+        switch preset {
+        case .av1Quality: "av1"
+        case .hevcCompatibility: "hevc"
+        case .h264Compatibility: "h264"
+        case .proRes: "prores"
+        }
+    }
+}

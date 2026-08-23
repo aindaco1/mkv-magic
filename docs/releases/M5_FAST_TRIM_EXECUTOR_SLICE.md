@@ -67,16 +67,19 @@ nested chapters. A requested 3–7 second range is reviewed as 4–8 seconds,
 executed by the production transaction, decoded successfully, and re-extracted
 with exact nested chapter equality while the source SHA-256 remains unchanged.
 
-The suite contains 316 tests. The standard source run passes with 19 intentional
-bundled-tool skips; the assembled Universal runtime runs all 316 with zero skips
-and zero failures. Source validation also passes formatting, security/static
-checks, and Universal `arm64`/`x86_64` compilation.
+At acceptance of this slice, the suite contained 316 tests. The standard source
+run passed with 19 intentional bundled-tool skips; the assembled Universal
+runtime ran all 316 with zero skips and zero failures. Source validation also
+passed formatting, security/static checks, and Universal `arm64`/`x86_64`
+compilation.
 
 ## Still pending
 
 - Native thumbnails plus numeric in/out fields and an explicit Fast/Exact mode
   switch.
-- Frame-exact one-generation video encoding with copied or deliberately encoded
-  non-video streams and the same chapter/output audit contract.
 - Multiple-video policy, selected-range splitting, Chapter Studio keyframe
   snapping, private-library beta, and physical Intel performance acceptance.
+
+The one-generation Exact Trim executor was subsequently accepted separately in
+`M5_EXACT_TRIM_EXECUTOR_SLICE.md`; that does not broaden this Fast Trim slice's
+own claims.

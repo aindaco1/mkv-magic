@@ -1,5 +1,6 @@
 import Foundation
 import MKVMagicCore
+import MKVMagicPlanning
 
 public enum OutputVerificationError: Error, Equatable, Sendable {
     case emptyOutput
@@ -408,6 +409,229 @@ public struct FastTrimOutputVerifier: Sendable {
         else {
             throw FastTrimVerificationError.segmentIdentityChanged
         }
+    }
+}
+
+public enum ExactTrimVerificationError: Error, Equatable, Sendable {
+    case emptyOutput
+    case wrongContainer
+    case wrongDuration
+    case wrongTrackCount
+    case wrongTrackOrder
+    case videoMismatch
+    case audioMismatch(trackID: Int)
+    case trackMetadataMismatch(trackID: Int)
+    case attachmentsChanged
+    case metadataChanged
+    case chaptersChanged
+    case segmentIdentityChanged
+}
+
+extension ExactTrimVerificationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .emptyOutput: "The exact-trimmed MKV is empty."
+        case .wrongContainer: "Exact Trim did not create a Matroska MKV."
+        case .wrongDuration: "The exact-trimmed duration does not match the requested range."
+        case .wrongTrackCount: "Exact Trim added or removed a media track."
+        case .wrongTrackOrder: "Exact Trim changed the reviewed media-track order."
+        case .videoMismatch: "The exact-trimmed video does not match its encoding choice."
+        case .audioMismatch(let trackID):
+            "The exact-trimmed audio for source track \(trackID) changed unexpectedly."
+        case .trackMetadataMismatch(let trackID):
+            "Track \(trackID) lost reviewed language, name, or disposition metadata."
+        case .attachmentsChanged: "Exact Trim did not preserve every attachment."
+        case .metadataChanged: "Exact Trim changed unreviewed metadata or tags."
+        case .chaptersChanged: "The exact-trimmed chapter count does not match the review."
+        case .segmentIdentityChanged:
+            "The exact-trimmed MKV did not receive a new segment identity."
+        }
+    }
+}
+
+public struct ExactTrimOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        resolvedPlan: ResolvedExactTrimPlan,
+        chapters: MatroskaChapterDocument,
+        output: MediaAsset
+    ) throws {
+        let original = resolvedPlan.source
+        guard output.fileSize ?? 0 > 0 else { throw ExactTrimVerificationError.emptyOutput }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw ExactTrimVerificationError.wrongContainer
+        }
+        let expectedDuration = resolvedPlan.range.end.nanoseconds.subtractingReportingOverflow(
+            resolvedPlan.range.start.nanoseconds
+        )
+        guard !expectedDuration.overflow,
+            let actualDuration = output.duration,
+            actualDuration.nanoseconds >= 0
+        else {
+            throw ExactTrimVerificationError.wrongDuration
+        }
+        let difference = actualDuration.nanoseconds.subtractingReportingOverflow(
+            expectedDuration.partialValue
+        )
+        guard !difference.overflow, difference.partialValue.magnitude <= 100_000_000 else {
+            throw ExactTrimVerificationError.wrongDuration
+        }
+
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == originalTracks.count else {
+            throw ExactTrimVerificationError.wrongTrackCount
+        }
+        guard outputTracks.map(\.kind) == originalTracks.map(\.kind) else {
+            throw ExactTrimVerificationError.wrongTrackOrder
+        }
+        for (sourceTrack, outputTrack) in zip(originalTracks, outputTracks) {
+            guard trackMetadataMatches(outputTrack, sourceTrack) else {
+                throw ExactTrimVerificationError.trackMetadataMismatch(
+                    trackID: sourceTrack.id
+                )
+            }
+            switch sourceTrack.kind {
+            case .video:
+                guard
+                    videoMatches(
+                        outputTrack,
+                        source: sourceTrack,
+                        preset: resolvedPlan.choice.videoPreset
+                    )
+                else {
+                    throw ExactTrimVerificationError.videoMismatch
+                }
+            case .audio:
+                guard
+                    audioMatches(
+                        outputTrack,
+                        source: sourceTrack,
+                        policy: resolvedPlan.choice.audioPolicy
+                    )
+                else {
+                    throw ExactTrimVerificationError.audioMismatch(trackID: sourceTrack.id)
+                }
+            default:
+                throw ExactTrimVerificationError.wrongTrackOrder
+            }
+        }
+        try verifyAttachments(original.attachments, output.attachments)
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == 0,
+            output.trackTagCount == 0
+        else {
+            throw ExactTrimVerificationError.metadataChanged
+        }
+        let expectedTopLevelCount = chapters.editions.reduce(0) {
+            $0 + $1.chapters.count
+        }
+        guard output.chapterEntryCount == expectedTopLevelCount else {
+            throw ExactTrimVerificationError.chaptersChanged
+        }
+        guard let outputUID = output.segmentUID,
+            original.segmentUID == nil || outputUID != original.segmentUID
+        else {
+            throw ExactTrimVerificationError.segmentIdentityChanged
+        }
+    }
+
+    private func videoMatches(
+        _ actual: MediaTrack,
+        source: MediaTrack,
+        preset: VideoPreset
+    ) -> Bool {
+        let expectedCodec: String
+        let expectedBitDepth: Int
+        switch preset {
+        case .av1Quality:
+            expectedCodec = "av1"
+            expectedBitDepth = 10
+        case .hevcCompatibility:
+            expectedCodec = "hevc"
+            expectedBitDepth = 10
+        case .h264Compatibility:
+            expectedCodec = "h264"
+            expectedBitDepth = 8
+        case .proRes:
+            expectedCodec = "prores"
+            expectedBitDepth = 10
+        }
+        return normalized(actual.codec) == expectedCodec
+            && actual.dimensions == source.dimensions
+            && actual.bitDepth == expectedBitDepth
+            && actual.hdrFormats.isEmpty
+            && isBT709SDR(actual)
+    }
+
+    private func audioMatches(
+        _ actual: MediaTrack,
+        source: MediaTrack,
+        policy: ExactTrimAudioPolicy
+    ) -> Bool {
+        switch policy {
+        case .packetCopy:
+            return ExactTrimCopiedAudioSnapshot(actual)
+                == ExactTrimCopiedAudioSnapshot(source)
+        case .aacPreserveLayout:
+            return normalized(actual.codec) == "aac"
+                && actual.channels == source.channels
+                && actual.sampleRate == source.sampleRate
+                && normalized(actual.channelLayout) == normalized(source.channelLayout)
+        }
+    }
+
+    private func trackMetadataMatches(_ actual: MediaTrack, _ expected: MediaTrack) -> Bool {
+        let actualLanguage = try? TrackLanguageTag.canonical(actual.language ?? "und")
+        let expectedLanguage = try? TrackLanguageTag.canonical(expected.language ?? "und")
+        return actualLanguage == expectedLanguage
+            && (actual.title ?? "") == (expected.title ?? "")
+            && actual.isDefault == expected.isDefault
+            && actual.isForced == expected.isForced
+            && actual.isEnabled == expected.isEnabled
+            && actual.isCommentary == expected.isCommentary
+            && actual.isHearingImpaired == expected.isHearingImpaired
+            && actual.isVisualImpaired == expected.isVisualImpaired
+            && actual.isOriginal == expected.isOriginal
+            && actual.isTextDescription == expected.isTextDescription
+    }
+
+    private func verifyAttachments(
+        _ expected: [MediaAttachment],
+        _ actual: [MediaAttachment]
+    ) throws {
+        var unmatched = actual
+        for attachment in expected {
+            guard
+                let index = unmatched.firstIndex(where: {
+                    $0.filename == attachment.filename
+                        && $0.mimeType == attachment.mimeType
+                        && $0.size == attachment.size
+                        && $0.description == attachment.description
+                })
+            else {
+                throw ExactTrimVerificationError.attachmentsChanged
+            }
+            unmatched.remove(at: index)
+        }
+        guard unmatched.isEmpty else {
+            throw ExactTrimVerificationError.attachmentsChanged
+        }
+    }
+
+    private func isBT709SDR(_ track: MediaTrack) -> Bool {
+        guard let color = track.colorInfo else { return false }
+        return normalized(color.range) == "tv"
+            && normalized(color.primaries) == "bt709"
+            && normalized(color.transfer) == "bt709"
+            && normalized(color.matrix) == "bt709"
+    }
+
+    private func normalized(_ value: String?) -> String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
     }
 }
 
@@ -924,6 +1148,28 @@ private struct RemuxTrackSnapshot: Equatable {
         colorInfo = track.colorInfo
         hdrFormats = track.hdrFormats
         tags = track.tags.removingTrackRemuxProvenance
+    }
+}
+
+private struct ExactTrimCopiedAudioSnapshot: Equatable {
+    let codec: String
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+    let bitDepth: Int?
+
+    init(_ track: MediaTrack) {
+        codec = track.codec.lowercased()
+        codecID = track.codecID?.lowercased()
+        profile = track.profile
+        level = track.level
+        channels = track.channels
+        channelLayout = track.channelLayout?.lowercased()
+        sampleRate = track.sampleRate
+        bitDepth = track.bitDepth
     }
 }
 

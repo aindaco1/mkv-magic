@@ -891,9 +891,22 @@ executes `mkvmerge --split parts:` without encoding. It clips and rebases the
 full nested chapter tree, regenerates retained chapter identities, refuses
 ordered editions, binds the source and original chapter digest to review, and
 audits copied streams, metadata, attachments, duration, segment identity, and
-canonical nested chapters before commit and after reopen. Manual mapping,
-native choice/trim controls and execution wiring, frame-exact trimming, and
-join-boundary decode spot checks remain before the M5 gate is complete.
+canonical nested chapters before commit and after reopen. The internal Exact
+Trim path now holds the requested range exactly, selects only an encoder that
+passed the active local capability probe, and compiles one FFmpeg invocation
+with one video generation. Audio is packet-copied by default; explicit AAC
+conversion retains reviewed channel count, layout, and sample rate and encodes
+each audio track once. Output-side seeking applies the in-point to copied audio,
+avoiding the pre-in packets retained by input-side accurate seeking. The executor
+preserves reviewed track metadata and attachments, replaces FFmpeg-generated
+statistics tags only after requiring a tag-free source, installs the clipped and
+rebased nested chapter tree, and verifies duration, streams, metadata,
+attachments, tags, chapter count/XML, and segment identity before commit and
+again after reopen. It currently fails closed for subtitle/data tracks, multiple
+video tracks, source tags, ordered chapters, HDR/Dolby Vision, incomplete facts,
+unavailable encoders, and non-MKV inputs. Manual mapping, native choice/trim
+controls and execution wiring, and join-boundary decode spot checks remain before
+the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

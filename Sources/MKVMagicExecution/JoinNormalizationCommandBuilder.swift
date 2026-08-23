@@ -164,7 +164,7 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         + "force_original_aspect_ratio=decrease:flags=lanczos,"
                         + "pad=w=\(choice.canvas.width):h=\(choice.canvas.height):"
                         + "x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
-                        + "format=\(filterPixelFormat(choice.preset)),setsar=1,"
+                        + "format=\(FFmpegSDRVideoEncoderArguments().filterPixelFormat(for: choice.preset)),setsar=1,"
                         + "tpad=stop_mode=clone:stop_duration=\(decimalSeconds(duration)),"
                         + "trim=duration=\(decimalSeconds(duration)),"
                         + "setpts=PTS-STARTPTS[\(label)]"
@@ -263,13 +263,18 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                 throw JoinNormalizationCommandError.unavailableEncoder(output.choice.preset)
             }
             arguments.append(contentsOf: ["-map", "[\(output.label)]"])
-            arguments.append(
-                contentsOf: try videoEncoderArguments(
-                    outputIndex: outputIndex,
-                    encoder: encoder,
-                    choice: output.choice
+            do {
+                arguments.append(
+                    contentsOf: try FFmpegSDRVideoEncoderArguments().make(
+                        outputIndex: outputIndex,
+                        encoder: encoder,
+                        preset: output.choice.preset,
+                        rateControl: output.choice.rateControl
+                    )
                 )
-            )
+            } catch {
+                throw JoinNormalizationCommandError.inconsistentPlan
+            }
         }
         for (outputIndex, output) in audioOutputs.enumerated() {
             guard let aacEncoder = capabilities.aacEncoder, capabilities.aac == .verified else {
@@ -298,58 +303,6 @@ public struct JoinNormalizationCommandBuilder: Sendable {
             encodedVideoLaneIndices: videoOutputs.map(\.laneIndex),
             encodedAudioLaneIndices: audioOutputs.map(\.laneIndex)
         )
-    }
-
-    private func videoEncoderArguments(
-        outputIndex: Int,
-        encoder: String,
-        choice: JoinVideoTargetChoice
-    ) throws -> [String] {
-        var arguments = ["-c:v:\(outputIndex)", encoder]
-        switch (choice.preset, choice.rateControl) {
-        case (.av1Quality, .constantQuality(let quality)):
-            arguments.append(contentsOf: [
-                "-crf:v:\(outputIndex)", String(quality),
-                "-b:v:\(outputIndex)", "0",
-                "-pix_fmt:v:\(outputIndex)", "yuv420p10le",
-            ])
-        case (.hevcCompatibility, .averageBitrate(let bitrate)):
-            arguments.append(contentsOf: [
-                "-profile:v:\(outputIndex)", "main10",
-                "-b:v:\(outputIndex)", String(bitrate),
-                "-pix_fmt:v:\(outputIndex)", "p010le",
-            ])
-        case (.h264Compatibility, .averageBitrate(let bitrate)):
-            arguments.append(contentsOf: [
-                "-profile:v:\(outputIndex)", "high",
-                "-b:v:\(outputIndex)", String(bitrate),
-                "-pix_fmt:v:\(outputIndex)", "yuv420p",
-            ])
-        case (.proRes, .codecDefault):
-            arguments.append(contentsOf: [
-                "-profile:v:\(outputIndex)", "3",
-                "-pix_fmt:v:\(outputIndex)", "yuv422p10le",
-            ])
-        default:
-            throw JoinNormalizationCommandError.inconsistentPlan
-        }
-        arguments.append(contentsOf: [
-            "-fps_mode:v:\(outputIndex)", "passthrough",
-            "-color_primaries:v:\(outputIndex)", "bt709",
-            "-color_trc:v:\(outputIndex)", "bt709",
-            "-colorspace:v:\(outputIndex)", "bt709",
-            "-color_range:v:\(outputIndex)", "tv",
-        ])
-        return arguments
-    }
-
-    private func filterPixelFormat(_ preset: VideoPreset) -> String {
-        switch preset {
-        case .av1Quality: "yuv420p10le"
-        case .hevcCompatibility: "p010le"
-        case .h264Compatibility: "yuv420p"
-        case .proRes: "yuv422p10le"
-        }
     }
 
     private func safeAudioLayout(_ layout: String, channels: Int) -> String? {
