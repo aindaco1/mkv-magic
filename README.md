@@ -73,8 +73,11 @@ codec/parameter or language/role matches, leaves indistinguishable tracks in
 separate visible lanes, requires every appendable track exactly once, and
 classifies gaps or stream differences before work begins. A static
 `losslessCandidate` is not an execution guarantee: bundled `mkvmerge` and final
-output verification remain mandatory. The mapping table and join executor are
-still pending.
+output verification remain mandatory. The first non-UI executor can now hard
+join full, gap-free lossless candidates with explicit track mappings and the
+reviewed nested chapter composition through the verified-output transaction.
+Native mapping/ordering controls, trim execution, decode spot checks, attachment
+selection, and normalization remain pending.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

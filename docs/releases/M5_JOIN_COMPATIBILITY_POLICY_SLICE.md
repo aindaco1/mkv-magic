@@ -1,9 +1,10 @@
 # M5 join compatibility policy slice
 
 This records engineering acceptance of the pure joined-track mapping and
-lossless-append preflight policy. It does not claim a joined-group UI,
-`mkvmerge` executor, trim execution, common-format proposal screen, real-file
-join acceptance, physical Intel testing, or a public signed/notarized release.
+lossless-append preflight policy. The later executor slice is documented in
+`M5_LOSSLESS_JOIN_EXECUTOR_SLICE.md`; this document does not claim a joined-group
+UI, trim execution, common-format proposal screen, physical Intel testing, or a
+public signed/notarized release.
 
 ## Mapping contract
 
@@ -92,9 +93,9 @@ Primary references:
   and output metadata/attachment selection UI.
 - A common video/audio format proposal, mixed HDR/SDR decision surface, and
   user-confirmed gap behavior.
-- Explicit `mkvmerge --append-to` command rendering, hard-join execution, source
-  revision checks, progress/cancellation, and verified commit.
-- Re-extracted track/chapter comparison, decode checks around every join, and
-  exact one-output enforcement.
-- Real bundled-tool join fixtures, malformed/variable-rate/delayed-track
-  fixtures, private-library beta acceptance, and physical Intel smoke testing.
+- Native invocation of the full-file lossless executor, progress presentation,
+  and cancellation/retry controls.
+- Decode checks around every join, stream-copy fingerprints, and strict
+  verification mode.
+- Additional malformed/variable-rate/delayed-track fixtures, private-library
+  beta acceptance, and physical Intel smoke testing.

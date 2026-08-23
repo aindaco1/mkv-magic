@@ -258,6 +258,78 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
     }
 }
 
+public struct LosslessJoinOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        sources: [MediaAsset],
+        mapping: JoinTrackMapping,
+        chapters: JoinedChapterComposition,
+        output: MediaAsset
+    ) throws {
+        guard let firstSource = sources.first else {
+            throw OutputVerificationError.tracksChanged
+        }
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard let outputDuration = output.duration else {
+            throw OutputVerificationError.durationChanged
+        }
+        let toleranceResult = Int64(sources.count).multipliedReportingOverflow(by: 50_000_000)
+        let durationDifference = outputDuration.nanoseconds.subtractingReportingOverflow(
+            chapters.duration.nanoseconds
+        )
+        guard !toleranceResult.overflow,
+            !durationDifference.overflow,
+            outputDuration.nanoseconds >= 0,
+            durationDifference.partialValue.magnitude
+                <= UInt64(max(50_000_000, toleranceResult.partialValue))
+        else {
+            throw OutputVerificationError.durationChanged
+        }
+
+        let expectedTracks = try mapping.lanes.map { lane -> MediaTrack in
+            guard let firstTrackID = lane.trackIDsBySource.first,
+                let trackID = firstTrackID,
+                let track = firstSource.tracks.first(where: { $0.id == trackID })
+            else {
+                throw OutputVerificationError.tracksChanged
+            }
+            return track
+        }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard
+            outputTracks.map(RemuxTrackSnapshot.init)
+                == expectedTracks.map(RemuxTrackSnapshot.init)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+        guard output.attachments.isEmpty else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        let expectedTopLevelChapterCount = chapters.document.editions.reduce(0) {
+            $0 + $1.chapters.count
+        }
+        guard output.chapterEntryCount == expectedTopLevelChapterCount else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard
+            output.metadata.removingRemuxProvenance
+                == firstSource.metadata.removingRemuxProvenance,
+            output.globalTagCount == firstSource.globalTagCount,
+            output.trackTagCount == firstSource.trackTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        let sourceSegmentUIDs = Set(sources.compactMap(\.segmentUID))
+        guard let outputUID = output.segmentUID, !sourceSegmentUIDs.contains(outputUID) else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public struct EmbeddedSubtitleReplacementOutputVerifier: Sendable {
     public init() {}
 

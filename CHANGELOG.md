@@ -122,3 +122,8 @@ semantic versioning; public release tags are immutable and signed.
   duplicates stay visibly unresolved, stream differences are classified as
   confirmation, normalization, or unsupported, and final codec compatibility
   remains gated on bundled MKVToolNix plus output verification.
+- Add a verified full-file hard-join executor for gap-free lossless candidates.
+  Render explicit adjacent `mkvmerge --append-to` mappings, inject one reviewed
+  nested chapter document, suppress later-source structural metadata, bind all
+  sources to filesystem revisions, and inspect plus re-extract the result before
+  commit and after reopen without changing any source.
