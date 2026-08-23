@@ -10,6 +10,30 @@ enum AppHistoryLocation {
         fileManager: FileManager = .default,
         applicationSupportURL explicitApplicationSupportURL: URL? = nil
     ) throws -> JSONJobHistoryStore {
+        let appDirectory = try makeAppDirectory(
+            fileManager: fileManager,
+            applicationSupportURL: explicitApplicationSupportURL
+        )
+        return try JSONJobHistoryStore(
+            fileURL: appDirectory.appendingPathComponent("job-history.json"))
+    }
+
+    static func makeWorkflowStore(
+        fileManager: FileManager = .default,
+        applicationSupportURL explicitApplicationSupportURL: URL? = nil
+    ) throws -> JSONSavedWorkflowStore {
+        let appDirectory = try makeAppDirectory(
+            fileManager: fileManager,
+            applicationSupportURL: explicitApplicationSupportURL
+        )
+        return try JSONSavedWorkflowStore(
+            fileURL: appDirectory.appendingPathComponent("workflows.json"))
+    }
+
+    private static func makeAppDirectory(
+        fileManager: FileManager,
+        applicationSupportURL explicitApplicationSupportURL: URL?
+    ) throws -> URL {
         let applicationSupportURL: URL
         if let explicitApplicationSupportURL {
             applicationSupportURL = explicitApplicationSupportURL.standardizedFileURL
@@ -47,8 +71,7 @@ enum AppHistoryLocation {
             [.posixPermissions: 0o700],
             ofItemAtPath: appDirectory.path
         )
-        return try JSONJobHistoryStore(
-            fileURL: appDirectory.appendingPathComponent("job-history.json"))
+        return appDirectory
     }
 
     private static func isSafeDirectory(_ url: URL) throws -> Bool {

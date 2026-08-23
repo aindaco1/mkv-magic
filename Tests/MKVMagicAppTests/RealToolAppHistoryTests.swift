@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import MKVMagicCore
+import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
@@ -22,11 +23,14 @@ final class RealToolAppHistoryTests: XCTestCase {
         try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
         defer { try? FileManager.default.removeItem(at: fixtureRoot) }
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let subtitle = fixtureRoot.appendingPathComponent("french.srt")
         let source = fixtureRoot.appendingPathComponent("source.mkv")
         let output = fixtureRoot.appendingPathComponent("source — Edited.mkv")
         let trackOutput = fixtureRoot.appendingPathComponent("source — Track Edited.mkv")
+        let workflowOutput = fixtureRoot.appendingPathComponent("source — Workflow.mkv")
         let removalOutput = fixtureRoot.appendingPathComponent("source — Track Removed.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
+        try Data("1\n00:00:00,000 --> 00:00:00,500\nBonjour\n".utf8).write(to: subtitle)
 
         let createResult = try await runner.run(
             CommandRequest(
@@ -34,9 +38,12 @@ final class RealToolAppHistoryTests: XCTestCase {
                 arguments: [
                     "-hide_banner", "-loglevel", "error",
                     "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
-                    "-map", "0:a", "-map", "0:a", "-c:a", "aac",
+                    "-f", "srt", "-i", subtitle.path,
+                    "-map", "0:a", "-map", "0:a", "-map", "1:s",
+                    "-c:a", "aac", "-c:s", "srt",
                     "-metadata:s:a:0", "language=eng",
                     "-metadata:s:a:1", "language=spa",
+                    "-metadata:s:s:0", "language=fra",
                     "-metadata", "title=Original Title",
                     source.path,
                 ],
@@ -96,9 +103,31 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertTrue(editedTrack.isCommentary)
         XCTAssertTrue(editedTrack.isOriginal)
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
-        let removedTrackUID = try XCTUnwrap(trackOutputAsset.tracks.last?.uid)
-        let removalAsset = try await model.removeTracks(
+        let savedWorkflow = SavedWorkflow(
+            id: UUID(uuidString: "9B4FF1CE-EA70-46CD-8163-F3608F0BD65B")!,
+            name: "Prepare for Jellyfin",
+            steps: [
+                SavedWorkflowStep(action: .englishLibraryCleanup),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let compiledWorkflow = try SavedWorkflowCompiler().compile(
+            savedWorkflow,
+            for: trackOutputAsset
+        )
+        let workflowAsset = try await model.runSavedWorkflow(
+            compiledWorkflow,
             in: trackOutputAsset,
+            destinationURL: workflowOutput
+        )
+        XCTAssertNil(workflowAsset.metadata["title"])
+        XCTAssertEqual(workflowAsset.tracks.count, 2)
+        XCTAssertFalse(workflowAsset.tracks.contains { $0.kind == .subtitle })
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+
+        let removedTrackUID = try XCTUnwrap(workflowAsset.tracks.last?.uid)
+        let removalAsset = try await model.removeTracks(
+            in: workflowAsset,
             removal: TrackRemoval(trackUIDs: [removedTrackUID]),
             destinationURL: removalOutput
         )
@@ -108,7 +137,7 @@ final class RealToolAppHistoryTests: XCTestCase {
 
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 3)
+        XCTAssertEqual(records.count, 4)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
@@ -124,9 +153,22 @@ final class RealToolAppHistoryTests: XCTestCase {
             trackRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
-        let removalRecord = records[2]
+        let workflowRecord = records[2]
+        XCTAssertEqual(workflowRecord.workflowID, savedWorkflow.id)
+        XCTAssertEqual(workflowRecord.workflowName, "Prepare for Jellyfin")
+        XCTAssertEqual(workflowRecord.outputDisplayName, "source — Workflow.mkv")
+        XCTAssertTrue(
+            workflowRecord.events.contains {
+                $0.state == .planned && $0.message?.contains("one verified output") == true
+            }
+        )
+        XCTAssertEqual(
+            workflowRecord.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let removalRecord = records[3]
         XCTAssertEqual(removalRecord.workflowName, "Remove tracks")
-        XCTAssertEqual(removalRecord.inputDisplayNames, ["source — Track Edited.mkv"])
+        XCTAssertEqual(removalRecord.inputDisplayNames, ["source — Workflow.mkv"])
         XCTAssertEqual(removalRecord.outputDisplayName, "source — Track Removed.mkv")
         XCTAssertTrue(
             removalRecord.events.contains {

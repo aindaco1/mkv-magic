@@ -10,6 +10,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case segmentTitle(String?)
         case track(TrackMetadataEdit)
         case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
+        case savedWorkflow(CompiledSavedWorkflow)
     }
 
     private let model: AppModel
@@ -29,6 +30,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var historyWindowController: HistoryWindowController?
     private var trackEditorWindowController: TrackEditorWindowController?
     private var trackRemovalWindowController: TrackRemovalWindowController?
+    private var workflowWindowController: WorkflowWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -85,7 +87,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let stack = NSStackView(views: [
             title,
             sidebarLabel("Quick Actions", symbol: "wand.and.stars"),
-            sidebarLabel("Workflows", symbol: "square.stack.3d.up"),
+            sidebarButton(
+                "Workflows",
+                symbol: "square.stack.3d.up",
+                action: #selector(showWorkflows)
+            ),
             sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
             sidebarButton(
                 "History",
@@ -291,6 +297,62 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func showWorkflows() {
+        statusLabel.stringValue = "Loading workflows…"
+        Task {
+            do {
+                let workflows = try await model.loadWorkflows()
+                let controller = WorkflowWindowController(
+                    workflows: workflows,
+                    hasSelectedAsset: selectedAsset != nil,
+                    onSave: { [model] workflows in
+                        try await model.saveWorkflows(workflows)
+                    },
+                    onUse: { [weak self] workflow in
+                        self?.previewSavedWorkflow(workflow)
+                    }
+                )
+                workflowWindowController = controller
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                statusLabel.stringValue =
+                    workflows.isEmpty
+                    ? "Create your first portable workflow"
+                    : "Workflows loaded"
+            } catch {
+                statusLabel.stringValue = "Could not load workflows: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func previewSavedWorkflow(_ workflow: SavedWorkflow) {
+        guard let asset = selectedAsset else {
+            impactLabel.stringValue = "Select an inspected file first."
+            clearPendingChange()
+            return
+        }
+        do {
+            let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+            let stageSummary = compiled.plan.stages
+                .filter { $0.mechanism != .verify && $0.mechanism != .commit }
+                .map(\.mechanism.rawValue)
+                .joined(separator: " + ")
+            impactLabel.stringValue =
+                "\(compiled.plan.impact.videoEncodeCount) video encodes • \(stageSummary)"
+            pendingChange = .savedWorkflow(compiled)
+            pendingAssetID = asset.id
+            runButton.isEnabled = true
+            runButton.toolTip = compiled.summaries.joined(separator: "; ")
+            view.window?.makeKeyAndOrderFront(nil)
+        } catch SavedWorkflowCompilationError.noApplicableChanges {
+            impactLabel.stringValue = "No changes needed for this file"
+            clearPendingChange()
+        } catch {
+            impactLabel.stringValue = "Workflow cannot run: \(error.localizedDescription)"
+            clearPendingChange()
+        }
+    }
+
     private func inspect(_ urls: [URL]) {
         Task { await model.addFiles(urls) }
     }
@@ -472,6 +534,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                             destinationURL: destinationURL
                         )
                     }
+                case .savedWorkflow(let workflow):
+                    output = try await model.runSavedWorkflow(
+                        workflow,
+                        in: asset,
+                        destinationURL: destinationURL
+                    )
                 }
                 preferredSelectionURL = output.sourceURL
                 clearPendingChange()

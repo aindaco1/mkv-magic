@@ -19,10 +19,15 @@ then commit a new output without replacing the original. Track removal remuxes
 retained streams without encoding, preserves their order, chapters, tags, and
 attachments, and uses the same verify-before-commit rule. A deterministic Clean
 MKV preview can suggest English-library subtitle removals for individual review.
+The native Workflows builder can name, duplicate, reorder, enable, save, import,
+and export portable recipes. Its first reusable actions are English Library
+Cleanup and segment-title removal. Workflows store intent rather than media
+paths or track identifiers, compile against the selected inspection, show a
+zero-encode impact preview, and share one verified output pipeline.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
-History report. No public release is available yet. The canonical product and delivery plan is
-[PRODUCT_SPEC.md](PRODUCT_SPEC.md).
+History report. No public release is available yet. The canonical product and
+delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises
 

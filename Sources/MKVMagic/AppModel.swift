@@ -2,6 +2,7 @@ import Foundation
 import MKVMagicCore
 import MKVMagicExecution
 import MKVMagicMedia
+import MKVMagicPlanning
 import MKVMagicSystem
 
 @MainActor
@@ -9,11 +10,13 @@ final class AppModel {
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
+        case saved(CompiledSavedWorkflow)
 
         var workflowID: UUID {
             switch self {
             case .metadata(_, let workflowID, _): workflowID
             case .trackRemoval(_, let workflowID, _): workflowID
+            case .saved(let workflow): workflow.workflowID
             }
         }
 
@@ -21,6 +24,7 @@ final class AppModel {
             switch self {
             case .metadata(_, _, let workflowName): workflowName
             case .trackRemoval(_, _, let workflowName): workflowName
+            case .saved(let workflow): workflow.workflowName
             }
         }
 
@@ -28,6 +32,10 @@ final class AppModel {
             switch self {
             case .metadata: "Zero video encodes; mkvpropedit on a verified clone."
             case .trackRemoval: "Zero video encodes; mkvmerge copies the retained streams."
+            case .saved(let workflow):
+                workflow.plan.impact.videoEncodeCount == 0
+                    ? "Zero video encodes; all enabled steps share one verified output pipeline."
+                    : "All video-affecting steps are fused into one encode."
             }
         }
 
@@ -35,6 +43,10 @@ final class AppModel {
             switch self {
             case .metadata: "Editing a temporary clone."
             case .trackRemoval: "Remuxing retained tracks to a temporary output."
+            case .saved(let workflow):
+                workflow.trackRemoval == nil
+                    ? "Editing one temporary clone."
+                    : "Applying all workflow steps to one temporary remux."
             }
         }
     }
@@ -53,17 +65,30 @@ final class AppModel {
     private(set) var state: State = .ready
     var didChange: (() -> Void)?
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
+    private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
 
     init(
         historyRecorderFactory: @escaping @Sendable () throws -> any JobHistoryRecording = {
             try AppHistoryLocation.makeStore()
+        },
+        workflowStoreFactory: @escaping @Sendable () throws -> any SavedWorkflowPersisting = {
+            try AppHistoryLocation.makeWorkflowStore()
         }
     ) {
         self.historyRecorderFactory = historyRecorderFactory
+        self.workflowStoreFactory = workflowStoreFactory
     }
 
     func loadHistory() async throws -> [MediaJobRecord] {
         try await historyRecorderFactory().load()
+    }
+
+    func loadWorkflows() async throws -> [SavedWorkflow] {
+        try await workflowStoreFactory().load()
+    }
+
+    func saveWorkflows(_ workflows: [SavedWorkflow]) async throws {
+        try await workflowStoreFactory().save(workflows)
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -211,6 +236,19 @@ final class AppModel {
         )
     }
 
+    @discardableResult
+    func runSavedWorkflow(
+        _ workflow: CompiledSavedWorkflow,
+        in asset: MediaAsset,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .saved(workflow)
+        )
+    }
+
     private func executeVerifiedEdit(
         in asset: MediaAsset,
         destinationURL: URL,
@@ -300,6 +338,22 @@ final class AppModel {
                         try await Self.record(stage, jobID: executingJobID, using: recorder)
                     }
                 )
+            case .saved(let workflow):
+                let executor = SavedWorkflowExecutor(
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    source: asset,
+                    trackRemoval: workflow.trackRemoval,
+                    removesSegmentTitle: workflow.removesSegmentTitle,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(stage, jobID: executingJobID, using: recorder)
+                    }
+                )
             }
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
@@ -367,6 +421,11 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? TrackRemovalExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? SavedWorkflowExecutionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."

@@ -134,6 +134,27 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testWorkflowLocationSharesPrivateAppSupportDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-workflows-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try AppHistoryLocation.makeWorkflowStore(applicationSupportURL: root)
+        try await store.save([WorkflowEditorPolicy.newWorkflow()])
+
+        let appDirectory = root.appendingPathComponent("com.dustwave.mkvmagic")
+        let attributes = try FileManager.default.attributesOfItem(atPath: appDirectory.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o700)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: appDirectory.appendingPathComponent("workflows.json").path
+            )
+        )
+    }
+
     func testHistoryLocationRejectsSymlinkedAppDirectory() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-history-\(UUID().uuidString)",
@@ -236,6 +257,40 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 480, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 540)
         XCTAssertEqual(window.minSize.height, 420)
+    }
+
+    @MainActor
+    func testWorkflowWindowUsesCompactNativeLayout() throws {
+        let controller = WorkflowWindowController(
+            workflows: [WorkflowEditorPolicy.newWorkflow()],
+            hasSelectedAsset: true,
+            onSave: { _ in },
+            onUse: { _ in }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertTrue(window.contentViewController is WorkflowLibraryViewController)
+        XCTAssertEqual(contentView.frame.size.width, 780, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 680)
+        XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    func testWorkflowEditorDuplicatesPortableIntentWithFreshIdentifiers() {
+        let original = WorkflowEditorPolicy.newWorkflow()
+        let copy = WorkflowEditorPolicy.duplicate(original)
+
+        XCTAssertNotEqual(copy.id, original.id)
+        XCTAssertEqual(copy.name, "New Workflow Copy")
+        XCTAssertEqual(copy.steps.map(\.action), original.steps.map(\.action))
+        XCTAssertEqual(copy.steps.map(\.isEnabled), original.steps.map(\.isEnabled))
+        XCTAssertTrue(Set(copy.steps.map(\.id)).isDisjoint(with: original.steps.map(\.id)))
+        XCTAssertEqual(
+            WorkflowEditorPolicy.exportFilename(
+                for: SavedWorkflow(name: "TV/Film: Clean", steps: original.steps)),
+            "TV-Film- Clean.mkvmagic-workflow"
+        )
     }
 
     @MainActor

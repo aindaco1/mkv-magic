@@ -146,6 +146,57 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTrackRemovalVerifierAllowsOnlyRequestedSegmentTitleRemoval() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)
+        let original = asset(title: "Movie", tracks: [video, audio])
+        var output = asset(
+            title: "",
+            tracks: [video],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+        output = MediaAsset(
+            sourceURL: output.sourceURL,
+            container: output.container,
+            duration: output.duration,
+            fileSize: output.fileSize,
+            tracks: output.tracks,
+            chapters: output.chapters,
+            attachments: output.attachments,
+            metadata: ["encoder": "mkvmerge"],
+            chapterEntryCount: output.chapterEntryCount,
+            globalTagCount: output.globalTagCount,
+            trackTagCount: output.trackTagCount,
+            segmentUID: output.segmentUID
+        )
+
+        XCTAssertNoThrow(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                removal: TrackRemoval(trackUIDs: [20]),
+                segmentTitle: .set(nil)
+            )
+        )
+
+        XCTAssertThrowsError(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: asset(
+                    title: "Wrong",
+                    tracks: [video],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                removal: TrackRemoval(trackUIDs: [20]),
+                segmentTitle: .set(nil)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .titleMismatch)
+        }
+    }
+
     func testTrackRemovalVerifierRejectsMaterialDurationChange() throws {
         let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
         let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)

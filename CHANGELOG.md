@@ -42,3 +42,10 @@ semantic versioning; public release tags are immutable and signed.
   preserving commentary and the sole useful English/unknown subtitle.
 - Add an empty-output transaction mode for remux tools and normalize absent
   tool output to a controlled fail-closed state before any commit is possible.
+- Add portable saved workflows with a compact native builder, private atomic
+  persistence, strict versioned `.mkvmagic-workflow` import/export, step
+  enablement and reordering, and file-specific compilation without saved media
+  paths or Matroska track identifiers.
+- Fuse English Library Cleanup and segment-title removal into one temporary
+  remux/property pass followed by one verification and commit, with no video or
+  audio encode and the saved workflow identity recorded in durable history.

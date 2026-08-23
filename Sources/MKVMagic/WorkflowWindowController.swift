@@ -1,0 +1,534 @@
+import AppKit
+import MKVMagicCore
+import MKVMagicSystem
+import UniformTypeIdentifiers
+
+typealias WorkflowLibrarySaveHandler = @MainActor ([SavedWorkflow]) async throws -> Void
+
+@MainActor
+final class WorkflowWindowController: NSWindowController {
+    init(
+        workflows: [SavedWorkflow],
+        hasSelectedAsset: Bool,
+        onSave: @escaping WorkflowLibrarySaveHandler,
+        onUse: @escaping (SavedWorkflow) -> Void
+    ) {
+        let viewController = WorkflowLibraryViewController(
+            workflows: workflows,
+            hasSelectedAsset: hasSelectedAsset,
+            onSave: onSave,
+            onUse: onUse
+        )
+        let window = NSWindow(contentViewController: viewController)
+        window.title = "Workflows"
+        window.setContentSize(NSSize(width: 780, height: 560))
+        window.minSize = NSSize(width: 680, height: 480)
+        window.styleMask.insert(.resizable)
+        window.tabbingMode = .disallowed
+        super.init(window: window)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+@MainActor
+final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSource,
+    NSTableViewDelegate, NSTextFieldDelegate
+{
+    private var workflows: [SavedWorkflow]
+    private let hasSelectedAsset: Bool
+    private let onSave: WorkflowLibrarySaveHandler
+    private let onUse: (SavedWorkflow) -> Void
+    private let workflowTable = NSTableView()
+    private let stepTable = NSTableView()
+    private let nameField = NSTextField()
+    private let statusLabel = NSTextField(labelWithString: "")
+    private let duplicateButton = NSButton(title: "Duplicate", target: nil, action: nil)
+    private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
+    private let exportButton = NSButton(title: "Export…", target: nil, action: nil)
+    private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
+    private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
+    private let useButton = NSButton(title: "Save & Preview", target: nil, action: nil)
+
+    init(
+        workflows: [SavedWorkflow],
+        hasSelectedAsset: Bool,
+        onSave: @escaping WorkflowLibrarySaveHandler,
+        onUse: @escaping (SavedWorkflow) -> Void
+    ) {
+        self.workflows = workflows
+        self.hasSelectedAsset = hasSelectedAsset
+        self.onSave = onSave
+        self.onUse = onUse
+        super.init(nibName: nil, bundle: nil)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func loadView() {
+        view = NSView()
+        configureTables()
+
+        let sidebar = makeSidebar()
+        let editor = makeEditor()
+        sidebar.translatesAutoresizingMaskIntoConstraints = false
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.addArrangedSubview(sidebar)
+        split.addArrangedSubview(editor)
+        split.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(split)
+        NSLayoutConstraint.activate([
+            split.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            split.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+            split.topAnchor.constraint(equalTo: view.topAnchor),
+            split.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            sidebar.widthAnchor.constraint(equalToConstant: 235),
+        ])
+
+        workflowTable.reloadData()
+        if !workflows.isEmpty {
+            workflowTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        }
+        refreshEditor()
+    }
+
+    private func configureTables() {
+        let workflowColumn = NSTableColumn(identifier: .init("workflow"))
+        workflowColumn.title = "Saved Workflows"
+        workflowTable.addTableColumn(workflowColumn)
+        workflowTable.headerView = nil
+        workflowTable.dataSource = self
+        workflowTable.delegate = self
+        workflowTable.rowHeight = 30
+        workflowTable.allowsEmptySelection = true
+
+        let stepColumn = NSTableColumn(identifier: .init("step"))
+        stepColumn.title = "Steps"
+        stepTable.addTableColumn(stepColumn)
+        stepTable.headerView = nil
+        stepTable.dataSource = self
+        stepTable.delegate = self
+        stepTable.rowHeight = 62
+        stepTable.allowsEmptySelection = true
+    }
+
+    private func makeSidebar() -> NSView {
+        let heading = NSTextField(labelWithString: "Workflows")
+        heading.font = .systemFont(ofSize: 18, weight: .semibold)
+        let help = NSTextField(
+            wrappingLabelWithString: "Portable recipes that compile against each inspected file."
+        )
+        help.textColor = .secondaryLabelColor
+        let scroll = NSScrollView()
+        scroll.documentView = workflowTable
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+
+        let add = NSButton(title: "+", target: self, action: #selector(addWorkflow))
+        add.toolTip = "New workflow"
+        duplicateButton.target = self
+        duplicateButton.action = #selector(duplicateWorkflow)
+        deleteButton.target = self
+        deleteButton.action = #selector(deleteWorkflow)
+        let buttons = NSStackView(views: [add, duplicateButton, deleteButton])
+        buttons.orientation = .horizontal
+        buttons.spacing = 6
+
+        let stack = NSStackView(views: [heading, help, scroll, buttons])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 16, bottom: 16, right: 16)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
+        ])
+        return container
+    }
+
+    private func makeEditor() -> NSView {
+        let heading = NSTextField(labelWithString: "Workflow Builder")
+        heading.font = .systemFont(ofSize: 18, weight: .semibold)
+        let nameLabel = NSTextField(labelWithString: "Name")
+        nameField.placeholderString = "Example: Prepare for Jellyfin"
+        nameField.delegate = self
+        let stepLabel = NSTextField(labelWithString: "Steps run from top to bottom")
+        stepLabel.textColor = .secondaryLabelColor
+        let scroll = NSScrollView()
+        scroll.documentView = stepTable
+        scroll.hasVerticalScroller = true
+        scroll.borderType = .bezelBorder
+        moveUpButton.target = self
+        moveUpButton.action = #selector(moveStepUp)
+        moveDownButton.target = self
+        moveDownButton.action = #selector(moveStepDown)
+        let moveButtons = NSStackView(views: [moveUpButton, moveDownButton])
+        moveButtons.orientation = .horizontal
+        moveButtons.spacing = 8
+
+        let importButton = NSButton(
+            title: "Import…", target: self, action: #selector(importWorkflow))
+        exportButton.target = self
+        exportButton.action = #selector(exportWorkflow)
+        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveLibrary))
+        useButton.target = self
+        useButton.action = #selector(saveAndUse)
+        useButton.keyEquivalent = "\r"
+        useButton.toolTip =
+            hasSelectedAsset
+            ? "Compile against the selected file and show its impact before running."
+            : "Inspect and select a Matroska file before previewing this workflow."
+        let spacer = NSView()
+        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let actions = NSStackView(views: [
+            importButton, exportButton, spacer, saveButton, useButton,
+        ])
+        actions.orientation = .horizontal
+        actions.alignment = .centerY
+        actions.spacing = 8
+
+        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.lineBreakMode = .byTruncatingTail
+        let stack = NSStackView(views: [
+            heading, nameLabel, nameField, stepLabel, scroll, moveButtons, statusLabel, actions,
+        ])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 10
+        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 16, right: 20)
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        scroll.translatesAutoresizingMaskIntoConstraints = false
+        nameField.translatesAutoresizingMaskIntoConstraints = false
+        actions.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView()
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            stack.topAnchor.constraint(equalTo: container.topAnchor),
+            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            nameField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
+            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        return container
+    }
+
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        if tableView === workflowTable { return workflows.count }
+        return selectedWorkflow?.steps.count ?? 0
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row: Int
+    ) -> NSView? {
+        if tableView === workflowTable {
+            let label = NSTextField(labelWithString: workflows[row].name)
+            label.lineBreakMode = .byTruncatingTail
+            let cell = NSTableCellView()
+            label.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(label)
+            NSLayoutConstraint.activate([
+                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 7),
+                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -7),
+                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
+        guard let step = selectedWorkflow?.steps[row] else { return nil }
+        let checkbox = NSButton(
+            checkboxWithTitle: step.action.displayName,
+            target: self,
+            action: #selector(toggleStep(_:))
+        )
+        checkbox.state = step.isEnabled ? .on : .off
+        checkbox.tag = row
+        let detail = NSTextField(wrappingLabelWithString: step.action.explanation)
+        detail.textColor = .secondaryLabelColor
+        detail.font = .systemFont(ofSize: 11)
+        let stack = NSStackView(views: [checkbox, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 3
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let cell = NSTableCellView()
+        cell.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
+            stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
+            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+        ])
+        return cell
+    }
+
+    func tableViewSelectionDidChange(_ notification: Notification) {
+        if notification.object as? NSTableView === workflowTable {
+            refreshEditor()
+        } else {
+            refreshMoveButtons()
+        }
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard obj.object as? NSTextField === nameField,
+            let index = selectedWorkflowIndex
+        else { return }
+        workflows[index].name = nameField.stringValue
+        workflowTable.reloadData()
+        markUnsaved()
+    }
+
+    @objc private func addWorkflow() {
+        workflows.append(WorkflowEditorPolicy.newWorkflow())
+        workflowTable.reloadData()
+        workflowTable.selectRowIndexes(
+            IndexSet(integer: workflows.count - 1),
+            byExtendingSelection: false
+        )
+        markUnsaved()
+    }
+
+    @objc private func duplicateWorkflow() {
+        guard let workflow = selectedWorkflow else { return }
+        workflows.append(WorkflowEditorPolicy.duplicate(workflow))
+        workflowTable.reloadData()
+        workflowTable.selectRowIndexes(
+            IndexSet(integer: workflows.count - 1),
+            byExtendingSelection: false
+        )
+        markUnsaved()
+    }
+
+    @objc private func deleteWorkflow() {
+        guard let index = selectedWorkflowIndex else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete “\(workflows[index].name)”?"
+        alert.informativeText = "This removes the saved workflow from this Mac."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        workflows.remove(at: index)
+        workflowTable.reloadData()
+        if !workflows.isEmpty {
+            workflowTable.selectRowIndexes(
+                IndexSet(integer: min(index, workflows.count - 1)),
+                byExtendingSelection: false
+            )
+        }
+        refreshEditor()
+        markUnsaved()
+    }
+
+    @objc private func toggleStep(_ sender: NSButton) {
+        guard let workflowIndex = selectedWorkflowIndex,
+            workflows[workflowIndex].steps.indices.contains(sender.tag)
+        else { return }
+        workflows[workflowIndex].steps[sender.tag].isEnabled = sender.state == .on
+        markUnsaved()
+        refreshEditorButtons()
+    }
+
+    @objc private func moveStepUp() { moveSelectedStep(by: -1) }
+    @objc private func moveStepDown() { moveSelectedStep(by: 1) }
+
+    private func moveSelectedStep(by offset: Int) {
+        guard let workflowIndex = selectedWorkflowIndex,
+            stepTable.selectedRow >= 0
+        else { return }
+        let source = stepTable.selectedRow
+        let destination = source + offset
+        guard workflows[workflowIndex].steps.indices.contains(destination) else { return }
+        workflows[workflowIndex].steps.swapAt(source, destination)
+        stepTable.reloadData()
+        stepTable.selectRowIndexes(IndexSet(integer: destination), byExtendingSelection: false)
+        markUnsaved()
+    }
+
+    @objc private func saveLibrary() { persistLibrary(thenUse: false) }
+    @objc private func saveAndUse() { persistLibrary(thenUse: true) }
+
+    private func persistLibrary(thenUse: Bool) {
+        let workflowToUse: SavedWorkflow?
+        if let workflow = selectedWorkflow {
+            let trimmedName = workflow.name.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedName.isEmpty else {
+                statusLabel.stringValue = "Give the workflow a name before saving."
+                nameField.becomeFirstResponder()
+                return
+            }
+            guard !thenUse || workflow.steps.contains(where: \.isEnabled) else {
+                statusLabel.stringValue = "Enable at least one step before previewing."
+                return
+            }
+            if let index = selectedWorkflowIndex { workflows[index].name = trimmedName }
+            workflowToUse = selectedWorkflow
+        } else {
+            guard !thenUse else { return }
+            workflowToUse = nil
+        }
+        setEditingEnabled(false)
+        statusLabel.stringValue = "Saving…"
+        Task {
+            do {
+                try await onSave(workflows)
+                statusLabel.stringValue = "Saved privately on this Mac."
+                setEditingEnabled(true)
+                if thenUse, hasSelectedAsset, let workflowToUse {
+                    onUse(workflowToUse)
+                    view.window?.orderOut(nil)
+                } else if thenUse {
+                    statusLabel.stringValue = "Saved. Inspect a Matroska file to preview it."
+                }
+            } catch {
+                statusLabel.stringValue = "Could not save: \(error.localizedDescription)"
+                setEditingEnabled(true)
+            }
+        }
+    }
+
+    @objc private func importWorkflow() {
+        let panel = NSOpenPanel()
+        panel.title = "Import MKV Magic Workflow"
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.allowedContentTypes = [Self.workflowType]
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            let imported = try JSONSavedWorkflowStore.loadPortableFile(at: url)
+            if let existing = workflows.firstIndex(where: { $0.id == imported.id }) {
+                workflows[existing] = imported
+                workflowTable.reloadData()
+                workflowTable.selectRowIndexes(
+                    IndexSet(integer: existing), byExtendingSelection: false)
+                statusLabel.stringValue = "Updated matching workflow. Save to keep it."
+            } else {
+                workflows.append(imported)
+                workflowTable.reloadData()
+                workflowTable.selectRowIndexes(
+                    IndexSet(integer: workflows.count - 1), byExtendingSelection: false)
+                statusLabel.stringValue = "Imported. Save to keep it."
+            }
+        } catch {
+            statusLabel.stringValue = "Could not import: \(error.localizedDescription)"
+        }
+    }
+
+    @objc private func exportWorkflow() {
+        guard let workflow = selectedWorkflow else { return }
+        let panel = NSSavePanel()
+        panel.title = "Export MKV Magic Workflow"
+        panel.prompt = "Export"
+        panel.allowedContentTypes = [Self.workflowType]
+        panel.allowsOtherFileTypes = false
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = WorkflowEditorPolicy.exportFilename(for: workflow)
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try JSONSavedWorkflowStore.writePortableFile(workflow, to: url)
+            statusLabel.stringValue = "Exported \(url.lastPathComponent)."
+        } catch {
+            statusLabel.stringValue = "Could not export: \(error.localizedDescription)"
+        }
+    }
+
+    private func refreshEditor() {
+        nameField.stringValue = selectedWorkflow?.name ?? ""
+        stepTable.reloadData()
+        stepTable.deselectAll(nil)
+        refreshEditorButtons()
+    }
+
+    private func refreshEditorButtons() {
+        let hasWorkflow = selectedWorkflow != nil
+        nameField.isEnabled = hasWorkflow
+        duplicateButton.isEnabled = hasWorkflow
+        deleteButton.isEnabled = hasWorkflow
+        exportButton.isEnabled = hasWorkflow
+        useButton.isEnabled =
+            hasWorkflow && hasSelectedAsset
+            && selectedWorkflow?.steps.contains(where: \.isEnabled) == true
+        refreshMoveButtons()
+    }
+
+    private func refreshMoveButtons() {
+        let row = stepTable.selectedRow
+        let count = selectedWorkflow?.steps.count ?? 0
+        moveUpButton.isEnabled = row > 0
+        moveDownButton.isEnabled = row >= 0 && row < count - 1
+    }
+
+    private func setEditingEnabled(_ enabled: Bool) {
+        workflowTable.isEnabled = enabled
+        stepTable.isEnabled = enabled
+        nameField.isEnabled = enabled && selectedWorkflow != nil
+        useButton.isEnabled =
+            enabled && hasSelectedAsset
+            && selectedWorkflow?.steps.contains(where: \.isEnabled) == true
+    }
+
+    private func markUnsaved() {
+        statusLabel.stringValue = "Unsaved changes"
+    }
+
+    private var selectedWorkflowIndex: Int? {
+        let row = workflowTable.selectedRow
+        return workflows.indices.contains(row) ? row : nil
+    }
+
+    private var selectedWorkflow: SavedWorkflow? {
+        selectedWorkflowIndex.map { workflows[$0] }
+    }
+
+    private static var workflowType: UTType {
+        UTType(filenameExtension: "mkvmagic-workflow") ?? .json
+    }
+}
+
+enum WorkflowEditorPolicy {
+    static func newWorkflow() -> SavedWorkflow {
+        SavedWorkflow(
+            name: "New Workflow",
+            steps: [
+                SavedWorkflowStep(action: .englishLibraryCleanup),
+                SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
+            ]
+        )
+    }
+
+    static func duplicate(_ workflow: SavedWorkflow) -> SavedWorkflow {
+        SavedWorkflow(
+            name: workflow.name + " Copy",
+            steps: workflow.steps.map {
+                SavedWorkflowStep(isEnabled: $0.isEnabled, action: $0.action)
+            }
+        )
+    }
+
+    static func exportFilename(for workflow: SavedWorkflow) -> String {
+        let safe = workflow.name
+            .replacingOccurrences(of: "/", with: "-")
+            .replacingOccurrences(of: ":", with: "-")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        return (safe.isEmpty ? "MKV Magic Workflow" : safe) + ".mkvmagic-workflow"
+    }
+}

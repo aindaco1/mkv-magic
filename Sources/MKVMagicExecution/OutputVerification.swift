@@ -104,7 +104,8 @@ public struct TrackRemovalOutputVerifier: Sendable {
     public func verify(
         original: MediaAsset,
         output: MediaAsset,
-        removal: TrackRemoval
+        removal: TrackRemoval,
+        segmentTitle: SegmentTitleExpectation = .preserve
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container == original.container else {
@@ -113,10 +114,27 @@ public struct TrackRemovalOutputVerifier: Sendable {
         guard remuxDurationsMatch(original.duration, output.duration) else {
             throw OutputVerificationError.durationChanged
         }
-        guard output.metadata.removingRemuxProvenance == original.metadata.removingRemuxProvenance,
-            output.globalTagCount == original.globalTagCount
-        else {
+        guard output.globalTagCount == original.globalTagCount else {
             throw OutputVerificationError.tagsChanged
+        }
+        switch segmentTitle {
+        case .preserve:
+            guard
+                output.metadata.removingRemuxProvenance
+                    == original.metadata.removingRemuxProvenance
+            else {
+                throw OutputVerificationError.tagsChanged
+            }
+        case .set(let expectedTitle):
+            guard output.metadata.titleValue == expectedTitle else {
+                throw OutputVerificationError.titleMismatch
+            }
+            guard
+                output.metadata.removingTitle.removingRemuxProvenance
+                    == original.metadata.removingTitle.removingRemuxProvenance
+            else {
+                throw OutputVerificationError.tagsChanged
+            }
         }
         if let originalTrackTags = original.trackTagCount,
             let outputTrackTags = output.trackTagCount,
@@ -151,6 +169,11 @@ public struct TrackRemovalOutputVerifier: Sendable {
             throw OutputVerificationError.tracksChanged
         }
     }
+}
+
+public enum SegmentTitleExpectation: Equatable, Sendable {
+    case preserve
+    case set(String?)
 }
 
 private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) throws {

@@ -1,4 +1,4 @@
-import MKVMagicCore
+import Foundation
 
 public enum MatroskaEditingPolicy {
     public static func supports(_ asset: MediaAsset) -> Bool {
