@@ -1,5 +1,7 @@
 import AppKit
+import CryptoKit
 import MKVMagicCore
+import MKVMagicExecution
 import MKVMagicSystem
 import XCTest
 
@@ -46,6 +48,14 @@ final class AppPolicyTests: XCTestCase {
             OutputNamingPolicy.suggestedFilename(
                 for: URL(fileURLWithPath: "/Media/Untitled")),
             "Untitled — Edited.mkv"
+        )
+    }
+
+    func testCleanedSubtitleOutputNameUsesSRT() {
+        XCTAssertEqual(
+            OutputNamingPolicy.cleanedSubtitleFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.en.SRT")),
+            "Movie.en — Clean.srt"
         )
     }
 
@@ -293,6 +303,133 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testSubtitleCleanupPresentationKeepsOneCueAndFormatsTiming() {
+        let advertisement = SubRipCue(
+            id: 0,
+            start: SubRipTimestamp(milliseconds: 90_061_007),
+            end: SubRipTimestamp(milliseconds: 90_062_008),
+            lines: ["Downloaded from", "YTS.MX"]
+        )
+        let document = SubRipDocument(cues: [advertisement])
+        let cleanup = SubtitleCleanupPolicy().preview(document)
+        let preview = SubtitleCleanupFilePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.srt"),
+            sourceSHA256: Data(SHA256.hash(data: Data())),
+            encoding: .utf8,
+            diagnostics: [],
+            cleanup: cleanup,
+            normalizationNeeded: false
+        )
+
+        XCTAssertFalse(
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: [advertisement.id]
+            )
+        )
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: []
+            )
+        )
+        XCTAssertEqual(
+            SubtitleCleanupPresentation.time(advertisement.start),
+            "25:01:01,007"
+        )
+    }
+
+    @MainActor
+    func testSubtitleCleanupWindowUsesCompactNativeLayout() throws {
+        let document = SubRipDocument(
+            cues: [
+                SubRipCue(
+                    id: 0,
+                    start: SubRipTimestamp(milliseconds: 0),
+                    end: SubRipTimestamp(milliseconds: 1_000),
+                    lines: [" Text "]
+                )
+            ]
+        )
+        let controller = SubtitleCleanupWindowController(
+            preview: SubtitleCleanupFilePreview(
+                sourceURL: URL(fileURLWithPath: "/Media/Movie.srt"),
+                sourceSHA256: Data(SHA256.hash(data: Data())),
+                encoding: .utf8,
+                diagnostics: [],
+                cleanup: SubtitleCleanupPolicy().preview(document),
+                normalizationNeeded: true
+            )
+        )
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertTrue(window.contentViewController is SubtitleCleanupViewController)
+        XCTAssertEqual(contentView.frame.size.width, 740, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 640)
+        XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    @MainActor
+    func testSubtitleCleanupPersistsSanitizedVerifiedLifecycle() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-subtitle-history-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Movie.en.srt")
+        let output = root.appendingPathComponent("Movie.en — Clean.srt")
+        let sourceData = Data(
+            ("1\r\n00:00:00,000 --> 00:00:01,000\r\nDownloaded from\r\nYTS.MX\r\n\r\n"
+                + "2\r\n00:00:01,000 --> 00:00:02,000\r\n  Dialogue  \r\n").utf8
+        )
+        try sourceData.write(to: source)
+        let applicationSupport = root.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(applicationSupportURL: applicationSupport)
+        let model = AppModel(historyRecorderFactory: { store })
+
+        let preview = try await model.previewSubtitleCleanup(at: source)
+        let result = try await model.cleanSubtitle(
+            preview: preview,
+            restoringCueIDs: [],
+            destinationURL: output
+        )
+
+        XCTAssertEqual(result.removedCueCount, 1)
+        XCTAssertEqual(result.changedCueCount, 1)
+        XCTAssertEqual(try Data(contentsOf: source), sourceData)
+        XCTAssertEqual(
+            String(decoding: try Data(contentsOf: output), as: UTF8.self),
+            "1\n00:00:01,000 --> 00:00:02,000\nDialogue\n"
+        )
+        XCTAssertEqual(
+            model.state,
+            .completed("Created Movie.en — Clean.srt; original unchanged.")
+        )
+        let records = try await store.load()
+        let record = try XCTUnwrap(records.only)
+        XCTAssertEqual(record.workflowName, "Clean SRT subtitle")
+        XCTAssertEqual(record.inputs.map(\.displayName), ["Movie.en.srt"])
+        XCTAssertEqual(record.outputDisplayName, "Movie.en — Clean.srt")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let historyText = record.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertFalse(historyText.contains(root.path))
+        XCTAssertFalse(historyText.contains("Dialogue"))
+        XCTAssertFalse(historyText.contains("YTS.MX"))
+    }
+
     @MainActor
     func testMainWindowContentKeepsUsableWidthAfterLayout() throws {
         let controller = MainViewController(model: AppModel())
@@ -333,4 +470,8 @@ final class AppPolicyTests: XCTestCase {
         }
         return record
     }
+}
+
+extension Array {
+    fileprivate var only: Element? { count == 1 ? first : nil }
 }

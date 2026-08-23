@@ -7,6 +7,11 @@ import MKVMagicSystem
 
 @MainActor
 final class AppModel {
+    private struct HistoryExecution: Sendable {
+        let recorder: any JobHistoryRecording
+        let jobID: UUID
+    }
+
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
@@ -89,6 +94,14 @@ final class AppModel {
 
     func saveWorkflows(_ workflows: [SavedWorkflow]) async throws {
         try await workflowStoreFactory().save(workflows)
+    }
+
+    func previewSubtitleCleanup(at sourceURL: URL) async throws -> SubtitleCleanupFilePreview {
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        return try await SubtitleCleanupExecutor().preview(sourceURL: sourceURL)
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -249,6 +262,60 @@ final class AppModel {
         )
     }
 
+    @discardableResult
+    func cleanSubtitle(
+        preview: SubtitleCleanupFilePreview,
+        restoringCueIDs: Set<Int>,
+        destinationURL: URL
+    ) async throws -> SubtitleCleanupResult {
+        let scopedURLs = [preview.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Creating and verifying \(destinationURL.lastPathComponent)…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let execution = try await beginHistory(
+                inputDisplayName: preview.sourceURL.lastPathComponent,
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: Self.subtitleCleanupWorkflowID,
+                workflowName: "Clean SRT subtitle",
+                inspectionMessage: "Parsed bounded subtitle text for a deterministic review.",
+                planningMessage:
+                    "Zero encodes; normalize text and apply only reviewed cue changes.",
+                runningMessage: "Writing one normalized UTF-8 temporary subtitle."
+            )
+            historyExecution = execution
+            let result = try await SubtitleCleanupExecutor().execute(
+                preview: preview,
+                restoringCueIDs: restoringCueIDs,
+                destinationURL: destinationURL,
+                onStage: { stage in
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage: "Verified UTF-8 subtitle committed and reopened."
+            )
+            return result
+        } catch {
+            await failHistory(historyExecution, error: error)
+            throw error
+        }
+    }
+
     private func executeVerifiedEdit(
         in asset: MediaAsset,
         destinationURL: URL,
@@ -265,41 +332,18 @@ final class AppModel {
 
         state = .executing("Creating and verifying \(destinationURL.lastPathComponent)…")
         didChange?()
-        var historyRecorder: (any JobHistoryRecording)?
-        var historyJobID: UUID?
+        var historyExecution: HistoryExecution?
         do {
-            let recorder = try historyRecorderFactory()
-            historyRecorder = recorder
-            var historyJob = makeReadyEditJob(
-                asset: asset,
-                destinationURL: destinationURL,
+            let execution = try await beginHistory(
+                inputDisplayName: asset.sourceURL.lastPathComponent,
+                outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: edit.workflowID,
-                workflowName: edit.workflowName
+                workflowName: edit.workflowName,
+                inspectionMessage: "Using the completed media inspection.",
+                planningMessage: edit.planningMessage,
+                runningMessage: edit.runningMessage
             )
-            try historyJob.transition(
-                to: .inspecting,
-                at: historyJob.createdAt,
-                message: "Using the completed media inspection."
-            )
-            try historyJob.transition(
-                to: .planned,
-                at: historyJob.createdAt,
-                message: edit.planningMessage
-            )
-            try historyJob.transition(
-                to: .ready,
-                at: historyJob.createdAt,
-                message: "User selected a new output location."
-            )
-            try await recorder.create(historyJob)
-            let executingJobID = historyJob.id
-            historyJobID = executingJobID
-            try await recorder.transition(
-                jobID: executingJobID,
-                to: .running,
-                at: Date(),
-                message: edit.runningMessage
-            )
+            historyExecution = execution
 
             let catalog = try makeToolCatalog()
             let runner = FoundationCommandRunner()
@@ -321,7 +365,11 @@ final class AppModel {
                     edit: metadataEdit,
                     destinationURL: destinationURL,
                     onStage: { stage in
-                        try await Self.record(stage, jobID: executingJobID, using: recorder)
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
                     }
                 )
             case .trackRemoval(let removal, _, _):
@@ -335,7 +383,11 @@ final class AppModel {
                     removal: removal,
                     destinationURL: destinationURL,
                     onStage: { stage in
-                        try await Self.record(stage, jobID: executingJobID, using: recorder)
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
                     }
                 )
             case .saved(let workflow):
@@ -351,7 +403,11 @@ final class AppModel {
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     destinationURL: destinationURL,
                     onStage: { stage in
-                        try await Self.record(stage, jobID: executingJobID, using: recorder)
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
                     }
                 )
             }
@@ -360,58 +416,103 @@ final class AppModel {
             } else {
                 assets.append(output)
             }
-            do {
-                try await recorder.transition(
-                    jobID: executingJobID,
-                    to: .succeeded,
-                    at: Date(),
-                    message: "Verified output committed and reopened."
-                )
-                state = .completed(
-                    "Created \(destinationURL.lastPathComponent); original unchanged."
-                )
-            } catch {
-                _ = try? await recorder.transition(
-                    jobID: executingJobID,
-                    to: .failed,
-                    at: Date(),
-                    message: "Output committed; history finalization failed."
-                )
-                state = .completedWithWarnings(
-                    "Created \(destinationURL.lastPathComponent); original unchanged, but "
-                        + "history could not record success."
-                )
-            }
-            didChange?()
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage: "Verified output committed and reopened."
+            )
             return output
         } catch {
-            if let historyRecorder, let historyJobID {
-                _ = try? await historyRecorder.transition(
-                    jobID: historyJobID,
-                    to: .failed,
-                    at: Date(),
-                    message: Self.sanitizedFailureMessage(for: error)
-                )
-            }
-            state = .failed("Original unchanged. \(error.localizedDescription)")
-            didChange?()
+            await failHistory(historyExecution, error: error)
             throw error
         }
     }
 
-    private func makeReadyEditJob(
-        asset: MediaAsset,
-        destinationURL: URL,
+    private func beginHistory(
+        inputDisplayName: String,
+        outputDisplayName: String,
         workflowID: UUID,
-        workflowName: String
-    ) -> MediaJobRecord {
-        MediaJobRecord(
+        workflowName: String,
+        inspectionMessage: String,
+        planningMessage: String,
+        runningMessage: String
+    ) async throws -> HistoryExecution {
+        let recorder = try historyRecorderFactory()
+        var job = MediaJobRecord(
             createdAt: Date(),
             workflowID: workflowID,
             workflowName: workflowName,
-            inputs: [MediaJobInput(displayName: asset.sourceURL.lastPathComponent)],
-            outputDisplayName: destinationURL.lastPathComponent
+            inputs: [MediaJobInput(displayName: inputDisplayName)],
+            outputDisplayName: outputDisplayName
         )
+        try job.transition(to: .inspecting, at: job.createdAt, message: inspectionMessage)
+        try job.transition(to: .planned, at: job.createdAt, message: planningMessage)
+        try job.transition(
+            to: .ready,
+            at: job.createdAt,
+            message: "User selected a new output location."
+        )
+        try await recorder.create(job)
+        do {
+            try await recorder.transition(
+                jobID: job.id,
+                to: .running,
+                at: Date(),
+                message: runningMessage
+            )
+        } catch {
+            _ = try? await recorder.transition(
+                jobID: job.id,
+                to: .cancelled,
+                at: Date(),
+                message: "Execution did not start because history could not be updated."
+            )
+            throw error
+        }
+        return HistoryExecution(recorder: recorder, jobID: job.id)
+    }
+
+    private func finishHistory(
+        _ execution: HistoryExecution,
+        destinationURL: URL,
+        successMessage: String
+    ) async {
+        do {
+            try await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .succeeded,
+                at: Date(),
+                message: successMessage
+            )
+            state = .completed(
+                "Created \(destinationURL.lastPathComponent); original unchanged."
+            )
+        } catch {
+            _ = try? await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .failed,
+                at: Date(),
+                message: "Output committed; history finalization failed."
+            )
+            state = .completedWithWarnings(
+                "Created \(destinationURL.lastPathComponent); original unchanged, but "
+                    + "history could not record success."
+            )
+        }
+        didChange?()
+    }
+
+    private func failHistory(_ execution: HistoryExecution?, error: Error) async {
+        if let execution {
+            _ = try? await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .failed,
+                at: Date(),
+                message: Self.sanitizedFailureMessage(for: error)
+            )
+        }
+        state = .failed("Original unchanged. \(error.localizedDescription)")
+        didChange?()
     }
 
     private static func sanitizedFailureMessage(for error: Error) -> String {
@@ -426,6 +527,11 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? SavedWorkflowExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? SubtitleCleanupExecutionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."
@@ -467,6 +573,9 @@ final class AppModel {
     )!
     private static let englishLibraryCleanupWorkflowID = UUID(
         uuidString: "853C0788-5994-491F-AC13-A0A47319CD0E"
+    )!
+    private static let subtitleCleanupWorkflowID = UUID(
+        uuidString: "7062274D-C993-42BF-903E-3DD817424EBF"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

@@ -24,6 +24,11 @@ and export portable recipes. Its first reusable actions are English Library
 Cleanup and segment-title removal. Workflows store intent rather than media
 paths or track identifiers, compile against the selected inspection, show a
 zero-encode impact preview, and share one verified output pipeline.
+Selected SRT files can also be decoded, structurally normalized, and reviewed
+cue by cue for deterministic YTS/YIFY advertisement removal and accidental edge
+whitespace. Cleanup preserves every timestamp and timing setting, refuses to
+remove every cue, detects a source changed since preview, writes a new UTF-8 SRT,
+and reopens the byte-exact result before commit while leaving the source intact.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

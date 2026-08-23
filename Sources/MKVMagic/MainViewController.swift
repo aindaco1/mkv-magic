@@ -11,6 +11,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case track(TrackMetadataEdit)
         case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
         case savedWorkflow(CompiledSavedWorkflow)
+        case subtitleCleanup(SubtitleCleanupFilePreview, restoringCueIDs: Set<Int>)
     }
 
     private let model: AppModel
@@ -23,6 +24,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
     private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
+    private let cleanSubtitleButton = NSButton(title: "Clean SRT…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
@@ -31,6 +33,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var trackEditorWindowController: TrackEditorWindowController?
     private var trackRemovalWindowController: TrackRemovalWindowController?
     private var workflowWindowController: WorkflowWindowController?
+    private var subtitleCleanupWindowController: SubtitleCleanupWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -210,15 +213,21 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         removeTracksButton.target = self
         removeTracksButton.action = #selector(removeTracks)
         removeTracksButton.isEnabled = false
+        cleanSubtitleButton.target = self
+        cleanSubtitleButton.action = #selector(cleanSubtitle)
+        cleanSubtitleButton.isEnabled = false
         let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
         metadataButtons.orientation = .horizontal
         metadataButtons.spacing = 8
         let structuralButtons = NSStackView(views: [cleanMKVButton, removeTracksButton])
         structuralButtons.orientation = .horizontal
         structuralButtons.spacing = 8
+        let subtitleButtons = NSStackView(views: [cleanSubtitleButton])
+        subtitleButtons.orientation = .horizontal
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
+            subtitleButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -441,6 +450,70 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         )
     }
 
+    @objc private func cleanSubtitle() {
+        guard let asset = selectedAsset, Self.canCleanSubtitle(asset),
+            let parentWindow = view.window
+        else { return }
+        statusLabel.stringValue = "Reading \(asset.sourceURL.lastPathComponent)…"
+        cleanSubtitleButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewSubtitleCleanup(at: asset.sourceURL)
+                guard preview.normalizationNeeded || !preview.cleanup.changes.isEmpty else {
+                    statusLabel.stringValue = "This SRT is already normalized and clean"
+                    impactLabel.stringValue = "No changes needed"
+                    cleanSubtitleButton.isEnabled = true
+                    clearPendingChange()
+                    return
+                }
+                let controller = SubtitleCleanupWindowController(preview: preview)
+                subtitleCleanupWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] restoredCueIDs in
+                    guard let self else { return }
+                    self.subtitleCleanupWindowController = nil
+                    self.cleanSubtitleButton.isEnabled = true
+                    guard let restoredCueIDs else {
+                        self.refresh()
+                        return
+                    }
+                    guard self.selectedAsset?.id == asset.id else {
+                        self.clearPendingChange()
+                        self.refresh()
+                        return
+                    }
+                    let desired = preview.cleanup.document(restoringCueIDs: restoredCueIDs)
+                    guard !desired.cues.isEmpty else {
+                        self.impactLabel.stringValue = "Restore at least one cue"
+                        self.clearPendingChange()
+                        return
+                    }
+                    let appliedCount = preview.cleanup.changes.count - restoredCueIDs.count
+                    guard preview.normalizationNeeded || appliedCount > 0 else {
+                        self.impactLabel.stringValue = "No cleanup changes selected"
+                        self.clearPendingChange()
+                        return
+                    }
+                    self.impactLabel.stringValue =
+                        "0 video encodes • UTF-8 SRT • \(appliedCount) reviewed changes"
+                    self.pendingChange = .subtitleCleanup(
+                        preview,
+                        restoringCueIDs: restoredCueIDs
+                    )
+                    self.pendingAssetID = asset.id
+                    self.statusLabel.stringValue = "Cleanup preview ready"
+                    self.runButton.isEnabled = true
+                    self.runButton.toolTip =
+                        "Write a new normalized SRT, verify every cue and timing, then commit it."
+                }
+            } catch {
+                statusLabel.stringValue =
+                    "Could not preview subtitle: \(error.localizedDescription)"
+                cleanSubtitleButton.isEnabled = true
+                clearPendingChange()
+            }
+        }
+    }
+
     private func presentTrackRemoval(
         asset: MediaAsset,
         parentWindow: NSWindow,
@@ -487,10 +560,19 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
         let panel = NSSavePanel()
-        panel.title = "Save Verified MKV Copy"
+        let isSubtitleCleanup: Bool
+        if case .subtitleCleanup = pendingChange {
+            isSubtitleCleanup = true
+        } else {
+            isSubtitleCleanup = false
+        }
+        panel.title = isSubtitleCleanup ? "Save Verified SRT Copy" : "Save Verified MKV Copy"
         panel.prompt = "Save Verified Copy"
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
+        panel.nameFieldStringValue =
+            isSubtitleCleanup
+            ? OutputNamingPolicy.cleanedSubtitleFilename(for: asset.sourceURL)
+            : OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
         panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
         panel.allowedContentTypes = [
             UTType(filenameExtension: asset.sourceURL.pathExtension) ?? .data
@@ -503,45 +585,54 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         editTrackButton.isEnabled = false
         cleanMKVButton.isEnabled = false
         removeTracksButton.isEnabled = false
+        cleanSubtitleButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
-                let output: MediaAsset
+                let outputURL: URL
                 switch pendingChange {
                 case .segmentTitle(let title):
-                    output = try await model.editSegmentTitle(
+                    outputURL = try await model.editSegmentTitle(
                         in: asset,
                         title: title,
                         destinationURL: destinationURL
-                    )
+                    ).sourceURL
                 case .track(let edit):
-                    output = try await model.editTrackMetadata(
+                    outputURL = try await model.editTrackMetadata(
                         in: asset,
                         edit: edit,
                         destinationURL: destinationURL
-                    )
+                    ).sourceURL
                 case .trackRemoval(let removal, let isEnglishCleanup):
                     if isEnglishCleanup {
-                        output = try await model.cleanEnglishLibrary(
+                        outputURL = try await model.cleanEnglishLibrary(
                             in: asset,
                             removal: removal,
                             destinationURL: destinationURL
-                        )
+                        ).sourceURL
                     } else {
-                        output = try await model.removeTracks(
+                        outputURL = try await model.removeTracks(
                             in: asset,
                             removal: removal,
                             destinationURL: destinationURL
-                        )
+                        ).sourceURL
                     }
                 case .savedWorkflow(let workflow):
-                    output = try await model.runSavedWorkflow(
+                    outputURL = try await model.runSavedWorkflow(
                         workflow,
                         in: asset,
                         destinationURL: destinationURL
-                    )
+                    ).sourceURL
+                case .subtitleCleanup(let preview, let restoringCueIDs):
+                    outputURL = try await model.cleanSubtitle(
+                        preview: preview,
+                        restoringCueIDs: restoringCueIDs,
+                        destinationURL: destinationURL
+                    ).outputURL
                 }
-                preferredSelectionURL = output.sourceURL
+                preferredSelectionURL =
+                    model.assets.contains { $0.sourceURL == outputURL }
+                    ? outputURL : nil
                 clearPendingChange()
                 refresh()
             } catch {
@@ -552,6 +643,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 removeTracksButton.isEnabled = TrackRemovalPresentation.canOfferRemoval(
                     for: asset.tracks)
                 cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
+                cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
                 runButton.isEnabled =
                     self.pendingChange != nil
                     && pendingAssetID == asset.id
@@ -596,6 +688,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
+            cleanSubtitleButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -615,6 +708,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
+            cleanSubtitleButton.isEnabled = false
             return
         }
         var lines = [
@@ -678,6 +772,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanMKVButton.isEnabled
             ? "Review deterministic English-library subtitle cleanup suggestions."
             : "No deterministic English-library subtitle removals are suggested."
+        cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
+        cleanSubtitleButton.toolTip =
+            cleanSubtitleButton.isEnabled
+            ? "Normalize and review deterministic SRT text cleanup without changing timings."
+            : "SRT text cleanup is available when an inspected .srt file is selected."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -775,6 +874,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             && TrackRemovalPresentation.canOfferRemoval(for: asset.tracks)
             && !EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).isEmpty
     }
+
+    private static func canCleanSubtitle(_ asset: MediaAsset) -> Bool {
+        asset.sourceURL.pathExtension.lowercased() == "srt"
+    }
 }
 
 enum AssetSelectionPolicy {
@@ -798,5 +901,9 @@ enum OutputNamingPolicy {
         let base = sourceURL.deletingPathExtension().lastPathComponent
         let fileExtension = sourceURL.pathExtension.isEmpty ? "mkv" : sourceURL.pathExtension
         return "\(base) — Edited.\(fileExtension)"
+    }
+
+    static func cleanedSubtitleFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Clean.srt"
     }
 }

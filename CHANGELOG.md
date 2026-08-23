@@ -49,3 +49,13 @@ semantic versioning; public release tags are immutable and signed.
 - Fuse English Library Cleanup and segment-title removal into one temporary
   remux/property pass followed by one verification and commit, with no video or
   audio encode and the saved workflow identity recorded in durable history.
+- Add the first deterministic SRT cleanup path: bounded UTF-8, UTF-16, Windows-1252,
+  and Latin-1 decoding; strict timing parsing; sequence, line-ending, separator,
+  encoding, and whitespace normalization; block-aware YTS/YIFY ad suggestions;
+  individual restoration; and a native review sheet that prevents removing every
+  cue.
+- Write subtitle cleanup to a new UTF-8 SRT through the verified-output
+  transaction, reject a byte-changed source after preview, reopen and compare
+  every timing/text cue before and after commit, preserve the original byte for
+  byte, and record the sanitized lifecycle through the same DRY history path as
+  MKV edits.
