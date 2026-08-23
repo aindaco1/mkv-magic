@@ -19,6 +19,15 @@ final class AppModel {
     private(set) var assets: [MediaAsset] = []
     private(set) var state: State = .ready
     var didChange: (() -> Void)?
+    private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
+
+    init(
+        historyRecorderFactory: @escaping @Sendable () throws -> any JobHistoryRecording = {
+            try AppHistoryLocation.makeStore()
+        }
+    ) {
+        self.historyRecorderFactory = historyRecorderFactory
+    }
 
     func addFiles(_ urls: [URL]) async {
         let uniqueRoots = Array(Set(urls.map(\.standardizedFileURL))).sorted {
@@ -114,7 +123,40 @@ final class AppModel {
 
         state = .executing("Creating and verifying \(destinationURL.lastPathComponent)…")
         didChange?()
+        var historyRecorder: (any JobHistoryRecording)?
+        var historyJobID: UUID?
         do {
+            let recorder = try historyRecorderFactory()
+            historyRecorder = recorder
+            var historyJob = makeReadySegmentTitleJob(
+                asset: asset,
+                destinationURL: destinationURL
+            )
+            try historyJob.transition(
+                to: .inspecting,
+                at: historyJob.createdAt,
+                message: "Using the completed media inspection."
+            )
+            try historyJob.transition(
+                to: .planned,
+                at: historyJob.createdAt,
+                message: "Zero video encodes; mkvpropedit on a verified clone."
+            )
+            try historyJob.transition(
+                to: .ready,
+                at: historyJob.createdAt,
+                message: "User selected a new output location."
+            )
+            try await recorder.create(historyJob)
+            let executingJobID = historyJob.id
+            historyJobID = executingJobID
+            try await recorder.transition(
+                jobID: executingJobID,
+                to: .running,
+                at: Date(),
+                message: "Editing a temporary clone."
+            )
+
             let catalog = try makeToolCatalog()
             let runner = FoundationCommandRunner()
             let inspector = UnifiedMediaInspector(
@@ -130,22 +172,95 @@ final class AppModel {
             let output = try await executor.execute(
                 source: asset,
                 title: title,
-                destinationURL: destinationURL
+                destinationURL: destinationURL,
+                onStage: { stage in
+                    switch stage {
+                    case .verifying:
+                        try await recorder.transition(
+                            jobID: executingJobID,
+                            to: .verifying,
+                            at: Date(),
+                            message: "Re-inspecting output and comparing preserved structure."
+                        )
+                    case .committing:
+                        try await recorder.transition(
+                            jobID: executingJobID,
+                            to: .committing,
+                            at: Date(),
+                            message: "Verification passed; committing the new output."
+                        )
+                    }
+                }
             )
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
             } else {
                 assets.append(output)
             }
-            state = .completed("Created \(destinationURL.lastPathComponent); original unchanged.")
+            do {
+                try await recorder.transition(
+                    jobID: executingJobID,
+                    to: .succeeded,
+                    at: Date(),
+                    message: "Verified output committed and reopened."
+                )
+                state = .completed(
+                    "Created \(destinationURL.lastPathComponent); original unchanged."
+                )
+            } catch {
+                _ = try? await recorder.transition(
+                    jobID: executingJobID,
+                    to: .failed,
+                    at: Date(),
+                    message: "Output committed; history finalization failed."
+                )
+                state = .completedWithWarnings(
+                    "Created \(destinationURL.lastPathComponent); original unchanged, but "
+                        + "history could not record success."
+                )
+            }
             didChange?()
             return output
         } catch {
+            if let historyRecorder, let historyJobID {
+                _ = try? await historyRecorder.transition(
+                    jobID: historyJobID,
+                    to: .failed,
+                    at: Date(),
+                    message: Self.sanitizedFailureMessage(for: error)
+                )
+            }
             state = .failed("Original unchanged. \(error.localizedDescription)")
             didChange?()
             throw error
         }
     }
+
+    private func makeReadySegmentTitleJob(
+        asset: MediaAsset,
+        destinationURL: URL
+    ) -> MediaJobRecord {
+        MediaJobRecord(
+            createdAt: Date(),
+            workflowID: Self.segmentTitleWorkflowID,
+            workflowName: "Edit segment title",
+            inputs: [MediaJobInput(displayName: asset.sourceURL.lastPathComponent)],
+            outputDisplayName: destinationURL.lastPathComponent
+        )
+    }
+
+    private static func sanitizedFailureMessage(for error: Error) -> String {
+        if let executionError = error as? SegmentTitleExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        return "Edit stopped before a verified commit."
+    }
+
+    private static let segmentTitleWorkflowID = UUID(
+        uuidString: "6A2D7635-AB6D-4C7A-AE02-1561631121F0"
+    )!
 
     private func makeToolCatalog() throws -> ToolCatalog {
         if let explicitRoot = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"],

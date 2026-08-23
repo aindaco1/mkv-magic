@@ -1,5 +1,6 @@
 import AppKit
 import MKVMagicCore
+import MKVMagicSystem
 import XCTest
 
 @testable import MKVMagic
@@ -59,6 +60,57 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertNil(InspectorPresentationPolicy.displayedBitDepth(for: audio))
         XCTAssertEqual(InspectorPresentationPolicy.displayedBitDepth(for: video), 10)
+    }
+
+    func testHistoryLocationCreatesPrivateAppSupportDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-history-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try AppHistoryLocation.makeStore(applicationSupportURL: root)
+        try await store.save([])
+
+        let appDirectory = root.appendingPathComponent("com.dustwave.mkvmagic")
+        let attributes = try FileManager.default.attributesOfItem(atPath: appDirectory.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o700)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: appDirectory.appendingPathComponent("job-history.json").path
+            )
+        )
+    }
+
+    func testHistoryLocationRejectsSymlinkedAppDirectory() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-history-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let target = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-history-target-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+        defer {
+            try? FileManager.default.removeItem(at: root)
+            try? FileManager.default.removeItem(at: target)
+        }
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("com.dustwave.mkvmagic"),
+            withDestinationURL: target
+        )
+
+        XCTAssertThrowsError(
+            try AppHistoryLocation.makeStore(applicationSupportURL: root)
+        ) {
+            XCTAssertEqual(
+                $0 as? AppHistoryLocationError,
+                .unsafeApplicationSupport
+            )
+        }
     }
 
     @MainActor

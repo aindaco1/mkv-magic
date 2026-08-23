@@ -23,9 +23,9 @@ public enum MediaJobState: String, Codable, CaseIterable, Hashable, Sendable {
 public struct MediaJobInput: Codable, Hashable, Identifiable, Sendable {
     public let id: UUID
     public let displayName: String
-    public let bookmarkID: UUID
+    public let bookmarkID: UUID?
 
-    public init(id: UUID = UUID(), displayName: String, bookmarkID: UUID) {
+    public init(id: UUID = UUID(), displayName: String, bookmarkID: UUID? = nil) {
         self.id = id
         self.displayName = displayName
         self.bookmarkID = bookmarkID

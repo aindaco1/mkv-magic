@@ -5,6 +5,8 @@ public enum JobHistoryStoreError: Error, Equatable, Sendable {
     case unsafePath
     case oversizedDocument
     case tooManyRecords
+    case duplicateRecord
+    case recordNotFound
     case unexpectedFields
     case unsupportedSchema
     case malformedRecord
@@ -15,7 +17,18 @@ public protocol JobHistoryPersisting: Sendable {
     func save(_ records: [MediaJobRecord]) async throws
 }
 
-public actor JSONJobHistoryStore: JobHistoryPersisting {
+public protocol JobHistoryRecording: JobHistoryPersisting {
+    func create(_ record: MediaJobRecord) async throws
+    @discardableResult
+    func transition(
+        jobID: UUID,
+        to state: MediaJobState,
+        at timestamp: Date,
+        message: String?
+    ) async throws -> MediaJobRecord
+}
+
+public actor JSONJobHistoryStore: JobHistoryRecording {
     public static let currentSchema = "mkv-magic-job-history-v1"
     public static let maximumRecords = 10_000
     public static let maximumDocumentBytes = 16_777_216
@@ -35,6 +48,41 @@ public actor JSONJobHistoryStore: JobHistoryPersisting {
     }
 
     public func load() async throws -> [MediaJobRecord] {
+        try readRecords()
+    }
+
+    public func save(_ records: [MediaJobRecord]) async throws {
+        try writeRecords(records)
+    }
+
+    public func create(_ record: MediaJobRecord) async throws {
+        var records = try readRecords()
+        guard !records.contains(where: { $0.id == record.id }) else {
+            throw JobHistoryStoreError.duplicateRecord
+        }
+        records.append(record)
+        try writeRecords(records)
+    }
+
+    @discardableResult
+    public func transition(
+        jobID: UUID,
+        to state: MediaJobState,
+        at timestamp: Date,
+        message: String? = nil
+    ) async throws -> MediaJobRecord {
+        var records = try readRecords()
+        guard let index = records.firstIndex(where: { $0.id == jobID }) else {
+            throw JobHistoryStoreError.recordNotFound
+        }
+        var record = records[index]
+        try record.transition(to: state, at: timestamp, message: message)
+        records[index] = record
+        try writeRecords(records)
+        return record
+    }
+
+    private func readRecords() throws -> [MediaJobRecord] {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
         let values = try fileURL.resourceValues(forKeys: [
             .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
@@ -59,7 +107,7 @@ public actor JSONJobHistoryStore: JobHistoryPersisting {
         return document.records
     }
 
-    public func save(_ records: [MediaJobRecord]) async throws {
+    private func writeRecords(_ records: [MediaJobRecord]) throws {
         try validate(records)
         let parent = fileURL.deletingLastPathComponent()
         let parentValues = try parent.resourceValues(forKeys: [

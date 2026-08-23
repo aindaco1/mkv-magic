@@ -83,4 +83,14 @@ final class MediaModelTests: XCTestCase {
             )
         }
     }
+
+    func testJobInputCanTruthfullyOmitUnavailableSecurityBookmark() throws {
+        let input = MediaJobInput(displayName: "Movie.mkv")
+
+        XCTAssertNil(input.bookmarkID)
+        XCTAssertEqual(
+            try JSONDecoder().decode(MediaJobInput.self, from: JSONEncoder().encode(input)),
+            input
+        )
+    }
 }

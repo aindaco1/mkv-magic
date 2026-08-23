@@ -5,6 +5,18 @@ import MKVMagicMedia
 import MKVMagicSystem
 import XCTest
 
+private actor SegmentTitleStageRecorder {
+    private var stages = [SegmentTitleExecutionStage]()
+
+    func append(_ stage: SegmentTitleExecutionStage) {
+        stages.append(stage)
+    }
+
+    func snapshot() -> [SegmentTitleExecutionStage] {
+        stages
+    }
+}
+
 final class RealToolSegmentTitleEditTests: XCTestCase {
     func testRealToolsEditVerifiedCloneAndPreserveOriginalByteForByte() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
@@ -49,14 +61,18 @@ final class RealToolSegmentTitleEditTests: XCTestCase {
             runner: runner,
             inspector: inspector
         )
+        let stageRecorder = SegmentTitleStageRecorder()
 
         let outputAsset = try await executor.execute(
             source: originalAsset,
             title: "Verified Title",
-            destinationURL: output
+            destinationURL: output,
+            onStage: { stage in await stageRecorder.append(stage) }
         )
 
         XCTAssertEqual(outputAsset.metadata["title"], "Verified Title")
+        let observedStages = await stageRecorder.snapshot()
+        XCTAssertEqual(observedStages, [.verifying, .committing])
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
         let sourceAfterEdit = try await inspector.inspect(source)
         XCTAssertEqual(sourceAfterEdit.metadata["title"], "Original Title")

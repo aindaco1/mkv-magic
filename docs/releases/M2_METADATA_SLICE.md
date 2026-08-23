@@ -44,10 +44,18 @@ not a public release.
   preserved track, and the new title; the source SHA-256 remained identical.
 - The accepted UI state was visually inspected, and the relevant unified-log
   window contained no Auto Layout, error, or fault messages from MKV Magic.
+- A real-tool app integration persists the complete queued, inspected, planned,
+  ready, running, verifying, committing, and succeeded lifecycle through atomic
+  history updates. The document has private file and directory permissions,
+  stores display names and sanitized messages instead of full paths, and leaves
+  the bookmark reference empty until an actual security bookmark exists.
+- A fault test refuses the committing transition from the progress observer and
+  proves that failed progress persistence before commit removes the working copy
+  while preserving the source and leaving no destination.
 
 ## Still pending in M2
 
-- Persist execution progress into the queue/history store.
+- Queue/History navigation and a user-visible durable execution report.
 - Track language/role editing, track removal, bulk matching, `mkvmerge` remuxing,
   Clean MKV previews, optional verified-original Trash behavior, cancellation UI,
   and privacy-safe command/details reports.

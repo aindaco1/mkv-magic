@@ -21,3 +21,6 @@ semantic versioning; public release tags are immutable and signed.
 - Replace blocking process waits with race-safe termination callbacks and a
   timeout escalation path after a sequential real-tool regression exposed a
   completed-process hang.
+- Persist real edit progress through the fail-closed job lifecycle in a private
+  atomic history document, with sanitized messages and no invented security
+  bookmark or full media path.

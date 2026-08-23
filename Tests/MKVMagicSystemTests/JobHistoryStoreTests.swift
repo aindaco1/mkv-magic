@@ -31,6 +31,57 @@ final class JobHistoryStoreTests: XCTestCase {
         XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
     }
 
+    func testCreatesAndAtomicallyAdvancesPersistedJob() async throws {
+        let store = try JSONJobHistoryStore(fileURL: fileURL)
+        var record = makeRecord()
+        for state in [MediaJobState.inspecting, .planned, .ready] {
+            try record.transition(to: state, at: record.createdAt)
+        }
+
+        try await store.create(record)
+        for state in [
+            MediaJobState.running, .verifying, .committing, .succeeded,
+        ] {
+            _ = try await store.transition(
+                jobID: record.id,
+                to: state,
+                at: record.createdAt,
+                message: "Sanitized progress"
+            )
+        }
+
+        let records = try await store.load()
+        let loaded = try XCTUnwrap(records.first)
+        XCTAssertEqual(loaded.state, .succeeded)
+        XCTAssertEqual(loaded.events.last?.message, "Sanitized progress")
+        XCTAssertFalse(String(data: try Data(contentsOf: fileURL), encoding: .utf8)!.contains("/"))
+    }
+
+    func testCreateRejectsDuplicateAndTransitionRejectsMissingRecord() async throws {
+        let store = try JSONJobHistoryStore(fileURL: fileURL)
+        let record = makeRecord()
+        try await store.create(record)
+
+        do {
+            try await store.create(record)
+            XCTFail("Expected duplicate refusal")
+        } catch {
+            XCTAssertEqual(error as? JobHistoryStoreError, .duplicateRecord)
+        }
+
+        do {
+            _ = try await store.transition(
+                jobID: UUID(),
+                to: .inspecting,
+                at: record.createdAt,
+                message: nil
+            )
+            XCTFail("Expected missing-record refusal")
+        } catch {
+            XCTAssertEqual(error as? JobHistoryStoreError, .recordNotFound)
+        }
+    }
+
     func testUnexpectedTopLevelFieldsFailClosed() async throws {
         let store = try JSONJobHistoryStore(fileURL: fileURL)
         try Data(#"{"schema":"mkv-magic-job-history-v1","records":[],"extra":true}"#.utf8)

@@ -8,6 +8,11 @@ public enum SegmentTitleExecutionError: Error, Equatable, Sendable {
     case committedOutputAuditFailed(outputURL: URL, reason: String)
 }
 
+public enum SegmentTitleExecutionStage: Equatable, Sendable {
+    case verifying
+    case committing
+}
+
 extension SegmentTitleExecutionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
@@ -35,7 +40,8 @@ public struct SegmentTitleEditExecutor<Runner: CommandRunning, Inspector: MediaI
     public func execute(
         source: MediaAsset,
         title: String?,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @Sendable (SegmentTitleExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
             throw SegmentTitleExecutionError.unsupportedContainer
@@ -47,9 +53,11 @@ public struct SegmentTitleEditExecutor<Runner: CommandRunning, Inspector: MediaI
         do {
             let temporaryOutput = try await transaction.prepareClone()
             try await editor.editSegmentTitle(at: temporaryOutput, title: title)
+            try await onStage(.verifying)
             let temporaryAsset = try await inspector.inspect(temporaryOutput)
             try verifier.verify(original: source, output: temporaryAsset, expectedTitle: title)
             try await transaction.markVerified()
+            try await onStage(.committing)
             let committedURL = try await transaction.commit()
             do {
                 let committedAsset = try await inspector.inspect(committedURL)
