@@ -24,14 +24,23 @@ final class RealToolAppHistoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixtureRoot) }
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
         let subtitle = fixtureRoot.appendingPathComponent("french.srt")
+        let styledSubtitle = fixtureRoot.appendingPathComponent("english.ass")
         let source = fixtureRoot.appendingPathComponent("source.mkv")
         let output = fixtureRoot.appendingPathComponent("source — Edited.mkv")
         let trackOutput = fixtureRoot.appendingPathComponent("source — Track Edited.mkv")
         let workflowOutput = fixtureRoot.appendingPathComponent("source — Workflow.mkv")
         let removalOutput = fixtureRoot.appendingPathComponent("source — Track Removed.mkv")
         let muxOutput = fixtureRoot.appendingPathComponent("source — Subtitled.mkv")
+        let styledMuxOutput = fixtureRoot.appendingPathComponent("source — Styled.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
         try Data("1\n00:00:00,000 --> 00:00:00,500\nBonjour\n".utf8).write(to: subtitle)
+        try Data(
+            ("[Script Info]\nScriptType: v4.00+\n"
+                + "[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial\n"
+                + "[Events]\n"
+                + "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
+                + "Dialogue: 0,0:00:00.00,0:00:00.50,Default,,0,0,0,,{\\an8}Hello\n").utf8
+        ).write(to: styledSubtitle)
 
         let createResult = try await runner.run(
             CommandRequest(
@@ -153,9 +162,24 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertTrue(muxAsset.tracks.last?.isDefault == true)
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
 
+        let styledPreview = try await model.previewAdvancedSubtitleCleanup(at: styledSubtitle)
+        let styledMuxAsset = try await model.muxExternalSubtitle(
+            in: muxAsset,
+            subtitlePreview: styledPreview,
+            metadata: ExternalSubtitleTrackMetadata(
+                language: "en",
+                name: "English Styled"
+            ),
+            destinationURL: styledMuxOutput
+        )
+        XCTAssertEqual(styledMuxAsset.tracks.count, 3)
+        XCTAssertEqual(styledMuxAsset.tracks.last?.codecID, "S_TEXT/ASS")
+        XCTAssertEqual(styledMuxAsset.tracks.last?.title, "English Styled")
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 5)
+        XCTAssertEqual(records.count, 6)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
@@ -209,6 +233,17 @@ final class RealToolAppHistoryTests: XCTestCase {
             })
         XCTAssertEqual(
             muxRecord.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let styledMuxRecord = records[5]
+        XCTAssertEqual(styledMuxRecord.workflowName, "Add external ASS subtitle")
+        XCTAssertEqual(
+            styledMuxRecord.inputDisplayNames,
+            ["source — Subtitled.mkv", "english.ass"]
+        )
+        XCTAssertEqual(styledMuxRecord.outputDisplayName, "source — Styled.mkv")
+        XCTAssertEqual(
+            styledMuxRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
 

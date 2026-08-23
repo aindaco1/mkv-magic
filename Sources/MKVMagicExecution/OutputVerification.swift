@@ -178,6 +178,7 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         original: MediaAsset,
         output: MediaAsset,
         expectedMetadata: ExternalSubtitleTrackMetadata,
+        expectedFormat: ExternalTextSubtitleFormat = .subRip,
         subtitleEnd: SubRipTimestamp
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
@@ -219,7 +220,7 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
                 == originalTracks.map(RemuxTrackSnapshot.init),
             let added = outputTracks.last,
             added.kind == .subtitle,
-            Self.isSubRip(added)
+            Self.matches(added, expectedFormat: expectedFormat)
         else {
             throw OutputVerificationError.tracksChanged
         }
@@ -240,10 +241,20 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         }
     }
 
-    private static func isSubRip(_ track: MediaTrack) -> Bool {
+    private static func matches(
+        _ track: MediaTrack,
+        expectedFormat: ExternalTextSubtitleFormat
+    ) -> Bool {
         let codec = track.codec.lowercased()
         let codecID = track.codecID?.lowercased() ?? ""
-        return codec.contains("subrip") || codec == "srt" || codecID == "s_text/utf8"
+        switch expectedFormat {
+        case .subRip:
+            return codec.contains("subrip") || codec == "srt" || codecID == "s_text/utf8"
+        case .ass:
+            return codecID == "s_text/ass" || codec == "ass"
+        case .ssa:
+            return codecID == "s_text/ssa" || codec == "ssa"
+        }
     }
 }
 

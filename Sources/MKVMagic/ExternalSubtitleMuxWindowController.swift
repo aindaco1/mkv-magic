@@ -7,9 +7,25 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
     private let muxViewController: ExternalSubtitleMuxViewController
     private var completion: ((ExternalSubtitleTrackMetadata?) -> Void)?
 
-    init(
+    convenience init(
         media: MediaAsset,
         preview: SubtitleCleanupFilePreview,
+        match: ExternalSubtitleMatch
+    ) {
+        self.init(media: media, preview: .subRip(preview), match: match)
+    }
+
+    convenience init(
+        media: MediaAsset,
+        preview: AdvancedSubtitleCleanupFilePreview,
+        match: ExternalSubtitleMatch
+    ) {
+        self.init(media: media, preview: .advanced(preview), match: match)
+    }
+
+    init(
+        media: MediaAsset,
+        preview: ExternalSubtitleFilePreview,
         match: ExternalSubtitleMatch
     ) {
         muxViewController = ExternalSubtitleMuxViewController(
@@ -61,7 +77,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
     var onContinue: ((ExternalSubtitleTrackMetadata) -> Void)?
 
     private let media: MediaAsset
-    private let preview: SubtitleCleanupFilePreview
+    private let preview: ExternalSubtitleFilePreview
     private let match: ExternalSubtitleMatch
     private let languageField = NSComboBox()
     private let nameField = NSTextField()
@@ -75,7 +91,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
 
     init(
         media: MediaAsset,
-        preview: SubtitleCleanupFilePreview,
+        preview: ExternalSubtitleFilePreview,
         match: ExternalSubtitleMatch
     ) {
         self.media = media
@@ -95,7 +111,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let explanation = NSTextField(
             wrappingLabelWithString:
-                "MKV Magic will copy every existing stream and add this SRT as the last track. Video and audio are not encoded."
+                "MKV Magic will copy every existing stream and add this \(preview.format.displayName) subtitle as the last track. Video and audio are not encoded."
         )
         explanation.textColor = .secondaryLabelColor
 
@@ -140,7 +156,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         )
         let warningLabel = NSTextField(
             wrappingLabelWithString: warnings.isEmpty
-                ? "The SRT is structurally normalized to UTF-8 in a private temporary copy. The selected SRT remains unchanged."
+                ? "The \(preview.format.displayName) subtitle is structurally normalized to UTF-8 in a private temporary copy. The selected subtitle remains unchanged."
                 : warnings.map { "⚠︎ \($0)" }.joined(separator: "\n")
         )
         warningLabel.textColor = warnings.isEmpty ? .secondaryLabelColor : .systemOrange
@@ -261,6 +277,20 @@ enum ExternalSubtitleMuxPresentation {
         preview: SubtitleCleanupFilePreview,
         match: ExternalSubtitleMatch
     ) -> [String] {
+        warnings(preview: .subRip(preview), match: match)
+    }
+
+    static func warnings(
+        preview: AdvancedSubtitleCleanupFilePreview,
+        match: ExternalSubtitleMatch
+    ) -> [String] {
+        warnings(preview: .advanced(preview), match: match)
+    }
+
+    static func warnings(
+        preview: ExternalSubtitleFilePreview,
+        match: ExternalSubtitleMatch
+    ) -> [String] {
         var values = [String]()
         if match.confidence == .low {
             values.append(
@@ -274,9 +304,9 @@ enum ExternalSubtitleMuxPresentation {
                 "Subtitle end time differs from the video by \(durationDifference(difference))."
             )
         }
-        if !preview.cleanup.changes.isEmpty {
+        if preview.cleanupChangeCount > 0 {
             values.append(
-                "\(preview.cleanup.changes.count) cleanup suggestion(s) will not be applied. Use Clean SRT first if you want them."
+                "\(preview.cleanupChangeCount) cleanup suggestion(s) will not be applied. Use Clean Subtitle first if you want them."
             )
         }
         return values

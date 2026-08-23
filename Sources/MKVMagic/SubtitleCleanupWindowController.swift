@@ -2,14 +2,112 @@ import AppKit
 import MKVMagicCore
 import MKVMagicExecution
 
+private struct SubtitleCleanupReviewChange {
+    let id: Int
+    let title: String
+    let detail: String
+    let start: SubRipTimestamp
+    let end: SubRipTimestamp
+}
+
+private enum SubtitleCleanupReviewPreview {
+    case subRip(SubtitleCleanupFilePreview)
+    case advanced(AdvancedSubtitleCleanupFilePreview)
+
+    var changes: [SubtitleCleanupReviewChange] {
+        switch self {
+        case .subRip(let preview):
+            preview.cleanup.changes.map { change in
+                SubtitleCleanupReviewChange(
+                    id: change.id,
+                    title: SubtitleCleanupPresentation.title(change),
+                    detail: SubtitleCleanupPresentation.detail(change),
+                    start: change.before.start,
+                    end: change.before.end
+                )
+            }
+        case .advanced(let preview):
+            preview.cleanup.changes.map { change in
+                SubtitleCleanupReviewChange(
+                    id: change.id,
+                    title: SubtitleCleanupPresentation.title(change),
+                    detail: SubtitleCleanupPresentation.detail(change),
+                    start: change.before.start,
+                    end: change.before.end
+                )
+            }
+        }
+    }
+
+    var itemCount: Int {
+        switch self {
+        case .subRip(let preview): preview.cleanup.original.cues.count
+        case .advanced(let preview): preview.cleanup.original.events.count
+        }
+    }
+
+    var itemName: String {
+        switch self {
+        case .subRip: "cues"
+        case .advanced: "events"
+        }
+    }
+
+    var itemSingular: String {
+        switch self {
+        case .subRip: "cue"
+        case .advanced: "event"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .subRip:
+            "Only deterministic whole-block ad matches and accidental edge whitespace are selected. Uncheck any change to restore that cue. Cue timing is never changed."
+        case .advanced:
+            "Only deterministic whole-event ad matches and dialogue edge whitespace are selected. Uncheck any change to restore that event. Styles, override tags, layout fields, and timing are never changed."
+        }
+    }
+
+    var normalization: String {
+        switch self {
+        case .subRip(let preview): SubtitleCleanupPresentation.normalization(preview)
+        case .advanced(let preview): SubtitleCleanupPresentation.normalization(preview)
+        }
+    }
+
+    func canConfirm(appliedChangeIDs: Set<Int>) -> Bool {
+        switch self {
+        case .subRip(let preview):
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: appliedChangeIDs
+            )
+        case .advanced(let preview):
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: appliedChangeIDs
+            )
+        }
+    }
+}
+
 @MainActor
 final class SubtitleCleanupWindowController: NSWindowController {
     private let cleanupViewController: SubtitleCleanupViewController
 
-    init(preview: SubtitleCleanupFilePreview) {
-        cleanupViewController = SubtitleCleanupViewController(preview: preview)
+    convenience init(preview: SubtitleCleanupFilePreview) {
+        self.init(review: .subRip(preview), title: "Clean SRT Subtitle")
+    }
+
+    convenience init(preview: AdvancedSubtitleCleanupFilePreview) {
+        self.init(review: .advanced(preview), title: "Clean ASS/SSA Subtitle")
+    }
+
+    private init(review: SubtitleCleanupReviewPreview, title: String) {
+        cleanupViewController = SubtitleCleanupViewController(review: review)
         let window = NSWindow(contentViewController: cleanupViewController)
-        window.title = "Clean SRT Subtitle"
+        window.title = title
         window.setContentSize(NSSize(width: 740, height: 560))
         window.minSize = NSSize(width: 640, height: 480)
         window.styleMask.insert(.resizable)
@@ -46,7 +144,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
     NSTableViewDelegate
 {
     var onComplete: ((Set<Int>?) -> Void)?
-    private let preview: SubtitleCleanupFilePreview
+    private let review: SubtitleCleanupReviewPreview
     private let tableView = NSTableView()
     private let summaryLabel = NSTextField(labelWithString: "")
     private let validationLabel = NSTextField(labelWithString: "")
@@ -57,9 +155,9 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
     )
     private var appliedChangeIDs = Set<Int>()
 
-    init(preview: SubtitleCleanupFilePreview) {
-        self.preview = preview
-        appliedChangeIDs = Set(preview.cleanup.changes.map(\.id))
+    fileprivate init(review: SubtitleCleanupReviewPreview) {
+        self.review = review
+        appliedChangeIDs = Set(review.changes.map(\.id))
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -73,11 +171,15 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         let heading = NSTextField(labelWithString: "Review subtitle cleanup")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let explanation = NSTextField(
-            wrappingLabelWithString:
-                "Only deterministic whole-block ad matches and accidental edge whitespace are selected. Uncheck any change to restore that cue. Cue timing is never changed."
+            wrappingLabelWithString: review.explanation
         )
         explanation.textColor = .secondaryLabelColor
-        summaryLabel.stringValue = SubtitleCleanupPresentation.summary(preview)
+        summaryLabel.stringValue = SubtitleCleanupPresentation.selectionSummary(
+            appliedCount: review.changes.count,
+            totalCount: review.changes.count,
+            itemCount: review.itemCount,
+            itemName: review.itemName
+        )
 
         let column = NSTableColumn(identifier: .init("change"))
         tableView.addTableColumn(column)
@@ -92,7 +194,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         scroll.borderType = .bezelBorder
 
         let normalization = NSTextField(
-            wrappingLabelWithString: SubtitleCleanupPresentation.normalization(preview)
+            wrappingLabelWithString: review.normalization
         )
         normalization.textColor = .secondaryLabelColor
         normalization.font = .systemFont(ofSize: 11)
@@ -133,7 +235,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        preview.cleanup.changes.count
+        review.changes.count
     }
 
     func tableView(
@@ -141,9 +243,9 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
-        let change = preview.cleanup.changes[row]
+        let change = review.changes[row]
         let checkbox = NSButton(
-            checkboxWithTitle: SubtitleCleanupPresentation.title(change),
+            checkboxWithTitle: change.title,
             target: self,
             action: #selector(toggleChange(_:))
         )
@@ -151,13 +253,13 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         checkbox.tag = row
         let timing = NSTextField(
             labelWithString:
-                "\(SubtitleCleanupPresentation.time(change.before.start)) → "
-                + SubtitleCleanupPresentation.time(change.before.end)
+                "\(SubtitleCleanupPresentation.time(change.start)) → "
+                + SubtitleCleanupPresentation.time(change.end)
         )
         timing.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         timing.textColor = .secondaryLabelColor
         let detail = NSTextField(
-            wrappingLabelWithString: SubtitleCleanupPresentation.detail(change)
+            wrappingLabelWithString: change.detail
         )
         detail.font = .systemFont(ofSize: 11)
         detail.textColor = .secondaryLabelColor
@@ -178,8 +280,8 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
     }
 
     @objc private func toggleChange(_ sender: NSButton) {
-        guard preview.cleanup.changes.indices.contains(sender.tag) else { return }
-        let id = preview.cleanup.changes[sender.tag].id
+        guard review.changes.indices.contains(sender.tag) else { return }
+        let id = review.changes[sender.tag].id
         if sender.state == .on {
             appliedChangeIDs.insert(id)
         } else {
@@ -192,27 +294,23 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
 
     @objc private func confirm() {
         guard
-            SubtitleCleanupPresentation.canConfirm(
-                preview: preview,
-                appliedChangeIDs: appliedChangeIDs
-            )
+            review.canConfirm(appliedChangeIDs: appliedChangeIDs)
         else { return }
-        let allChangeIDs = Set(preview.cleanup.changes.map(\.id))
+        let allChangeIDs = Set(review.changes.map(\.id))
         onComplete?(allChangeIDs.subtracting(appliedChangeIDs))
     }
 
     private func updateSelectionState() {
         summaryLabel.stringValue = SubtitleCleanupPresentation.selectionSummary(
             appliedCount: appliedChangeIDs.count,
-            totalCount: preview.cleanup.changes.count,
-            cueCount: preview.cleanup.original.cues.count
+            totalCount: review.changes.count,
+            itemCount: review.itemCount,
+            itemName: review.itemName
         )
-        saveButton.isEnabled = SubtitleCleanupPresentation.canConfirm(
-            preview: preview,
-            appliedChangeIDs: appliedChangeIDs
-        )
+        saveButton.isEnabled = review.canConfirm(appliedChangeIDs: appliedChangeIDs)
         validationLabel.stringValue =
-            saveButton.isEnabled ? "" : "Restore at least one cue before continuing."
+            saveButton.isEnabled
+            ? "" : "Restore at least one \(review.itemSingular) before continuing."
     }
 }
 
@@ -226,11 +324,38 @@ enum SubtitleCleanupPresentation {
     }
 
     static func selectionSummary(appliedCount: Int, totalCount: Int, cueCount: Int) -> String {
-        "\(cueCount) cues • \(appliedCount) of \(totalCount) suggested changes selected"
+        selectionSummary(
+            appliedCount: appliedCount,
+            totalCount: totalCount,
+            itemCount: cueCount,
+            itemName: "cues"
+        )
+    }
+
+    static func selectionSummary(
+        appliedCount: Int,
+        totalCount: Int,
+        itemCount: Int,
+        itemName: String
+    ) -> String {
+        "\(itemCount) \(itemName) • \(appliedCount) of \(totalCount) suggested changes selected"
     }
 
     static func normalization(_ preview: SubtitleCleanupFilePreview) -> String {
         var details = ["Output: UTF-8 without BOM, LF line endings, sequential cue numbers"]
+        if preview.encoding != .utf8 {
+            details.append("Input encoding: \(preview.encoding.rawValue)")
+        }
+        if !preview.diagnostics.isEmpty {
+            details.append("Structural normalization: \(preview.diagnostics.count) item(s)")
+        }
+        return details.joined(separator: " • ")
+    }
+
+    static func normalization(_ preview: AdvancedSubtitleCleanupFilePreview) -> String {
+        var details = [
+            "Output: UTF-8 without BOM and LF line endings; script sections and styles preserved"
+        ]
         if preview.encoding != .utf8 {
             details.append("Input encoding: \(preview.encoding.rawValue)")
         }
@@ -251,6 +376,16 @@ enum SubtitleCleanupPresentation {
         return "Before: \(before)   →   After: \(after.lines.joined(separator: " / "))"
     }
 
+    static func title(_ change: AdvancedSubStationAlphaCleanupChange) -> String {
+        if change.reasons.contains(.ytsAdvertisement) { return "Remove known YTS/YIFY ad event" }
+        return "Trim dialogue edge whitespace"
+    }
+
+    static func detail(_ change: AdvancedSubStationAlphaCleanupChange) -> String {
+        guard let after = change.after else { return "Remove: \(change.before.text)" }
+        return "Before: \(change.before.text)   →   After: \(after.text)"
+    }
+
     static func time(_ timestamp: SubRipTimestamp) -> String {
         let milliseconds = max(0, timestamp.milliseconds)
         return String(
@@ -269,5 +404,14 @@ enum SubtitleCleanupPresentation {
         let allChangeIDs = Set(preview.cleanup.changes.map(\.id))
         let restoredCueIDs = allChangeIDs.subtracting(appliedChangeIDs)
         return !preview.cleanup.document(restoringCueIDs: restoredCueIDs).cues.isEmpty
+    }
+
+    static func canConfirm(
+        preview: AdvancedSubtitleCleanupFilePreview,
+        appliedChangeIDs: Set<Int>
+    ) -> Bool {
+        let allChangeIDs = Set(preview.cleanup.changes.map(\.id))
+        let restoredEventIDs = allChangeIDs.subtracting(appliedChangeIDs)
+        return !preview.cleanup.document(restoringEventIDs: restoredEventIDs).events.isEmpty
     }
 }

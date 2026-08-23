@@ -24,16 +24,19 @@ and export portable recipes. Its first reusable actions are English Library
 Cleanup and segment-title removal. Workflows store intent rather than media
 paths or track identifiers, compile against the selected inspection, show a
 zero-encode impact preview, and share one verified output pipeline.
-Selected SRT files can also be decoded, structurally normalized, and reviewed
-cue by cue for deterministic YTS/YIFY advertisement removal and accidental edge
-whitespace. Cleanup preserves every timestamp and timing setting, refuses to
-remove every cue, detects a source changed since preview, writes a new UTF-8 SRT,
-and reopens the byte-exact result before commit while leaving the source intact.
+Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
+and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
+accidental edge whitespace. Cleanup preserves every timestamp and, for ASS/SSA,
+the script sections, style definitions, override tags, layout fields, comments,
+and unknown sections. It refuses to remove every event, detects a source changed
+since preview, writes a new UTF-8 subtitle, and reopens the exact planned result
+before commit while leaving the source intact.
 For inspected Matroska video, **Add Subtitle…** accepts a reviewed external SRT,
-ranks the filename and timing match, infers editable language/forced/SDH
-metadata, and adds it as the last track in a new MKV without encoding. Existing
-tracks, chapters, tags, and attachments are verified before and after commit;
-the selected SRT is normalized only in a private temporary copy and remains
+ASS, or SSA file, ranks the filename and timing match, infers editable
+language/forced/SDH metadata, and adds it as the last track in a new MKV without
+encoding. Existing tracks, chapters, tags, and attachments are verified before
+and after commit. Styled subtitles receive an additional `mkvextract` audit of
+their header, styles, layout, timing, and text; both selected inputs remain
 unchanged.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight

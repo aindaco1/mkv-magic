@@ -22,6 +22,22 @@ public struct ExternalSubtitleTrackMetadata: Codable, Equatable, Sendable {
     }
 }
 
+public enum ExternalTextSubtitleFormat: String, Codable, CaseIterable, Sendable {
+    case subRip
+    case ass
+    case ssa
+
+    public var filenameExtension: String {
+        switch self {
+        case .subRip: "srt"
+        case .ass: "ass"
+        case .ssa: "ssa"
+        }
+    }
+
+    public var displayName: String { filenameExtension.uppercased() }
+}
+
 public enum ExternalSubtitleMatchConfidence: String, Codable, CaseIterable, Sendable {
     case high
     case medium
@@ -77,6 +93,30 @@ public struct ExternalSubtitleMatcher: Sendable {
         subtitleURL: URL,
         subtitle: SubRipDocument
     ) -> ExternalSubtitleMatch {
+        match(
+            media: media,
+            subtitleURL: subtitleURL,
+            subtitleEnd: subtitle.cues.map(\.end).max() ?? SubRipTimestamp(milliseconds: 0)
+        )
+    }
+
+    public func match(
+        media: MediaAsset,
+        subtitleURL: URL,
+        subtitle: AdvancedSubStationAlphaDocument
+    ) -> ExternalSubtitleMatch {
+        match(
+            media: media,
+            subtitleURL: subtitleURL,
+            subtitleEnd: subtitle.events.map(\.end).max() ?? SubRipTimestamp(milliseconds: 0)
+        )
+    }
+
+    public func match(
+        media: MediaAsset,
+        subtitleURL: URL,
+        subtitleEnd: SubRipTimestamp
+    ) -> ExternalSubtitleMatch {
         let mediaName = media.sourceURL.deletingPathExtension().lastPathComponent
         let subtitleName = subtitleURL.deletingPathExtension().lastPathComponent
         let mediaTokens = Self.tokens(mediaName)
@@ -131,7 +171,6 @@ public struct ExternalSubtitleMatcher: Sendable {
             reasons.insert(.hearingImpairedInFilename)
         }
 
-        let subtitleEnd = subtitle.cues.map(\.end).max() ?? SubRipTimestamp(milliseconds: 0)
         let durationDifference: Int64?
         let durationCompatible: Bool?
         if let duration = media.duration {

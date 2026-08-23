@@ -78,6 +78,16 @@ final class AppPolicyTests: XCTestCase {
                 for: URL(fileURLWithPath: "/Media/Movie.en.SRT")),
             "Movie.en — Clean.srt"
         )
+        XCTAssertEqual(
+            OutputNamingPolicy.cleanedSubtitleFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.en.ASS")),
+            "Movie.en — Clean.ass"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.cleanedSubtitleFilename(
+                for: URL(fileURLWithPath: "/Media/Legacy.SSA")),
+            "Legacy — Clean.ssa"
+        )
     }
 
     func testSubtitledOutputNameAlwaysUsesMKV() {
@@ -396,6 +406,34 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testAdvancedSubtitleCleanupPresentationKeepsOneEventAndDescribesPreservation() throws {
+        let preview = try advancedSubtitlePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.ass"),
+            text:
+                "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+                + "Dialogue: 0,0:00:01.00,0:00:02.00,Default,Downloaded from YTS.MX\n"
+        )
+        let eventID = try XCTUnwrap(preview.cleanup.original.events.first?.id)
+
+        XCTAssertFalse(
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: [eventID]
+            )
+        )
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.canConfirm(
+                preview: preview,
+                appliedChangeIDs: []
+            )
+        )
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.normalization(preview).contains(
+                "script sections and styles preserved"
+            )
+        )
+    }
+
     @MainActor
     func testSubtitleCleanupWindowUsesCompactNativeLayout() throws {
         let document = SubRipDocument(
@@ -421,6 +459,26 @@ final class AppPolicyTests: XCTestCase {
         let window = try XCTUnwrap(controller.window)
         let contentView = try XCTUnwrap(window.contentView)
 
+        XCTAssertTrue(window.contentViewController is SubtitleCleanupViewController)
+        XCTAssertEqual(contentView.frame.size.width, 740, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 640)
+        XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    @MainActor
+    func testAdvancedSubtitleCleanupUsesSharedCompactReviewWindow() throws {
+        let preview = try advancedSubtitlePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.ass"),
+            text:
+                "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+                + "Dialogue: 0,0:00:01.00,0:00:02.00,Default, Text \n"
+        )
+        let controller = SubtitleCleanupWindowController(preview: preview)
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+
+        XCTAssertEqual(window.title, "Clean ASS/SSA Subtitle")
         XCTAssertTrue(window.contentViewController is SubtitleCleanupViewController)
         XCTAssertEqual(contentView.frame.size.width, 740, accuracy: 1)
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
@@ -485,6 +543,47 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testExternalASSMuxUsesSharedConfirmationAndWarnsBeforeDiscardingCleanup() throws {
+        let preview = try advancedSubtitlePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.en.ass"),
+            text:
+                "[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial\n"
+                + "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+                + "Dialogue: 0,0:00:00.00,0:00:01.00,Default, Text \n"
+        )
+        let media = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska",
+            duration: MediaTime(seconds: 1),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1")]
+        )
+        let match = ExternalSubtitleMatcher().match(
+            media: media,
+            subtitleURL: preview.sourceURL,
+            subtitle: preview.cleanup.original
+        )
+
+        let warnings = ExternalSubtitleMuxPresentation.warnings(
+            preview: preview,
+            match: match
+        )
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings[0].contains("Clean Subtitle first"))
+
+        let controller = ExternalSubtitleMuxWindowController(
+            media: media,
+            preview: preview,
+            match: match
+        )
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+        XCTAssertEqual(window.title, "Add External Subtitle")
+        XCTAssertTrue(window.contentViewController is ExternalSubtitleMuxViewController)
+        XCTAssertEqual(contentView.frame.size.width, 620, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 530, accuracy: 1)
+    }
+
+    @MainActor
     func testSubtitleCleanupPersistsSanitizedVerifiedLifecycle() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-subtitle-history-\(UUID().uuidString)",
@@ -544,6 +643,68 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testAdvancedSubtitleCleanupPersistsSanitizedVerifiedLifecycle() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-ass-history-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Movie.en.ass")
+        let output = root.appendingPathComponent("Movie.en — Clean.ass")
+        let sourceText =
+            "[Script Info]\r\nTitle: Movie\r\n"
+            + "[V4+ Styles]\r\nFormat: Name, Fontname\r\nStyle: Default,Arial\r\n"
+            + "[Events]\r\nFormat: Layer, Start, End, Style, Text\r\n"
+            + "Dialogue: 0,0:00:00.00,0:00:01.00,Default,Downloaded from YTS.MX\r\n"
+            + "Dialogue: 0,0:00:01.00,0:00:02.00,Default,  Dialogue  \r\n"
+        let sourceData = Data(sourceText.utf8)
+        try sourceData.write(to: source)
+        let applicationSupport = root.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(applicationSupportURL: applicationSupport)
+        let model = AppModel(historyRecorderFactory: { store })
+
+        let preview = try await model.previewAdvancedSubtitleCleanup(at: source)
+        let result = try await model.cleanAdvancedSubtitle(
+            preview: preview,
+            restoringEventIDs: [],
+            destinationURL: output
+        )
+
+        XCTAssertEqual(result.removedEventCount, 1)
+        XCTAssertEqual(result.changedEventCount, 1)
+        XCTAssertEqual(try Data(contentsOf: source), sourceData)
+        let outputText = String(decoding: try Data(contentsOf: output), as: UTF8.self)
+        XCTAssertTrue(outputText.contains("Style: Default,Arial"))
+        XCTAssertTrue(outputText.contains("Default,Dialogue"))
+        XCTAssertFalse(outputText.contains("YTS.MX"))
+        XCTAssertEqual(
+            model.state,
+            .completed("Created Movie.en — Clean.ass; original unchanged.")
+        )
+        let records = try await store.load()
+        let record = try XCTUnwrap(records.only)
+        XCTAssertEqual(record.workflowName, "Clean ASS/SSA subtitle")
+        XCTAssertEqual(record.inputs.map(\.displayName), ["Movie.en.ass"])
+        XCTAssertEqual(record.outputDisplayName, "Movie.en — Clean.ass")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let historyText = record.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertFalse(historyText.contains(root.path))
+        XCTAssertFalse(historyText.contains("Dialogue"))
+        XCTAssertFalse(historyText.contains("YTS.MX"))
+    }
+
+    @MainActor
     func testMainWindowContentKeepsUsableWidthAfterLayout() throws {
         let controller = MainViewController(model: AppModel())
         controller.loadView()
@@ -582,6 +743,24 @@ final class AppPolicyTests: XCTestCase {
             )
         }
         return record
+    }
+
+    private func advancedSubtitlePreview(
+        sourceURL: URL,
+        text: String
+    ) throws -> AdvancedSubtitleCleanupFilePreview {
+        let data = Data(text.utf8)
+        let parsed = try AdvancedSubStationAlphaCodec().parse(
+            DecodedSubtitleText(text: text, encoding: .utf8)
+        )
+        return AdvancedSubtitleCleanupFilePreview(
+            sourceURL: sourceURL,
+            sourceSHA256: Data(SHA256.hash(data: data)),
+            encoding: .utf8,
+            diagnostics: parsed.diagnostics,
+            cleanup: AdvancedSubStationAlphaCleanupPolicy().preview(parsed.document),
+            normalizationNeeded: false
+        )
     }
 }
 

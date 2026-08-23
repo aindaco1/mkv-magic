@@ -104,45 +104,35 @@ public struct SubtitleCleanupExecutor: Sendable {
             throw SubtitleCleanupExecutionError.unsupportedFormat
         }
         try validateCurrent(filePreview)
-        let sourceURL = filePreview.sourceURL
         let desired = filePreview.cleanup.document(restoringCueIDs: restoringCueIDs)
         guard !desired.cues.isEmpty else {
             throw SubtitleCleanupExecutionError.noCuesRemaining
         }
         let serialized = Data(SubRipCodec().serialize(desired).utf8)
-        let transaction = VerifiedOutputTransaction(
-            sourceURL: sourceURL,
-            destinationURL: destinationURL
-        )
-        do {
-            let temporaryURL = try await transaction.prepareEmptyOutput()
-            try serialized.write(to: temporaryURL, options: .withoutOverwriting)
-            try await onStage(.verifying)
-            try Self.verify(fileURL: temporaryURL, expectedData: serialized, desired: desired)
-            try await transaction.markVerified()
-            try await onStage(.committing)
-            let committedURL = try await transaction.commit()
-            do {
-                try Self.verify(fileURL: committedURL, expectedData: serialized, desired: desired)
-            } catch {
-                throw SubtitleCleanupExecutionError.committedOutputAuditFailed(
-                    outputURL: committedURL,
-                    reason: error.localizedDescription
+        let committedURL = try await VerifiedSubtitleTextOutputWriter.execute(
+            sourceURL: filePreview.sourceURL,
+            destinationURL: destinationURL,
+            data: serialized,
+            onStage: onStage,
+            verify: { outputURL in
+                try Self.verify(fileURL: outputURL, expectedData: serialized, desired: desired)
+            },
+            committedAuditError: { outputURL, reason in
+                SubtitleCleanupExecutionError.committedOutputAuditFailed(
+                    outputURL: outputURL,
+                    reason: reason
                 )
             }
-            let acceptedChanges = filePreview.cleanup.changes.filter {
-                !restoringCueIDs.contains($0.id)
-            }
-            return SubtitleCleanupResult(
-                outputURL: committedURL,
-                document: desired,
-                removedCueCount: acceptedChanges.filter { $0.after == nil }.count,
-                changedCueCount: acceptedChanges.filter { $0.after != nil }.count
-            )
-        } catch {
-            await transaction.cancel()
-            throw error
+        )
+        let acceptedChanges = filePreview.cleanup.changes.filter {
+            !restoringCueIDs.contains($0.id)
         }
+        return SubtitleCleanupResult(
+            outputURL: committedURL,
+            document: desired,
+            removedCueCount: acceptedChanges.filter { $0.after == nil }.count,
+            changedCueCount: acceptedChanges.filter { $0.after != nil }.count
+        )
     }
 
     public func validateCurrent(_ filePreview: SubtitleCleanupFilePreview) throws {
@@ -159,25 +149,22 @@ public struct SubtitleCleanupExecutor: Sendable {
     }
 
     private static func readInput(_ rawURL: URL) throws -> Data {
-        let url = rawURL.standardizedFileURL
-        guard url.isFileURL,
-            url.path.hasPrefix("/"),
-            url.pathExtension.lowercased() == "srt",
-            let values = try? url.resourceValues(forKeys: [
-                .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
-            ]),
-            values.isRegularFile == true,
-            values.isSymbolicLink != true
-        else {
-            if url.pathExtension.lowercased() != "srt" {
+        do {
+            return try SafeSubtitleTextFile.read(
+                rawURL,
+                allowedExtensions: ["srt"],
+                maximumInputBytes: maximumInputBytes
+            )
+        } catch let error as SafeSubtitleTextFileError {
+            switch error {
+            case .unsupportedExtension:
                 throw SubtitleCleanupExecutionError.unsupportedFormat
+            case .unsafeInput:
+                throw SubtitleCleanupExecutionError.unsafeInput
+            case .oversizedInput:
+                throw SubtitleCleanupExecutionError.oversizedInput
             }
-            throw SubtitleCleanupExecutionError.unsafeInput
         }
-        guard values.fileSize ?? 0 <= maximumInputBytes else {
-            throw SubtitleCleanupExecutionError.oversizedInput
-        }
-        return try Data(contentsOf: url, options: [.mappedIfSafe])
     }
 
     private static func verify(

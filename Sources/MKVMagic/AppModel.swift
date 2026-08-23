@@ -16,7 +16,7 @@ final class AppModel {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
         case saved(CompiledSavedWorkflow)
-        case externalSubtitle(SubtitleCleanupFilePreview, ExternalSubtitleTrackMetadata)
+        case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
 
         var workflowID: UUID {
             switch self {
@@ -32,7 +32,8 @@ final class AppModel {
             case .metadata(_, _, let workflowName): workflowName
             case .trackRemoval(_, _, let workflowName): workflowName
             case .saved(let workflow): workflow.workflowName
-            case .externalSubtitle: "Add external SRT subtitle"
+            case .externalSubtitle(let preview, _):
+                "Add external \(preview.format.displayName) subtitle"
             }
         }
 
@@ -44,8 +45,8 @@ final class AppModel {
                 workflow.plan.impact.videoEncodeCount == 0
                     ? "Zero video encodes; all enabled steps share one verified output pipeline."
                     : "All video-affecting steps are fused into one encode."
-            case .externalSubtitle:
-                "Zero encodes; normalize one temporary SRT and remux it as the last MKV track."
+            case .externalSubtitle(let preview, _):
+                "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
             }
         }
 
@@ -116,6 +117,16 @@ final class AppModel {
             if accessed { sourceURL.stopAccessingSecurityScopedResource() }
         }
         return try await SubtitleCleanupExecutor().preview(sourceURL: sourceURL)
+    }
+
+    func previewAdvancedSubtitleCleanup(
+        at sourceURL: URL
+    ) async throws -> AdvancedSubtitleCleanupFilePreview {
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        return try await AdvancedSubtitleCleanupExecutor().preview(sourceURL: sourceURL)
     }
 
     func addFiles(_ urls: [URL]) async {
@@ -283,6 +294,36 @@ final class AppModel {
         metadata: ExternalSubtitleTrackMetadata,
         destinationURL: URL
     ) async throws -> MediaAsset {
+        try await muxExternalSubtitle(
+            in: asset,
+            subtitlePreview: .subRip(subtitlePreview),
+            metadata: metadata,
+            destinationURL: destinationURL
+        )
+    }
+
+    @discardableResult
+    func muxExternalSubtitle(
+        in asset: MediaAsset,
+        subtitlePreview: AdvancedSubtitleCleanupFilePreview,
+        metadata: ExternalSubtitleTrackMetadata,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await muxExternalSubtitle(
+            in: asset,
+            subtitlePreview: .advanced(subtitlePreview),
+            metadata: metadata,
+            destinationURL: destinationURL
+        )
+    }
+
+    @discardableResult
+    func muxExternalSubtitle(
+        in asset: MediaAsset,
+        subtitlePreview: ExternalSubtitleFilePreview,
+        metadata: ExternalSubtitleTrackMetadata,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
@@ -296,7 +337,66 @@ final class AppModel {
         restoringCueIDs: Set<Int>,
         destinationURL: URL
     ) async throws -> SubtitleCleanupResult {
-        let scopedURLs = [preview.sourceURL, destinationURL].map {
+        try await executeTextSubtitleCleanup(
+            sourceURL: preview.sourceURL,
+            destinationURL: destinationURL,
+            workflowID: Self.subtitleCleanupWorkflowID,
+            workflowName: "Clean SRT subtitle",
+            planningMessage: "Zero encodes; normalize text and apply only reviewed cue changes."
+        ) { execution in
+            try await SubtitleCleanupExecutor().execute(
+                preview: preview,
+                restoringCueIDs: restoringCueIDs,
+                destinationURL: destinationURL,
+                onStage: { stage in
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+        }
+    }
+
+    @discardableResult
+    func cleanAdvancedSubtitle(
+        preview: AdvancedSubtitleCleanupFilePreview,
+        restoringEventIDs: Set<Int>,
+        destinationURL: URL
+    ) async throws -> AdvancedSubtitleCleanupResult {
+        try await executeTextSubtitleCleanup(
+            sourceURL: preview.sourceURL,
+            destinationURL: destinationURL,
+            workflowID: Self.advancedSubtitleCleanupWorkflowID,
+            workflowName: "Clean ASS/SSA subtitle",
+            planningMessage:
+                "Zero encodes; normalize text and apply only reviewed dialogue changes while preserving styles."
+        ) { execution in
+            try await AdvancedSubtitleCleanupExecutor().execute(
+                preview: preview,
+                restoringEventIDs: restoringEventIDs,
+                destinationURL: destinationURL,
+                onStage: { stage in
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+        }
+    }
+
+    private func executeTextSubtitleCleanup<Result>(
+        sourceURL: URL,
+        destinationURL: URL,
+        workflowID: UUID,
+        workflowName: String,
+        planningMessage: String,
+        operation: (HistoryExecution) async throws -> Result
+    ) async throws -> Result {
+        let scopedURLs = [sourceURL, destinationURL].map {
             ($0, $0.startAccessingSecurityScopedResource())
         }
         defer {
@@ -310,28 +410,16 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayNames: [preview.sourceURL.lastPathComponent],
+                inputDisplayNames: [sourceURL.lastPathComponent],
                 outputDisplayName: destinationURL.lastPathComponent,
-                workflowID: Self.subtitleCleanupWorkflowID,
-                workflowName: "Clean SRT subtitle",
+                workflowID: workflowID,
+                workflowName: workflowName,
                 inspectionMessage: "Parsed bounded subtitle text for a deterministic review.",
-                planningMessage:
-                    "Zero encodes; normalize text and apply only reviewed cue changes.",
+                planningMessage: planningMessage,
                 runningMessage: "Writing one normalized UTF-8 temporary subtitle."
             )
             historyExecution = execution
-            let result = try await SubtitleCleanupExecutor().execute(
-                preview: preview,
-                restoringCueIDs: restoringCueIDs,
-                destinationURL: destinationURL,
-                onStage: { stage in
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
-                }
-            )
+            let result = try await operation(execution)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
@@ -442,6 +530,7 @@ final class AppModel {
             case .externalSubtitle(let subtitlePreview, let metadata):
                 let executor = ExternalSubtitleMuxExecutor(
                     mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    mkvextractURL: try catalog.url(for: .mkvextract),
                     runner: runner,
                     inspector: inspector
                 )
@@ -584,6 +673,11 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? AdvancedSubtitleCleanupExecutionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         if let executionError = error as? ExternalSubtitleMuxError,
             case .committedOutputAuditFailed = executionError
         {
@@ -629,6 +723,9 @@ final class AppModel {
     )!
     private static let subtitleCleanupWorkflowID = UUID(
         uuidString: "7062274D-C993-42BF-903E-3DD817424EBF"
+    )!
+    private static let advancedSubtitleCleanupWorkflowID = UUID(
+        uuidString: "A15A085C-F68E-433F-A6D8-486EF1AB2F95"
     )!
     nonisolated private static let externalSubtitleMuxWorkflowID = UUID(
         uuidString: "5CB3529A-967E-4B11-81E2-E5D932F1B395"

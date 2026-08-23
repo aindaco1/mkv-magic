@@ -1,7 +1,8 @@
 # M3 SRT-cleanup slice
 
 This records engineering acceptance of the first deterministic text-subtitle
-cleanup slice. It is not acceptance of ASS/SSA cleanup, OCR spelling rules,
+cleanup slice. ASS/SSA cleanup is accepted separately in
+`M3_ASS_SSA_SLICE.md`; this document is not acceptance of OCR spelling rules,
 embedded-subtitle extraction/remux, external-subtitle matching/muxing, batch
 cleanup, or a public release. External SRT matching and muxing is accepted
 separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
@@ -72,7 +73,6 @@ separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
 ## Still pending
 
 - VoiceOver and full keyboard-only acceptance of the packaged review flow.
-- ASS/SSA style-preserving parsing and cleanup.
 - High-confidence English OCR spelling rules and uncertain-change review.
 - Embedded subtitle extraction/cleanup/remux and corresponding workflow actions.
 - Physical Intel smoke testing, real-library beta acceptance, and a public

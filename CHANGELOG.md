@@ -66,3 +66,12 @@ semantic versioning; public release tags are immutable and signed.
   append it last with `mkvmerge` without encoding, then verify every existing
   track and Matroska structure plus the new track before and after commit while
   preserving both selected inputs byte for byte.
+- Add style-preserving ASS and SSA parsing, cleanup review, UTF-8 output, and
+  external muxing through the same compact native subtitle flows. Preserve
+  script/style/unknown sections, comments, override tags, timing, layer,
+  speaker, margins, and effect fields while changing only reviewed dialogue
+  text or removing recognized whole-event advertisements.
+- Re-extract every newly muxed ASS/SSA track before commit and compare its
+  headers, style/layout fields, text, event count, and timing with the reviewed
+  source. Refuse the transaction if Matroska round-tripping changes the payload;
+  real bundled-tool tests cover both modern ASS and legacy SSA.

@@ -346,6 +346,55 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testExternalSubtitleVerifierRequiresReviewedAdvancedSubtitleCodec() throws {
+        let audio = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "SubStationAlpha",
+            codecID: "S_TEXT/ASS",
+            uid: 30,
+            language: "en",
+            title: "Styled"
+        )
+        let original = asset(title: "Movie", tracks: [audio])
+        let output = asset(
+            title: "Movie",
+            tracks: [audio, added],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+        let verifier = ExternalSubtitleMuxOutputVerifier()
+
+        XCTAssertNoThrow(
+            try verifier.verify(
+                original: original,
+                output: output,
+                expectedMetadata: ExternalSubtitleTrackMetadata(
+                    language: "en",
+                    name: "Styled"
+                ),
+                expectedFormat: .ass,
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                original: original,
+                output: output,
+                expectedMetadata: ExternalSubtitleTrackMetadata(
+                    language: "en",
+                    name: "Styled"
+                ),
+                expectedFormat: .ssa,
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+        }
+    }
+
     private func asset(
         title: String,
         tracks: [MediaTrack] = [

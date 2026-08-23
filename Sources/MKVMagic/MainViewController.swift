@@ -12,7 +12,63 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
         case savedWorkflow(CompiledSavedWorkflow)
         case subtitleCleanup(SubtitleCleanupFilePreview, restoringCueIDs: Set<Int>)
-        case externalSubtitle(SubtitleCleanupFilePreview, ExternalSubtitleTrackMetadata)
+        case advancedSubtitleCleanup(
+            AdvancedSubtitleCleanupFilePreview,
+            restoringEventIDs: Set<Int>
+        )
+        case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
+    }
+
+    private enum SubtitleCleanupCandidate {
+        case subRip(SubtitleCleanupFilePreview)
+        case advanced(AdvancedSubtitleCleanupFilePreview)
+
+        var normalizationNeeded: Bool {
+            switch self {
+            case .subRip(let preview): preview.normalizationNeeded
+            case .advanced(let preview): preview.normalizationNeeded
+            }
+        }
+
+        var changeCount: Int {
+            switch self {
+            case .subRip(let preview): preview.cleanup.changes.count
+            case .advanced(let preview): preview.cleanup.changes.count
+            }
+        }
+
+        var formatLabel: String {
+            switch self {
+            case .subRip: "SRT"
+            case .advanced(let preview): preview.sourceURL.pathExtension.uppercased()
+            }
+        }
+
+        @MainActor
+        func makeReviewController() -> SubtitleCleanupWindowController {
+            switch self {
+            case .subRip(let preview): SubtitleCleanupWindowController(preview: preview)
+            case .advanced(let preview): SubtitleCleanupWindowController(preview: preview)
+            }
+        }
+
+        func hasRemainingText(restoringIDs: Set<Int>) -> Bool {
+            switch self {
+            case .subRip(let preview):
+                !preview.cleanup.document(restoringCueIDs: restoringIDs).cues.isEmpty
+            case .advanced(let preview):
+                !preview.cleanup.document(restoringEventIDs: restoringIDs).events.isEmpty
+            }
+        }
+
+        func pendingChange(restoringIDs: Set<Int>) -> PendingChange {
+            switch self {
+            case .subRip(let preview):
+                .subtitleCleanup(preview, restoringCueIDs: restoringIDs)
+            case .advanced(let preview):
+                .advancedSubtitleCleanup(preview, restoringEventIDs: restoringIDs)
+            }
+        }
     }
 
     private let model: AppModel
@@ -25,7 +81,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
     private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
-    private let cleanSubtitleButton = NSButton(title: "Clean SRT…", target: nil, action: nil)
+    private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
@@ -465,21 +521,34 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanSubtitleButton.isEnabled = false
         Task {
             do {
-                let preview = try await model.previewSubtitleCleanup(at: asset.sourceURL)
-                guard preview.normalizationNeeded || !preview.cleanup.changes.isEmpty else {
-                    statusLabel.stringValue = "This SRT is already normalized and clean"
+                let candidate: SubtitleCleanupCandidate
+                switch asset.sourceURL.pathExtension.lowercased() {
+                case "srt":
+                    candidate = .subRip(
+                        try await model.previewSubtitleCleanup(at: asset.sourceURL)
+                    )
+                case "ass", "ssa":
+                    candidate = .advanced(
+                        try await model.previewAdvancedSubtitleCleanup(at: asset.sourceURL)
+                    )
+                default:
+                    return
+                }
+                guard candidate.normalizationNeeded || candidate.changeCount > 0 else {
+                    statusLabel.stringValue =
+                        "This \(candidate.formatLabel) subtitle is already normalized and clean"
                     impactLabel.stringValue = "No changes needed"
                     cleanSubtitleButton.isEnabled = true
                     clearPendingChange()
                     return
                 }
-                let controller = SubtitleCleanupWindowController(preview: preview)
+                let controller = candidate.makeReviewController()
                 subtitleCleanupWindowController = controller
-                controller.beginSheet(for: parentWindow) { [weak self] restoredCueIDs in
+                controller.beginSheet(for: parentWindow) { [weak self] restoredIDs in
                     guard let self else { return }
                     self.subtitleCleanupWindowController = nil
                     self.cleanSubtitleButton.isEnabled = true
-                    guard let restoredCueIDs else {
+                    guard let restoredIDs else {
                         self.refresh()
                         return
                     }
@@ -488,29 +557,27 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         self.refresh()
                         return
                     }
-                    let desired = preview.cleanup.document(restoringCueIDs: restoredCueIDs)
-                    guard !desired.cues.isEmpty else {
-                        self.impactLabel.stringValue = "Restore at least one cue"
+                    guard candidate.hasRemainingText(restoringIDs: restoredIDs) else {
+                        self.impactLabel.stringValue = "Restore at least one subtitle event"
                         self.clearPendingChange()
                         return
                     }
-                    let appliedCount = preview.cleanup.changes.count - restoredCueIDs.count
-                    guard preview.normalizationNeeded || appliedCount > 0 else {
+                    let appliedCount = candidate.changeCount - restoredIDs.count
+                    guard candidate.normalizationNeeded || appliedCount > 0 else {
                         self.impactLabel.stringValue = "No cleanup changes selected"
                         self.clearPendingChange()
                         return
                     }
                     self.impactLabel.stringValue =
-                        "0 video encodes • UTF-8 SRT • \(appliedCount) reviewed changes"
-                    self.pendingChange = .subtitleCleanup(
-                        preview,
-                        restoringCueIDs: restoredCueIDs
+                        "0 video encodes • UTF-8 \(candidate.formatLabel) • \(appliedCount) reviewed changes"
+                    self.pendingChange = candidate.pendingChange(
+                        restoringIDs: restoredIDs
                     )
                     self.pendingAssetID = asset.id
                     self.statusLabel.stringValue = "Cleanup preview ready"
                     self.runButton.isEnabled = true
                     self.runButton.toolTip =
-                        "Write a new normalized SRT, verify every cue and timing, then commit it."
+                        "Write a normalized subtitle copy, verify text, timing, and style structure, then commit it."
                 }
             } catch {
                 statusLabel.stringValue =
@@ -527,26 +594,44 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         else { return }
 
         let panel = NSOpenPanel()
-        panel.title = "Choose an SRT Subtitle"
+        panel.title = "Choose a Text Subtitle"
         panel.prompt = "Review Subtitle"
         panel.message =
-            "Choose one external SRT to add as the last track in a new verified MKV copy."
+            "Choose one external SRT, ASS, or SSA subtitle to add as the last track in a new verified MKV copy."
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
-        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
+        panel.allowedContentTypes = ["srt", "ass", "ssa"].map {
+            UTType(filenameExtension: $0) ?? .plainText
+        }
         guard panel.runModal() == .OK, let subtitleURL = panel.url else { return }
 
         statusLabel.stringValue = "Reading \(subtitleURL.lastPathComponent)…"
         addSubtitleButton.isEnabled = false
         Task {
             do {
-                let preview = try await model.previewSubtitleCleanup(at: subtitleURL)
-                let match = ExternalSubtitleMatcher().match(
-                    media: asset,
-                    subtitleURL: subtitleURL,
-                    subtitle: preview.cleanup.original
-                )
+                let preview: ExternalSubtitleFilePreview
+                let match: ExternalSubtitleMatch
+                switch subtitleURL.pathExtension.lowercased() {
+                case "srt":
+                    let subRip = try await model.previewSubtitleCleanup(at: subtitleURL)
+                    preview = .subRip(subRip)
+                    match = ExternalSubtitleMatcher().match(
+                        media: asset,
+                        subtitleURL: subtitleURL,
+                        subtitle: subRip.cleanup.original
+                    )
+                case "ass", "ssa":
+                    let advanced = try await model.previewAdvancedSubtitleCleanup(at: subtitleURL)
+                    preview = .advanced(advanced)
+                    match = ExternalSubtitleMatcher().match(
+                        media: asset,
+                        subtitleURL: subtitleURL,
+                        subtitle: advanced.cleanup.original
+                    )
+                default:
+                    return
+                }
                 guard selectedAsset?.id == asset.id else {
                     clearPendingChange()
                     refresh()
@@ -578,7 +663,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     self.statusLabel.stringValue = "Subtitle mux plan ready"
                     self.runButton.isEnabled = true
                     self.runButton.toolTip =
-                        "Copy all existing tracks, add the reviewed SRT last, verify the MKV, then commit it."
+                        "Copy all existing tracks, add the reviewed text subtitle last, verify the MKV, then commit it."
                 }
             } catch {
                 statusLabel.stringValue =
@@ -636,9 +721,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         let panel = NSSavePanel()
         let isSubtitleCleanup: Bool
-        if case .subtitleCleanup = pendingChange {
+        switch pendingChange {
+        case .subtitleCleanup, .advancedSubtitleCleanup:
             isSubtitleCleanup = true
-        } else {
+        default:
             isSubtitleCleanup = false
         }
         let isSubtitleMux: Bool
@@ -647,7 +733,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isSubtitleMux = false
         }
-        panel.title = isSubtitleCleanup ? "Save Verified SRT Copy" : "Save Verified MKV Copy"
+        panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = "Save Verified Copy"
         panel.canCreateDirectories = true
         if isSubtitleCleanup {
@@ -660,7 +746,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
         let outputExtension =
-            isSubtitleCleanup ? "srt" : (isSubtitleMux ? "mkv" : asset.sourceURL.pathExtension)
+            isSubtitleCleanup
+            ? asset.sourceURL.pathExtension.lowercased()
+            : (isSubtitleMux ? "mkv" : asset.sourceURL.pathExtension)
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -713,6 +801,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     outputURL = try await model.cleanSubtitle(
                         preview: preview,
                         restoringCueIDs: restoringCueIDs,
+                        destinationURL: destinationURL
+                    ).outputURL
+                case .advancedSubtitleCleanup(let preview, let restoringEventIDs):
+                    outputURL = try await model.cleanAdvancedSubtitle(
+                        preview: preview,
+                        restoringEventIDs: restoringEventIDs,
                         destinationURL: destinationURL
                     ).outputURL
                 case .externalSubtitle(let preview, let metadata):
@@ -871,12 +965,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
         cleanSubtitleButton.toolTip =
             cleanSubtitleButton.isEnabled
-            ? "Normalize and review deterministic SRT text cleanup without changing timings."
-            : "SRT text cleanup is available when an inspected .srt file is selected."
+            ? "Normalize and review deterministic SRT/ASS/SSA text cleanup without changing timing or styles."
+            : "Text cleanup is available when an inspected SRT, ASS, or SSA file is selected."
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         addSubtitleButton.toolTip =
             addSubtitleButton.isEnabled
-            ? "Review and add one external SRT as the last track in a verified MKV copy."
+            ? "Review and add one external SRT, ASS, or SSA track last in a verified MKV copy."
             : "External subtitle muxing currently requires an inspected Matroska video."
     }
 
@@ -977,7 +1071,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private static func canCleanSubtitle(_ asset: MediaAsset) -> Bool {
-        asset.sourceURL.pathExtension.lowercased() == "srt"
+        ["srt", "ass", "ssa"].contains(asset.sourceURL.pathExtension.lowercased())
     }
 
     private static func canAddExternalSubtitle(to asset: MediaAsset) -> Bool {
@@ -1010,7 +1104,11 @@ enum OutputNamingPolicy {
     }
 
     static func cleanedSubtitleFilename(for sourceURL: URL) -> String {
-        "\(sourceURL.deletingPathExtension().lastPathComponent) — Clean.srt"
+        let sourceExtension = sourceURL.pathExtension.lowercased()
+        let outputExtension =
+            ["srt", "ass", "ssa"].contains(sourceExtension)
+            ? sourceExtension : "srt"
+        return "\(sourceURL.deletingPathExtension().lastPathComponent) — Clean.\(outputExtension)"
     }
 
     static func subtitledFilename(for sourceURL: URL) -> String {
