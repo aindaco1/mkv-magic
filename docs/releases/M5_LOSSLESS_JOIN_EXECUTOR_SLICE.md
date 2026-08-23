@@ -81,9 +81,10 @@ metadata, three nested source-part chapters, canonical chapter XML equality, and
 unchanged SHA-256 digests for all inputs.
 
 The current complete bundled-tool suite, including the later native app-model
-join integration, passes all 252 tests with zero skips and zero failures.
+join integration and common-format planner, passes all 262 tests with zero skips
+and zero failures.
 
-The current isolated complete local gate passes all 252 tests with 14 intentional
+The current isolated complete local gate passes all 262 tests with 14 intentional
 real-tool skips in source-only and sanitizer runs, both Universal architectures,
 coverage collection, AddressSanitizer, ThreadSanitizer, inside-out package
 signatures, entitlements, SBOM/checksums, ZIP/appcast assembly, and verified DMG
@@ -99,7 +100,9 @@ packaging.
 - Explicit attachment selection and user-confirmed metadata/gap policies.
 - Decode spot checks at start/middle/end and around every boundary, copied-stream
   fingerprints, malformed/VFR/delayed-stream fixtures, and strict verification.
-- Common-format proposals and the one-generation normalization/transcoding path.
+- Common-format choice controls and the one-generation normalization execution
+  path. A truthful preview is implemented in
+  `M5_JOIN_NORMALIZATION_PLANNER_SLICE.md`.
 - Private-library beta acceptance and physical Intel smoke testing.
 
 Primary command reference: [mkvmerge append and `--append-to` documentation](https://mkvtoolnix.download/doc/mkvmerge.html#mkvmerge.description.append_to).

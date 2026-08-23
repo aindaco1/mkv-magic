@@ -3,7 +3,7 @@
 This records engineering and rendered AppKit acceptance of the first complete
 native hard-join path. It handles complete, gap-free Matroska sources already
 classified as strict `losslessCandidate` inputs. It does not claim trim support,
-manual ambiguity resolution, attachment selection, normalization/transcoding,
+manual ambiguity resolution, attachment selection, normalization execution,
 decode-boundary spot checks, physical Intel acceptance, or a public release.
 
 ## User flow
@@ -60,7 +60,7 @@ and saves the verified join. It observes one retained audio lane, two top-level
 Part chapters, unchanged SHA-256 source digests, and a sanitized eight-state
 History lifecycle containing both input display names.
 
-The complete bundled-tool suite passes all 252 tests with zero skips. The
+The current complete bundled-tool suite passes all 262 tests with zero skips. The
 complete local gate also passes source validation, coverage collection,
 AddressSanitizer, ThreadSanitizer, Universal `arm64`/`x86_64` compilation,
 inside-out app signatures and entitlements, SBOM/checksums, appcast and ZIP
@@ -74,5 +74,6 @@ the private temporary output.
 - Explicit attachment retention/removal and confirmation-only metadata policies.
 - Keyframe-aware fast trim and exact trim with truthful adjusted-boundary review.
 - Decode spot checks and copied-stream fingerprints around every join boundary.
-- Common-format proposals and one-generation normalization/transcoding.
+- Common-format choice controls and one-generation normalization execution. A
+  truthful preview is implemented in `M5_JOIN_NORMALIZATION_PLANNER_SLICE.md`.
 - Private-library beta acceptance and physical Intel smoke testing.

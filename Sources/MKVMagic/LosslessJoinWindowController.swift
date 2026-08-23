@@ -1,6 +1,7 @@
 import AppKit
 import MKVMagicCore
 import MKVMagicExecution
+import MKVMagicPlanning
 
 struct LosslessJoinSourceOption: Equatable, Sendable {
     let chapterPreview: ChapterEditPreview
@@ -26,6 +27,7 @@ struct LosslessJoinReviewSnapshot: Equatable, Sendable {
     let candidate: LosslessJoinCandidate?
     let laneSummaries: [String]
     let issueSummaries: [String]
+    let normalizationSummaries: [String]
     let blockerSummaries: [String]
 
     var isReady: Bool { candidate != nil }
@@ -144,6 +146,12 @@ enum LosslessJoinReviewBuilder {
             candidate: candidate,
             laneSummaries: lanes,
             issueSummaries: issues,
+            normalizationSummaries: normalizationSummaries(
+                sources: sources,
+                mapping: proposal.mapping,
+                report: report,
+                hasAmbiguities: !proposal.ambiguities.isEmpty
+            ),
             blockerSummaries: blockers
         )
     }
@@ -153,8 +161,84 @@ enum LosslessJoinReviewBuilder {
             candidate: nil,
             laneSummaries: [],
             issueSummaries: [],
+            normalizationSummaries: [],
             blockerSummaries: [message]
         )
+    }
+
+    private static func normalizationSummaries(
+        sources: [MediaAsset],
+        mapping: JoinTrackMapping,
+        report: JoinCompatibilityReport,
+        hasAmbiguities: Bool
+    ) -> [String] {
+        switch report.disposition {
+        case .losslessCandidate:
+            return ["Not needed; every reviewed lane remains a packet copy."]
+        case .confirmationRequired:
+            return [
+                "No encode requirement is known; explicit metadata, gap, or attachment confirmation is still required."
+            ]
+        case .unsupported:
+            return ["No supported common-format plan is available for this source set."]
+        case .normalizationRequired:
+            break
+        }
+        if hasAmbiguities {
+            return ["Resolve ambiguous track lanes before choosing common output formats."]
+        }
+        guard
+            let proposal = try? JoinNormalizationPlanner().propose(
+                sources: sources,
+                mapping: mapping,
+                reviewedReport: report
+            )
+        else {
+            return ["The common-format proposal could not be bound to this review."]
+        }
+        var summaries = [String]()
+        for lane in proposal.videoLanes where lane.encodesVideo {
+            let canvas =
+                lane.recommendedCanvas.map { "\($0.width)×\($0.height) fit/pad" }
+                ?? "canvas needs review"
+            let range =
+                lane.recommendedDynamicRange.map {
+                    $0 == .hdr10 ? "HDR10" : "SDR"
+                } ?? "choose SDR or HDR10"
+            summaries.append(
+                "Video lane \(lane.laneIndex + 1): one AV1 10-bit generation • \(canvas) • \(range) • preserve source timing."
+            )
+        }
+        for lane in proposal.audioLanes where lane.encodesAudio {
+            let layout = lane.outputChannelLayout ?? "layout needs review"
+            let rate = lane.outputSampleRate.map { "\($0 / 1_000) kHz" } ?? "rate needs review"
+            let bitrate =
+                lane.outputBitrate.map { "\($0 / 1_000) kbps" }
+                ?? "bitrate needs review"
+            let silence =
+                lane.sourceActions.contains(.synthesizeSilence)
+                ? " • silent missing sections"
+                : ""
+            summaries.append(
+                "Audio lane \(lane.laneIndex + 1): AAC once • \(layout) • \(rate) • \(bitrate)\(silence)."
+            )
+        }
+        for lane in proposal.subtitleLanes where lane.mechanism == .normalizeTextToASS {
+            summaries.append(
+                "Subtitle lane \(lane.laneIndex + 1): normalize text once to ASS; video remains unaffected."
+            )
+        }
+        summaries.append(
+            "Impact: \(proposal.impact.videoEncodeCount) video generation • \(proposal.impact.audioEncodeCount) audio lane encode(s)."
+        )
+        if let blocker = proposal.blockers.first {
+            summaries.append("Blocked: \(blocker.summary)")
+        } else {
+            summaries.append(
+                "Planning preview only; every listed target still requires explicit approval before execution."
+            )
+        }
+        return summaries
     }
 
     private static func laneSummaries(
@@ -290,7 +374,12 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private var includedIDs: Set<UUID>
     private var editionIDs = [UUID: UUID]()
     private var snapshot = LosslessJoinReviewSnapshot(
-        candidate: nil, laneSummaries: [], issueSummaries: [], blockerSummaries: [])
+        candidate: nil,
+        laneSummaries: [],
+        issueSummaries: [],
+        normalizationSummaries: [],
+        blockerSummaries: []
+    )
     private let tableView = NSTableView()
     private let reviewText = NSTextView()
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
@@ -564,6 +653,13 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         } else {
             lines.append("  Waiting for a complete strict review.")
         }
+        lines.append("")
+        lines.append("COMMON-FORMAT OPTION")
+        lines.append(
+            contentsOf: snapshot.normalizationSummaries.isEmpty
+                ? ["  Waiting for a complete track map."]
+                : snapshot.normalizationSummaries.map { "  \($0)" }
+        )
         reviewText.string = lines.joined(separator: "\n")
         continueButton.isEnabled = snapshot.isReady
         if snapshot.isReady {

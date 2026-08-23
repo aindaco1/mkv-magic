@@ -144,6 +144,10 @@ final class AppPolicyTests: XCTestCase {
         let candidate = try XCTUnwrap(snapshot.candidate)
         XCTAssertTrue(snapshot.blockerSummaries.isEmpty)
         XCTAssertTrue(snapshot.issueSummaries.isEmpty)
+        XCTAssertEqual(
+            snapshot.normalizationSummaries,
+            ["Not needed; every reviewed lane remains a packet copy."]
+        )
         XCTAssertEqual(snapshot.laneSummaries.count, 1)
         XCTAssertTrue(snapshot.laneSummaries[0].contains("Part 1: #0 AAC"))
         XCTAssertEqual(candidate.report.disposition, .losslessCandidate)
@@ -169,6 +173,10 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertNil(snapshot.candidate)
         XCTAssertTrue(snapshot.issueSummaries.contains { $0.contains("sample rate") })
         XCTAssertTrue(snapshot.blockerSummaries.contains { $0.contains("normalization") })
+        XCTAssertTrue(snapshot.normalizationSummaries.contains { $0.contains("AAC once") })
+        XCTAssertTrue(
+            snapshot.normalizationSummaries.contains { $0.contains("0 video generation") }
+        )
     }
 
     func testLosslessJoinReviewRequiresExplicitChoiceForMultipleEditions() throws {
@@ -243,6 +251,28 @@ final class AppPolicyTests: XCTestCase {
             let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
         }
+    }
+
+    @MainActor
+    func testLosslessJoinWindowRendersCommonFormatPreviewWithoutEnablingSave() throws {
+        let controller = LosslessJoinWindowController(options: [
+            losslessJoinOption(part: 1, duration: 10, sampleRate: 48_000),
+            losslessJoinOption(part: 2, duration: 10, sampleRate: 44_100),
+        ])
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let review = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        )
+        XCTAssertTrue(review.string.contains("COMMON-FORMAT OPTION"))
+        XCTAssertTrue(review.string.contains("AAC once"))
+        XCTAssertTrue(review.string.contains("0 video generation"))
+        XCTAssertTrue(review.string.contains("explicit approval"))
+        let save = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Continue to Save…" }
+        )
+        XCTAssertFalse(save.isEnabled)
     }
 
     func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {

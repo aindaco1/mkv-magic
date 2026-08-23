@@ -855,9 +855,14 @@ Gate: compatible joins and fast trims use zero video encode; incompatible joins 
 Current implementation: complete full-file, gap-free `losslessCandidate` joins
 have a native include/order/chapter-edition/track-lane review, deterministic MKV
 output naming, cancellable pre-commit progress, multi-input History, and exact
-post-reopen verification. Manual resolution of ambiguous mappings, attachment
-choices, fast/exact trimming, decode-boundary spot checks, and the single-pass
-normalization path remain before the M5 gate is complete.
+post-reopen verification. A pure common-format planner now previews packet-copy
+lanes, one-generation AV1 10-bit video normalization, per-lane AAC conversion,
+largest-layout audio preservation, silent missing audio sections, text-subtitle
+normalization, and explicit format decisions. It fails closed for incomplete
+copy facts, missing video, Dolby Vision transcodes, unsupported HDR, and image
+subtitle conversion. Manual mapping and attachment choices, normalization
+execution and verification, fast/exact trimming, and decode-boundary spot checks
+remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

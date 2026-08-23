@@ -132,3 +132,9 @@ semantic versioning; public release tags are immutable and signed.
   track lanes and every compatibility blocker, choose a deterministic MKV output,
   cancel the temporary append before commit, and record every source in sanitized
   History. Revalidate exact chapter documents before revision-bound execution.
+- Add a fail-closed common-format join proposal to the same native review. Keep
+  compatible lanes as packet copies; propose at most one AV1 10-bit video
+  generation and one AAC conversion per affected audio lane; preserve the largest
+  audio layout without automatic downmix; require an explicit mixed SDR/HDR
+  choice; and reject unsafe Dolby Vision or image-subtitle normalization. This is
+  a truthful planning preview only and cannot execute yet.

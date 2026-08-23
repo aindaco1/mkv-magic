@@ -83,7 +83,14 @@ prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
 the temporary and committed results and compares the exact nested chapter XML.
 Manual ambiguity mapping, trim execution, decode spot checks, attachment
-selection, and one-pass normalization remain pending.
+selection, and common-format execution remain pending. When a reviewed group
+needs normalization, the same window now previews the proposed common video,
+audio, and text-subtitle targets. Compatible lanes remain packet copies;
+affected video is bounded to one AV1 10-bit generation; affected audio lanes are
+converted once to AAC without automatic downmix; and mixed SDR/HDR, Dolby
+Vision, incomplete facts, and image-subtitle limitations fail closed or require
+explicit choices. The preview does not enable saving until the corresponding
+choice UI, encoder, and output verification path exist.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and
