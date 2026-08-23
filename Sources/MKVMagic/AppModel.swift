@@ -16,12 +16,14 @@ final class AppModel {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
         case saved(CompiledSavedWorkflow)
+        case externalSubtitle(SubtitleCleanupFilePreview, ExternalSubtitleTrackMetadata)
 
         var workflowID: UUID {
             switch self {
             case .metadata(_, let workflowID, _): workflowID
             case .trackRemoval(_, let workflowID, _): workflowID
             case .saved(let workflow): workflow.workflowID
+            case .externalSubtitle: AppModel.externalSubtitleMuxWorkflowID
             }
         }
 
@@ -30,6 +32,7 @@ final class AppModel {
             case .metadata(_, _, let workflowName): workflowName
             case .trackRemoval(_, _, let workflowName): workflowName
             case .saved(let workflow): workflow.workflowName
+            case .externalSubtitle: "Add external SRT subtitle"
             }
         }
 
@@ -41,6 +44,8 @@ final class AppModel {
                 workflow.plan.impact.videoEncodeCount == 0
                     ? "Zero video encodes; all enabled steps share one verified output pipeline."
                     : "All video-affecting steps are fused into one encode."
+            case .externalSubtitle:
+                "Zero encodes; normalize one temporary SRT and remux it as the last MKV track."
             }
         }
 
@@ -52,6 +57,15 @@ final class AppModel {
                 workflow.trackRemoval == nil
                     ? "Editing one temporary clone."
                     : "Applying all workflow steps to one temporary remux."
+            case .externalSubtitle:
+                "Adding one reviewed subtitle to a temporary MKV remux."
+            }
+        }
+
+        var externalInputURLs: [URL] {
+            switch self {
+            case .externalSubtitle(let preview, _): [preview.sourceURL]
+            default: []
             }
         }
     }
@@ -263,6 +277,20 @@ final class AppModel {
     }
 
     @discardableResult
+    func muxExternalSubtitle(
+        in asset: MediaAsset,
+        subtitlePreview: SubtitleCleanupFilePreview,
+        metadata: ExternalSubtitleTrackMetadata,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .externalSubtitle(subtitlePreview, metadata)
+        )
+    }
+
+    @discardableResult
     func cleanSubtitle(
         preview: SubtitleCleanupFilePreview,
         restoringCueIDs: Set<Int>,
@@ -282,7 +310,7 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayName: preview.sourceURL.lastPathComponent,
+                inputDisplayNames: [preview.sourceURL.lastPathComponent],
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: Self.subtitleCleanupWorkflowID,
                 workflowName: "Clean SRT subtitle",
@@ -321,7 +349,7 @@ final class AppModel {
         destinationURL: URL,
         edit: VerifiedEdit
     ) async throws -> MediaAsset {
-        let scopedURLs = [asset.sourceURL, destinationURL].map {
+        let scopedURLs = ([asset.sourceURL, destinationURL] + edit.externalInputURLs).map {
             ($0, $0.startAccessingSecurityScopedResource())
         }
         defer {
@@ -335,7 +363,8 @@ final class AppModel {
         var historyExecution: HistoryExecution?
         do {
             let execution = try await beginHistory(
-                inputDisplayName: asset.sourceURL.lastPathComponent,
+                inputDisplayNames: [asset.sourceURL.lastPathComponent]
+                    + edit.externalInputURLs.map(\.lastPathComponent),
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: edit.workflowID,
                 workflowName: edit.workflowName,
@@ -410,6 +439,25 @@ final class AppModel {
                         )
                     }
                 )
+            case .externalSubtitle(let subtitlePreview, let metadata):
+                let executor = ExternalSubtitleMuxExecutor(
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    runner: runner,
+                    inspector: inspector
+                )
+                output = try await executor.execute(
+                    source: asset,
+                    subtitlePreview: subtitlePreview,
+                    metadata: metadata,
+                    destinationURL: destinationURL,
+                    onStage: { stage in
+                        try await Self.record(
+                            stage,
+                            jobID: execution.jobID,
+                            using: execution.recorder
+                        )
+                    }
+                )
             }
             if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
                 assets[existing] = output
@@ -429,7 +477,7 @@ final class AppModel {
     }
 
     private func beginHistory(
-        inputDisplayName: String,
+        inputDisplayNames: [String],
         outputDisplayName: String,
         workflowID: UUID,
         workflowName: String,
@@ -442,7 +490,7 @@ final class AppModel {
             createdAt: Date(),
             workflowID: workflowID,
             workflowName: workflowName,
-            inputs: [MediaJobInput(displayName: inputDisplayName)],
+            inputs: inputDisplayNames.map { MediaJobInput(displayName: $0) },
             outputDisplayName: outputDisplayName
         )
         try job.transition(to: .inspecting, at: job.createdAt, message: inspectionMessage)
@@ -536,6 +584,11 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
+        if let executionError = error as? ExternalSubtitleMuxError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
         return "Edit stopped before a verified commit."
     }
 
@@ -576,6 +629,9 @@ final class AppModel {
     )!
     private static let subtitleCleanupWorkflowID = UUID(
         uuidString: "7062274D-C993-42BF-903E-3DD817424EBF"
+    )!
+    nonisolated private static let externalSubtitleMuxWorkflowID = UUID(
+        uuidString: "5CB3529A-967E-4B11-81E2-E5D932F1B395"
     )!
 
     private func makeToolCatalog() throws -> ToolCatalog {

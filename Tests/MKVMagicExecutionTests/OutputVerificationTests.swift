@@ -220,6 +220,132 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testExternalSubtitleVerifierAcceptsOneReviewedSRTAddedLast() throws {
+        let audio = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "eng")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en",
+            title: "English SDH",
+            isDefault: true,
+            isHearingImpaired: true
+        )
+        let original = asset(title: "Movie", tracks: [audio])
+        let output = asset(
+            title: "Movie",
+            tracks: [audio, added],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+
+        XCTAssertNoThrow(
+            try ExternalSubtitleMuxOutputVerifier().verify(
+                original: original,
+                output: output,
+                expectedMetadata: ExternalSubtitleTrackMetadata(
+                    language: "eng",
+                    name: "English SDH",
+                    isDefault: true,
+                    isHearingImpaired: true
+                ),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            ))
+    }
+
+    func testExternalSubtitleVerifierRejectsRetainedTrackMutation() throws {
+        let originalTrack = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let mutatedTrack = MediaTrack(
+            id: 0, kind: .audio, codec: "opus", uid: 20, language: "en")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+
+        XCTAssertThrowsError(
+            try ExternalSubtitleMuxOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [originalTrack]),
+                output: asset(
+                    title: "Movie",
+                    tracks: [mutatedTrack, added],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+        }
+    }
+
+    func testExternalSubtitleVerifierRejectsUnrepresentableDurationWithoutOverflow() throws {
+        let audio = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+
+        XCTAssertThrowsError(
+            try ExternalSubtitleMuxOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [audio]),
+                output: asset(
+                    title: "Movie",
+                    tracks: [audio, added],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: Int64.max)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .durationChanged)
+        }
+    }
+
+    func testExternalSubtitleVerifierRejectsLostTrackTags() throws {
+        let audio = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+
+        XCTAssertThrowsError(
+            try ExternalSubtitleMuxOutputVerifier().verify(
+                original: asset(title: "Movie", tracks: [audio], trackTagCount: 2),
+                output: asset(
+                    title: "Movie",
+                    tracks: [audio, added],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge",
+                    trackTagCount: 0
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tagsChanged)
+        }
+    }
+
     private func asset(
         title: String,
         tracks: [MediaTrack] = [
@@ -227,7 +353,8 @@ final class OutputVerificationTests: XCTestCase {
         ],
         duration: MediaTime = MediaTime(seconds: 10)!,
         segmentUID: String = "0011",
-        encoder: String = "fixture"
+        encoder: String = "fixture",
+        trackTagCount: Int = 0
     ) -> MediaAsset {
         MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
@@ -242,7 +369,7 @@ final class OutputVerificationTests: XCTestCase {
             metadata: ["title": title, "encoder": encoder],
             chapterEntryCount: 1,
             globalTagCount: 0,
-            trackTagCount: 0,
+            trackTagCount: trackTagCount,
             segmentUID: segmentUID
         )
     }

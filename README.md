@@ -29,6 +29,12 @@ cue by cue for deterministic YTS/YIFY advertisement removal and accidental edge
 whitespace. Cleanup preserves every timestamp and timing setting, refuses to
 remove every cue, detects a source changed since preview, writes a new UTF-8 SRT,
 and reopens the byte-exact result before commit while leaving the source intact.
+For inspected Matroska video, **Add Subtitle…** accepts a reviewed external SRT,
+ranks the filename and timing match, infers editable language/forced/SDH
+metadata, and adds it as the last track in a new MKV without encoding. Existing
+tracks, chapters, tags, and attachments are verified before and after commit;
+the selected SRT is normalized only in a private temporary copy and remains
+unchanged.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. No public release is available yet. The canonical product and

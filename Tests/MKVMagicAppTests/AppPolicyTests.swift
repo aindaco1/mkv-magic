@@ -24,6 +24,27 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(checker.checks, 0)
     }
 
+    @MainActor
+    func testAppDelegateCreatesVisibleUsableMainWindow() throws {
+        _ = NSApplication.shared
+        let checker = FakeUpdateChecker()
+        let delegate = AppDelegate(updateController: checker)
+
+        delegate.applicationDidFinishLaunching(
+            Notification(name: NSApplication.didFinishLaunchingNotification)
+        )
+
+        let window = try XCTUnwrap(NSApp.windows.first { $0.title == "MKV Magic" })
+        defer { window.close() }
+        let contentView = try XCTUnwrap(window.contentView)
+        XCTAssertTrue(window.isVisible)
+        XCTAssertEqual(contentView.frame.size.width, 1_080, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 680, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 820)
+        XCTAssertEqual(window.minSize.height, 520)
+        XCTAssertTrue(window.contentViewController is MainViewController)
+    }
+
     func testBundledToolVerificationUsesOnlyVersionArguments() {
         XCTAssertEqual(
             BundledToolVerification.arguments(for: .ffmpeg),
@@ -57,6 +78,42 @@ final class AppPolicyTests: XCTestCase {
                 for: URL(fileURLWithPath: "/Media/Movie.en.SRT")),
             "Movie.en — Clean.srt"
         )
+    }
+
+    func testSubtitledOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.subtitledFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.WEBM")),
+            "Movie — Subtitled.mkv"
+        )
+    }
+
+    func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {
+        XCTAssertEqual(
+            try ExternalSubtitleMuxPresentation.metadata(
+                language: " ENG ",
+                name: "  English Forced  ",
+                isDefault: false,
+                isForced: true,
+                isHearingImpaired: false
+            ),
+            ExternalSubtitleTrackMetadata(
+                language: "en",
+                name: "English Forced",
+                isForced: true
+            )
+        )
+        XCTAssertThrowsError(
+            try ExternalSubtitleMuxPresentation.metadata(
+                language: "en",
+                name: "Bad\0Name",
+                isDefault: false,
+                isForced: false,
+                isHearingImpaired: false
+            )
+        ) { error in
+            XCTAssertEqual(error as? ExternalSubtitleMuxError, .invalidTrackName)
+        }
     }
 
     func testInspectorSeparatesAttachmentsAndAvoidsDecodedAudioBitDepth() {
@@ -369,6 +426,62 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 640)
         XCTAssertEqual(window.minSize.height, 480)
+    }
+
+    @MainActor
+    func testExternalSubtitleMuxWindowUsesCompactNativeLayoutAndExplicitWarnings() throws {
+        let cue = SubRipCue(
+            id: 0,
+            start: SubRipTimestamp(milliseconds: 0),
+            end: SubRipTimestamp(milliseconds: 1_000),
+            lines: [" Text "]
+        )
+        let document = SubRipDocument(cues: [cue])
+        let preview = SubtitleCleanupFilePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Unrelated.srt"),
+            sourceSHA256: Data(SHA256.hash(data: Data())),
+            encoding: .utf8,
+            diagnostics: [],
+            cleanup: SubtitleCleanupPolicy().preview(document),
+            normalizationNeeded: false
+        )
+        let match = ExternalSubtitleMatch(
+            subtitleURL: preview.sourceURL,
+            score: 0,
+            confidence: .low,
+            reasons: [],
+            suggestedMetadata: ExternalSubtitleTrackMetadata(language: "und"),
+            subtitleEnd: cue.end,
+            durationDifferenceMilliseconds: -119_000,
+            isDurationCompatible: false
+        )
+        let media = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska",
+            duration: MediaTime(seconds: 120),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1")]
+        )
+        let warnings = ExternalSubtitleMuxPresentation.warnings(
+            preview: preview,
+            match: match
+        )
+        XCTAssertEqual(warnings.count, 3)
+        XCTAssertTrue(warnings[0].contains("weak match"))
+        XCTAssertTrue(warnings[1].contains("shorter"))
+        XCTAssertTrue(warnings[2].contains("will not be applied"))
+
+        let controller = ExternalSubtitleMuxWindowController(
+            media: media,
+            preview: preview,
+            match: match
+        )
+        let window = try XCTUnwrap(controller.window)
+        let contentView = try XCTUnwrap(window.contentView)
+        XCTAssertTrue(window.contentViewController is ExternalSubtitleMuxViewController)
+        XCTAssertEqual(contentView.frame.size.width, 620, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 530, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 560)
+        XCTAssertEqual(window.minSize.height, 500)
     }
 
     @MainActor

@@ -103,17 +103,8 @@ public struct SubtitleCleanupExecutor: Sendable {
         guard destinationURL.pathExtension.lowercased() == "srt" else {
             throw SubtitleCleanupExecutionError.unsupportedFormat
         }
+        try validateCurrent(filePreview)
         let sourceURL = filePreview.sourceURL
-        let sourceData = try Self.readInput(sourceURL)
-        guard Data(SHA256.hash(data: sourceData)) == filePreview.sourceSHA256 else {
-            throw SubtitleCleanupExecutionError.stalePreview
-        }
-        let current = try SubRipCodec().parse(SubtitleTextDecoder().decode(sourceData)).document
-        guard current == filePreview.cleanup.original,
-            SubtitleCleanupPolicy().preview(current) == filePreview.cleanup
-        else {
-            throw SubtitleCleanupExecutionError.stalePreview
-        }
         let desired = filePreview.cleanup.document(restoringCueIDs: restoringCueIDs)
         guard !desired.cues.isEmpty else {
             throw SubtitleCleanupExecutionError.noCuesRemaining
@@ -151,6 +142,19 @@ public struct SubtitleCleanupExecutor: Sendable {
         } catch {
             await transaction.cancel()
             throw error
+        }
+    }
+
+    public func validateCurrent(_ filePreview: SubtitleCleanupFilePreview) throws {
+        let sourceData = try Self.readInput(filePreview.sourceURL)
+        guard Data(SHA256.hash(data: sourceData)) == filePreview.sourceSHA256 else {
+            throw SubtitleCleanupExecutionError.stalePreview
+        }
+        let current = try SubRipCodec().parse(SubtitleTextDecoder().decode(sourceData)).document
+        guard current == filePreview.cleanup.original,
+            SubtitleCleanupPolicy().preview(current) == filePreview.cleanup
+        else {
+            throw SubtitleCleanupExecutionError.stalePreview
         }
     }
 

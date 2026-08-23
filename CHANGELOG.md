@@ -59,3 +59,10 @@ semantic versioning; public release tags are immutable and signed.
   every timing/text cue before and after commit, preserve the original byte for
   byte, and record the sanitized lifecycle through the same DRY history path as
   MKV edits.
+- Add deterministic external-SRT matching with conservative title, episode,
+  language/role, and duration signals plus an explicit native confirmation
+  sheet for editable language, name, default, forced, and SDH metadata.
+- Normalize only the structural SRT representation in a private temporary file,
+  append it last with `mkvmerge` without encoding, then verify every existing
+  track and Matroska structure plus the new track before and after commit while
+  preserving both selected inputs byte for byte.

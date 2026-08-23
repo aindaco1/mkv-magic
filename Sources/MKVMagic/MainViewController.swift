@@ -12,6 +12,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
         case savedWorkflow(CompiledSavedWorkflow)
         case subtitleCleanup(SubtitleCleanupFilePreview, restoringCueIDs: Set<Int>)
+        case externalSubtitle(SubtitleCleanupFilePreview, ExternalSubtitleTrackMetadata)
     }
 
     private let model: AppModel
@@ -25,6 +26,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
     private let cleanSubtitleButton = NSButton(title: "Clean SRT…", target: nil, action: nil)
+    private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
@@ -34,6 +36,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var trackRemovalWindowController: TrackRemovalWindowController?
     private var workflowWindowController: WorkflowWindowController?
     private var subtitleCleanupWindowController: SubtitleCleanupWindowController?
+    private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
 
     init(model: AppModel) {
         self.model = model
@@ -216,14 +219,18 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanSubtitleButton.target = self
         cleanSubtitleButton.action = #selector(cleanSubtitle)
         cleanSubtitleButton.isEnabled = false
+        addSubtitleButton.target = self
+        addSubtitleButton.action = #selector(addExternalSubtitle)
+        addSubtitleButton.isEnabled = false
         let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
         metadataButtons.orientation = .horizontal
         metadataButtons.spacing = 8
         let structuralButtons = NSStackView(views: [cleanMKVButton, removeTracksButton])
         structuralButtons.orientation = .horizontal
         structuralButtons.spacing = 8
-        let subtitleButtons = NSStackView(views: [cleanSubtitleButton])
+        let subtitleButtons = NSStackView(views: [cleanSubtitleButton, addSubtitleButton])
         subtitleButtons.orientation = .horizontal
+        subtitleButtons.spacing = 8
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
@@ -514,6 +521,74 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func addExternalSubtitle() {
+        guard let asset = selectedAsset, Self.canAddExternalSubtitle(to: asset),
+            let parentWindow = view.window
+        else { return }
+
+        let panel = NSOpenPanel()
+        panel.title = "Choose an SRT Subtitle"
+        panel.prompt = "Review Subtitle"
+        panel.message =
+            "Choose one external SRT to add as the last track in a new verified MKV copy."
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowedContentTypes = [UTType(filenameExtension: "srt") ?? .plainText]
+        guard panel.runModal() == .OK, let subtitleURL = panel.url else { return }
+
+        statusLabel.stringValue = "Reading \(subtitleURL.lastPathComponent)…"
+        addSubtitleButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewSubtitleCleanup(at: subtitleURL)
+                let match = ExternalSubtitleMatcher().match(
+                    media: asset,
+                    subtitleURL: subtitleURL,
+                    subtitle: preview.cleanup.original
+                )
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                let controller = ExternalSubtitleMuxWindowController(
+                    media: asset,
+                    preview: preview,
+                    match: match
+                )
+                externalSubtitleMuxWindowController = controller
+                controller.beginSheet(for: parentWindow) { [weak self] metadata in
+                    guard let self else { return }
+                    self.externalSubtitleMuxWindowController = nil
+                    self.addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+                    guard let metadata else {
+                        self.refresh()
+                        return
+                    }
+                    guard self.selectedAsset?.id == asset.id else {
+                        self.clearPendingChange()
+                        self.refresh()
+                        return
+                    }
+                    self.pendingChange = .externalSubtitle(preview, metadata)
+                    self.pendingAssetID = asset.id
+                    self.impactLabel.stringValue =
+                        "0 video encodes • mkvmerge • 1 subtitle added last"
+                    self.statusLabel.stringValue = "Subtitle mux plan ready"
+                    self.runButton.isEnabled = true
+                    self.runButton.toolTip =
+                        "Copy all existing tracks, add the reviewed SRT last, verify the MKV, then commit it."
+                }
+            } catch {
+                statusLabel.stringValue =
+                    "Could not preview subtitle: \(error.localizedDescription)"
+                addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+                clearPendingChange()
+            }
+        }
+    }
+
     private func presentTrackRemoval(
         asset: MediaAsset,
         parentWindow: NSWindow,
@@ -566,17 +641,27 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isSubtitleCleanup = false
         }
+        let isSubtitleMux: Bool
+        if case .externalSubtitle = pendingChange {
+            isSubtitleMux = true
+        } else {
+            isSubtitleMux = false
+        }
         panel.title = isSubtitleCleanup ? "Save Verified SRT Copy" : "Save Verified MKV Copy"
         panel.prompt = "Save Verified Copy"
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue =
-            isSubtitleCleanup
-            ? OutputNamingPolicy.cleanedSubtitleFilename(for: asset.sourceURL)
-            : OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
+        if isSubtitleCleanup {
+            panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(
+                for: asset.sourceURL)
+        } else if isSubtitleMux {
+            panel.nameFieldStringValue = OutputNamingPolicy.subtitledFilename(for: asset.sourceURL)
+        } else {
+            panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
+        }
         panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
-        panel.allowedContentTypes = [
-            UTType(filenameExtension: asset.sourceURL.pathExtension) ?? .data
-        ]
+        let outputExtension =
+            isSubtitleCleanup ? "srt" : (isSubtitleMux ? "mkv" : asset.sourceURL.pathExtension)
+        panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
         guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
@@ -586,6 +671,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanMKVButton.isEnabled = false
         removeTracksButton.isEnabled = false
         cleanSubtitleButton.isEnabled = false
+        addSubtitleButton.isEnabled = false
         runButton.isEnabled = false
         Task {
             do {
@@ -629,6 +715,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         restoringCueIDs: restoringCueIDs,
                         destinationURL: destinationURL
                     ).outputURL
+                case .externalSubtitle(let preview, let metadata):
+                    outputURL = try await model.muxExternalSubtitle(
+                        in: asset,
+                        subtitlePreview: preview,
+                        metadata: metadata,
+                        destinationURL: destinationURL
+                    ).sourceURL
                 }
                 preferredSelectionURL =
                     model.assets.contains { $0.sourceURL == outputURL }
@@ -644,6 +737,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     for: asset.tracks)
                 cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
                 cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
+                addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
                 runButton.isEnabled =
                     self.pendingChange != nil
                     && pendingAssetID == asset.id
@@ -689,6 +783,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
+            addSubtitleButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -709,6 +804,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
+            addSubtitleButton.isEnabled = false
             return
         }
         var lines = [
@@ -777,6 +873,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanSubtitleButton.isEnabled
             ? "Normalize and review deterministic SRT text cleanup without changing timings."
             : "SRT text cleanup is available when an inspected .srt file is selected."
+        addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+        addSubtitleButton.toolTip =
+            addSubtitleButton.isEnabled
+            ? "Review and add one external SRT as the last track in a verified MKV copy."
+            : "External subtitle muxing currently requires an inspected Matroska video."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -878,6 +979,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private static func canCleanSubtitle(_ asset: MediaAsset) -> Bool {
         asset.sourceURL.pathExtension.lowercased() == "srt"
     }
+
+    private static func canAddExternalSubtitle(to asset: MediaAsset) -> Bool {
+        MatroskaEditingPolicy.supports(asset)
+            && asset.tracks.contains { $0.kind == .video }
+    }
 }
 
 enum AssetSelectionPolicy {
@@ -905,5 +1011,9 @@ enum OutputNamingPolicy {
 
     static func cleanedSubtitleFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Clean.srt"
+    }
+
+    static func subtitledFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Subtitled.mkv"
     }
 }

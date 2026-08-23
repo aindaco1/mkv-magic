@@ -29,6 +29,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let trackOutput = fixtureRoot.appendingPathComponent("source — Track Edited.mkv")
         let workflowOutput = fixtureRoot.appendingPathComponent("source — Workflow.mkv")
         let removalOutput = fixtureRoot.appendingPathComponent("source — Track Removed.mkv")
+        let muxOutput = fixtureRoot.appendingPathComponent("source — Subtitled.mkv")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
         try Data("1\n00:00:00,000 --> 00:00:00,500\nBonjour\n".utf8).write(to: subtitle)
 
@@ -135,9 +136,26 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(removalAsset.tracks.first?.uid, trackUID)
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
 
+        let subtitlePreview = try await model.previewSubtitleCleanup(at: subtitle)
+        let muxAsset = try await model.muxExternalSubtitle(
+            in: removalAsset,
+            subtitlePreview: subtitlePreview,
+            metadata: ExternalSubtitleTrackMetadata(
+                language: "fr",
+                name: "French",
+                isDefault: true
+            ),
+            destinationURL: muxOutput
+        )
+        XCTAssertEqual(muxAsset.tracks.count, 2)
+        XCTAssertEqual(muxAsset.tracks.last?.kind, .subtitle)
+        XCTAssertEqual(muxAsset.tracks.last?.title, "French")
+        XCTAssertTrue(muxAsset.tracks.last?.isDefault == true)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)
-        XCTAssertEqual(records.count, 4)
+        XCTAssertEqual(records.count, 5)
         XCTAssertEqual(record.inputDisplayNames, ["source.mkv"])
         XCTAssertNil(record.inputs.first?.bookmarkID)
         XCTAssertEqual(record.outputDisplayName, "source — Edited.mkv")
@@ -176,6 +194,21 @@ final class RealToolAppHistoryTests: XCTestCase {
             })
         XCTAssertEqual(
             removalRecord.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+        let muxRecord = records[4]
+        XCTAssertEqual(muxRecord.workflowName, "Add external SRT subtitle")
+        XCTAssertEqual(
+            muxRecord.inputDisplayNames,
+            ["source — Track Removed.mkv", "french.srt"]
+        )
+        XCTAssertEqual(muxRecord.outputDisplayName, "source — Subtitled.mkv")
+        XCTAssertTrue(
+            muxRecord.events.contains {
+                $0.state == .planned && $0.message?.contains("Zero encodes") == true
+            })
+        XCTAssertEqual(
+            muxRecord.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
 

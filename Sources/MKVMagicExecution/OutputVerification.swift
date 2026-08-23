@@ -171,6 +171,82 @@ public struct TrackRemovalOutputVerifier: Sendable {
     }
 }
 
+public struct ExternalSubtitleMuxOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        expectedMetadata: ExternalSubtitleTrackMetadata,
+        subtitleEnd: SubRipTimestamp
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard muxedDurationsMatch(original.duration, output.duration, subtitleEnd: subtitleEnd)
+        else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == original.globalTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.trackTagCount == original.trackTagCount else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID != nil,
+            original.segmentUID == nil || output.segmentUID != original.segmentUID
+        else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == originalTracks.count + 1,
+            outputTracks.dropLast().map(RemuxTrackSnapshot.init)
+                == originalTracks.map(RemuxTrackSnapshot.init),
+            let added = outputTracks.last,
+            added.kind == .subtitle,
+            Self.isSubRip(added)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+        let expectedLanguage = try TrackLanguageTag.canonical(expectedMetadata.language)
+        let outputLanguage = try TrackLanguageTag.canonical(added.language ?? "und")
+        guard outputLanguage == expectedLanguage,
+            added.title == expectedMetadata.name,
+            added.isDefault == expectedMetadata.isDefault,
+            added.isForced == expectedMetadata.isForced,
+            added.isHearingImpaired == expectedMetadata.isHearingImpaired,
+            added.isEnabled,
+            !added.isCommentary,
+            !added.isVisualImpaired,
+            !added.isOriginal,
+            !added.isTextDescription
+        else {
+            throw OutputVerificationError.trackMetadataMismatch
+        }
+    }
+
+    private static func isSubRip(_ track: MediaTrack) -> Bool {
+        let codec = track.codec.lowercased()
+        let codecID = track.codecID?.lowercased() ?? ""
+        return codec.contains("subrip") || codec == "srt" || codecID == "s_text/utf8"
+    }
+}
+
 public enum SegmentTitleExpectation: Equatable, Sendable {
     case preserve
     case set(String?)
@@ -214,6 +290,18 @@ private func remuxDurationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
         abs(lhs.nanoseconds - rhs.nanoseconds) <= 50_000_000
     default: false
     }
+}
+
+private func muxedDurationsMatch(
+    _ original: MediaTime?,
+    _ output: MediaTime?,
+    subtitleEnd: SubRipTimestamp
+) -> Bool {
+    guard let output else { return original == nil && subtitleEnd.milliseconds == 0 }
+    let subtitleNanoseconds = subtitleEnd.milliseconds.multipliedReportingOverflow(by: 1_000_000)
+    guard !subtitleNanoseconds.overflow else { return false }
+    let expected = max(original?.nanoseconds ?? 0, subtitleNanoseconds.partialValue)
+    return abs(output.nanoseconds - expected) <= 50_000_000
 }
 
 private struct TrackTechnicalSnapshot: Equatable {

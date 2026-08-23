@@ -3,7 +3,8 @@
 This records engineering acceptance of the first deterministic text-subtitle
 cleanup slice. It is not acceptance of ASS/SSA cleanup, OCR spelling rules,
 embedded-subtitle extraction/remux, external-subtitle matching/muxing, batch
-cleanup, or a public release.
+cleanup, or a public release. External SRT matching and muxing is accepted
+separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
 
 ## User-facing scope
 
@@ -73,7 +74,6 @@ cleanup, or a public release.
 - VoiceOver and full keyboard-only acceptance of the packaged review flow.
 - ASS/SSA style-preserving parsing and cleanup.
 - High-confidence English OCR spelling rules and uncertain-change review.
-- External subtitle matching, track metadata preview, verified muxing, embedded
-  subtitle extraction/cleanup/remux, and corresponding workflow actions.
+- Embedded subtitle extraction/cleanup/remux and corresponding workflow actions.
 - Physical Intel smoke testing, real-library beta acceptance, and a public
   signed/notarized release.

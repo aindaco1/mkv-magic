@@ -269,13 +269,19 @@ public struct SubRipCodec: Sendable {
         else {
             throw SubRipParseError.invalidTimestamp(block: block)
         }
-        let start = SubRipTimestamp(
-            milliseconds: ((startHours * 60 + startMinutes) * 60 + startSeconds) * 1_000
-                + milliseconds(startFraction)
+        let start = try timestamp(
+            hours: startHours,
+            minutes: startMinutes,
+            seconds: startSeconds,
+            fraction: startFraction,
+            block: block
         )
-        let end = SubRipTimestamp(
-            milliseconds: ((endHours * 60 + endMinutes) * 60 + endSeconds) * 1_000
-                + milliseconds(endFraction)
+        let end = try timestamp(
+            hours: endHours,
+            minutes: endMinutes,
+            seconds: endSeconds,
+            fraction: endFraction,
+            block: block
         )
         guard end >= start else { throw SubRipParseError.nonIncreasingTime(block: block) }
         let settings = capture(9)?.trimmingCharacters(in: .whitespaces)
@@ -289,6 +295,34 @@ public struct SubRipCodec: Sendable {
 
     private static func milliseconds(_ fraction: String) -> Int64 {
         Int64(fraction.padding(toLength: 3, withPad: "0", startingAt: 0)) ?? 0
+    }
+
+    private static func timestamp(
+        hours: Int64,
+        minutes: Int64,
+        seconds: Int64,
+        fraction: String,
+        block: Int
+    ) throws -> SubRipTimestamp {
+        let hourMinutes = hours.multipliedReportingOverflow(by: 60)
+        let totalMinutes = hourMinutes.partialValue.addingReportingOverflow(minutes)
+        let totalSeconds = totalMinutes.partialValue.multipliedReportingOverflow(by: 60)
+        let secondsWithRemainder = totalSeconds.partialValue.addingReportingOverflow(seconds)
+        let wholeMilliseconds = secondsWithRemainder.partialValue.multipliedReportingOverflow(
+            by: 1_000)
+        let totalMilliseconds = wholeMilliseconds.partialValue.addingReportingOverflow(
+            milliseconds(fraction))
+        guard !hourMinutes.overflow,
+            !totalMinutes.overflow,
+            !totalSeconds.overflow,
+            !secondsWithRemainder.overflow,
+            !wholeMilliseconds.overflow,
+            !totalMilliseconds.overflow,
+            totalMilliseconds.partialValue <= Int64.max / 1_000_000
+        else {
+            throw SubRipParseError.invalidTimestamp(block: block)
+        }
+        return SubRipTimestamp(milliseconds: totalMilliseconds.partialValue)
     }
 
     private static func format(_ timestamp: SubRipTimestamp) -> String {

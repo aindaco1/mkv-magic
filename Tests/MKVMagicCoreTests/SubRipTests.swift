@@ -64,6 +64,15 @@ final class SubRipTests: XCTestCase {
         XCTAssertThrowsError(try SubRipCodec().parse(backwards)) {
             XCTAssertEqual($0 as? SubRipParseError, .nonIncreasingTime(block: 1))
         }
+
+        let overflowing = DecodedSubtitleText(
+            text:
+                "1\n2562047788015216:00:00,000 --> 2562047788015216:00:00,001\nText\n",
+            encoding: .utf8
+        )
+        XCTAssertThrowsError(try SubRipCodec().parse(overflowing)) {
+            XCTAssertEqual($0 as? SubRipParseError, .invalidTimestamp(block: 1))
+        }
     }
 
     func testCleanupRemovesOnlyKnownWholeAdBlocksAndTrimsWhitespace() throws {
