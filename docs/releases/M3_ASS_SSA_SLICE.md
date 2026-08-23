@@ -2,15 +2,16 @@
 
 This records engineering acceptance of style-preserving ASS and SSA cleanup and
 external Matroska muxing. It is not acceptance of embedded-track extraction,
-OCR spelling repair, image-subtitle conversion, batch execution, or a public
-release.
+image-subtitle conversion, batch execution, or a public release. Deterministic
+English OCR cleanup is accepted separately in `M3_ENGLISH_OCR_SLICE.md`.
 
 ## User-facing scope
 
 - Selecting an inspected `.ass` or `.ssa` file enables the shared **Clean
   Subtitle…** review flow.
 - The compact native review lists deterministic whole-event advertisement
-  removals and edge-whitespace changes. Every suggestion can be restored.
+  removals, edge-whitespace changes, and local English OCR suggestions. Possible
+  spelling corrections start unselected; every suggestion can be changed.
 - Script information, V4/V4+ styles, comments, unknown sections, arbitrary valid
   event formats, override tags, timing, layer/marked value, speaker/name,
   margins, and effect values are retained.
@@ -74,8 +75,6 @@ release.
 
 ## Still pending
 
-- High-confidence English OCR spelling rules with explicit review for uncertain
-  changes.
 - Embedded text-subtitle extraction, cleanup, and remux workflow actions.
 - Image-subtitle pass-through/mux operations; image-to-text OCR remains roadmap.
 - Packaged VoiceOver, full keyboard-only, physical Intel, and real-library beta

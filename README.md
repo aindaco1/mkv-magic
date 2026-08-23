@@ -26,11 +26,15 @@ paths or track identifiers, compile against the selected inspection, show a
 zero-encode impact preview, and share one verified output pipeline.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
-accidental edge whitespace. Cleanup preserves every timestamp and, for ASS/SSA,
-the script sections, style definitions, override tags, layout fields, comments,
-and unknown sections. It refuses to remove every event, detects a source changed
-since preview, writes a new UTF-8 subtitle, and reopens the exact planned result
-before commit while leaving the source intact.
+accidental edge whitespace. A bounded local English OCR policy automatically
+selects only unambiguous digit/letter corrections and presents curated possible
+spelling corrections unchecked. Explicit non-English filename suffixes disable
+the English rules. Markup, URLs, email addresses, and ASS/SSA override tags are
+protected. Cleanup preserves every timestamp and, for ASS/SSA, the script
+sections, style definitions, override tags, layout fields, comments, and unknown
+sections. It refuses to remove every event, detects a source changed since
+preview, writes a new UTF-8 subtitle, and reopens the exact planned result before
+commit while leaving the source intact.
 For inspected Matroska video, **Add Subtitle…** accepts a reviewed external SRT,
 ASS, or SSA file, ranks the filename and timing match, infers editable
 language/forced/SDH metadata, and adds it as the last track in a new MKV without

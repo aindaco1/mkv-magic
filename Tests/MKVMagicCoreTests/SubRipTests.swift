@@ -112,4 +112,39 @@ final class SubRipTests: XCTestCase {
 
         XCTAssertTrue(SubtitleCleanupPolicy().preview(document).cleaned.cues.isEmpty)
     }
+
+    func testCleanupSeparatesAutomaticOCRFixesFromReviewOnlySpellingSuggestions() throws {
+        let source = DecodedSubtitleText(
+            text:
+                "1\n00:00:00,000 --> 00:00:01,000\ny0u said HE11O\n\n"
+                + "2\n00:00:01,000 --> 00:00:02,000\nTbe modem world\n",
+            encoding: .utf8
+        )
+        let document = try SubRipCodec().parse(source).document
+
+        let preview = SubtitleCleanupPolicy().preview(document)
+
+        XCTAssertEqual(
+            preview.changes.map(\.reasons), [[.ocrHighConfidence], [.spellingSuggestion]])
+        XCTAssertEqual(preview.cleaned.cues[0].lines, ["you said HELLO"])
+        XCTAssertEqual(preview.cleaned.cues[1].lines, ["The modern world"])
+        XCTAssertEqual(
+            preview.document(restoringCueIDs: [1]).cues.map(\.lines),
+            [["you said HELLO"], ["Tbe modem world"]]
+        )
+    }
+
+    func testCleanupCanDisableEnglishOCRWithoutDisablingOtherRules() throws {
+        let document = try SubRipCodec().parse(
+            DecodedSubtitleText(
+                text: "1\n00:00:00,000 --> 00:00:01,000\n y0u \n",
+                encoding: .utf8
+            )
+        ).document
+
+        let preview = SubtitleCleanupPolicy(appliesEnglishOCRRules: false).preview(document)
+
+        XCTAssertEqual(preview.changes.map(\.reasons), [[.accidentalWhitespace]])
+        XCTAssertEqual(preview.cleaned.cues[0].lines, ["y0u"])
+    }
 }

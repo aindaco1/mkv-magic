@@ -8,6 +8,7 @@ private struct SubtitleCleanupReviewChange {
     let detail: String
     let start: SubRipTimestamp
     let end: SubRipTimestamp
+    let selectedByDefault: Bool
 }
 
 private enum SubtitleCleanupReviewPreview {
@@ -23,7 +24,10 @@ private enum SubtitleCleanupReviewPreview {
                     title: SubtitleCleanupPresentation.title(change),
                     detail: SubtitleCleanupPresentation.detail(change),
                     start: change.before.start,
-                    end: change.before.end
+                    end: change.before.end,
+                    selectedByDefault: SubtitleCleanupPresentation.selectedByDefault(
+                        reasons: change.reasons
+                    )
                 )
             }
         case .advanced(let preview):
@@ -33,7 +37,10 @@ private enum SubtitleCleanupReviewPreview {
                     title: SubtitleCleanupPresentation.title(change),
                     detail: SubtitleCleanupPresentation.detail(change),
                     start: change.before.start,
-                    end: change.before.end
+                    end: change.before.end,
+                    selectedByDefault: SubtitleCleanupPresentation.selectedByDefault(
+                        reasons: change.reasons
+                    )
                 )
             }
         }
@@ -44,6 +51,10 @@ private enum SubtitleCleanupReviewPreview {
         case .subRip(let preview): preview.cleanup.original.cues.count
         case .advanced(let preview): preview.cleanup.original.events.count
         }
+    }
+
+    var defaultAppliedChangeIDs: Set<Int> {
+        Set(changes.filter(\.selectedByDefault).map(\.id))
     }
 
     var itemName: String {
@@ -63,9 +74,9 @@ private enum SubtitleCleanupReviewPreview {
     var explanation: String {
         switch self {
         case .subRip:
-            "Only deterministic whole-block ad matches and accidental edge whitespace are selected. Uncheck any change to restore that cue. Cue timing is never changed."
+            "Deterministic ad, whitespace, and high-confidence local English OCR fixes are selected. Possible spelling corrections start unselected. Uncheck any selected change to restore that cue. Cue timing is never changed."
         case .advanced:
-            "Only deterministic whole-event ad matches and dialogue edge whitespace are selected. Uncheck any change to restore that event. Styles, override tags, layout fields, and timing are never changed."
+            "Deterministic ad, whitespace, and high-confidence local English OCR fixes are selected. Possible spelling corrections start unselected. Uncheck any selected change to restore that event. Styles, override tags, layout fields, and timing are never changed."
         }
     }
 
@@ -157,7 +168,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
 
     fileprivate init(review: SubtitleCleanupReviewPreview) {
         self.review = review
-        appliedChangeIDs = Set(review.changes.map(\.id))
+        appliedChangeIDs = review.defaultAppliedChangeIDs
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -175,7 +186,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         )
         explanation.textColor = .secondaryLabelColor
         summaryLabel.stringValue = SubtitleCleanupPresentation.selectionSummary(
-            appliedCount: review.changes.count,
+            appliedCount: appliedChangeIDs.count,
             totalCount: review.changes.count,
             itemCount: review.itemCount,
             itemName: review.itemName
@@ -316,8 +327,11 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
 
 enum SubtitleCleanupPresentation {
     static func summary(_ preview: SubtitleCleanupFilePreview) -> String {
-        selectionSummary(
-            appliedCount: preview.cleanup.changes.count,
+        let appliedCount = preview.cleanup.changes.filter {
+            selectedByDefault(reasons: $0.reasons)
+        }.count
+        return selectionSummary(
+            appliedCount: appliedCount,
             totalCount: preview.cleanup.changes.count,
             cueCount: preview.cleanup.original.cues.count
         )
@@ -343,6 +357,11 @@ enum SubtitleCleanupPresentation {
 
     static func normalization(_ preview: SubtitleCleanupFilePreview) -> String {
         var details = ["Output: UTF-8 without BOM, LF line endings, sequential cue numbers"]
+        details.append(
+            preview.appliesEnglishOCRRules
+                ? "Local English OCR review enabled"
+                : "English OCR review skipped: filename identifies another language"
+        )
         if preview.encoding != .utf8 {
             details.append("Input encoding: \(preview.encoding.rawValue)")
         }
@@ -356,6 +375,11 @@ enum SubtitleCleanupPresentation {
         var details = [
             "Output: UTF-8 without BOM and LF line endings; script sections and styles preserved"
         ]
+        details.append(
+            preview.appliesEnglishOCRRules
+                ? "Local English OCR review enabled"
+                : "English OCR review skipped: filename identifies another language"
+        )
         if preview.encoding != .utf8 {
             details.append("Input encoding: \(preview.encoding.rawValue)")
         }
@@ -367,6 +391,12 @@ enum SubtitleCleanupPresentation {
 
     static func title(_ change: SubtitleCleanupChange) -> String {
         if change.reasons.contains(.ytsAdvertisement) { return "Remove known YTS/YIFY ad block" }
+        if change.reasons.contains(.spellingSuggestion) {
+            return "Review possible English OCR spelling correction"
+        }
+        if change.reasons.contains(.ocrHighConfidence) {
+            return "Fix high-confidence English OCR error"
+        }
         return "Trim accidental edge whitespace"
     }
 
@@ -378,6 +408,12 @@ enum SubtitleCleanupPresentation {
 
     static func title(_ change: AdvancedSubStationAlphaCleanupChange) -> String {
         if change.reasons.contains(.ytsAdvertisement) { return "Remove known YTS/YIFY ad event" }
+        if change.reasons.contains(.spellingSuggestion) {
+            return "Review possible English OCR spelling correction"
+        }
+        if change.reasons.contains(.ocrHighConfidence) {
+            return "Fix high-confidence English OCR error"
+        }
         return "Trim dialogue edge whitespace"
     }
 
@@ -395,6 +431,10 @@ enum SubtitleCleanupPresentation {
             (milliseconds / 1_000) % 60,
             milliseconds % 1_000
         )
+    }
+
+    static func selectedByDefault(reasons: Set<SubtitleCleanupReason>) -> Bool {
+        !reasons.contains(.spellingSuggestion)
     }
 
     static func canConfirm(

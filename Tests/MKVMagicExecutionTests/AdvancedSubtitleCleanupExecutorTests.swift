@@ -213,6 +213,32 @@ final class AdvancedSubtitleCleanupExecutorTests: XCTestCase {
         }
     }
 
+    func testFilenameLanguageSuffixControlsAdvancedEnglishOCR() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let english = root.appendingPathComponent("Movie.en.ass")
+        let spanish = root.appendingPathComponent("Movie.es.ass")
+        let data = Data(
+            fixture(events: [
+                "Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,y0u"
+            ]).utf8
+        )
+        try data.write(to: english)
+        try data.write(to: spanish)
+
+        let englishPreview = try await AdvancedSubtitleCleanupExecutor().preview(
+            sourceURL: english
+        )
+        let spanishPreview = try await AdvancedSubtitleCleanupExecutor().preview(
+            sourceURL: spanish
+        )
+
+        XCTAssertTrue(englishPreview.appliesEnglishOCRRules)
+        XCTAssertEqual(englishPreview.cleanup.changes.map(\.reasons), [[.ocrHighConfidence]])
+        XCTAssertFalse(spanishPreview.appliesEnglishOCRRules)
+        XCTAssertTrue(spanishPreview.cleanup.changes.isEmpty)
+    }
+
     private func makeRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-ass-cleanup-\(UUID().uuidString)",

@@ -87,6 +87,39 @@ final class AdvancedSubStationAlphaTests: XCTestCase {
         XCTAssertEqual(AdvancedSubStationAlphaCodec().serialize(document), input)
     }
 
+    func testCleanupAppliesEnglishOCRToDialogueTextWithoutChangingOverrideTags() throws {
+        let document = try parse(
+            "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+                + #"Dialogue: 0,0:00:01.00,0:00:02.00,Default,{\an8}y0u said HE11O"# + "\n"
+                + "Dialogue: 0,0:00:03.00,0:00:04.00,Default,Tbe modem world\n"
+        )
+
+        let preview = AdvancedSubStationAlphaCleanupPolicy().preview(document)
+
+        XCTAssertEqual(
+            preview.changes.map(\.reasons), [[.ocrHighConfidence], [.spellingSuggestion]])
+        XCTAssertEqual(preview.cleaned.events[0].text, #"{\an8}you said HELLO"#)
+        XCTAssertEqual(preview.cleaned.events[1].text, "The modern world")
+        XCTAssertEqual(
+            preview.document(restoringEventIDs: [1]).events.map(\.text),
+            [#"{\an8}you said HELLO"#, "Tbe modem world"]
+        )
+    }
+
+    func testCleanupCanDisableEnglishOCRForAdvancedSubtitles() throws {
+        let document = try parse(
+            "[Events]\nFormat: Start, End, Text\n"
+                + "Dialogue: 0:00:01.00,0:00:02.00, y0u \n"
+        )
+
+        let preview = AdvancedSubStationAlphaCleanupPolicy(
+            appliesEnglishOCRRules: false
+        ).preview(document)
+
+        XCTAssertEqual(preview.changes.map(\.reasons), [[.accidentalWhitespace]])
+        XCTAssertEqual(preview.cleaned.events[0].text, "y0u")
+    }
+
     func testRejectsMissingDuplicateAndMalformedEventStructure() {
         XCTAssertThrowsError(
             try parse("[Script Info]\nTitle: Missing events\n")

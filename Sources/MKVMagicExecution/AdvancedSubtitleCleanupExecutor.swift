@@ -54,6 +54,7 @@ public struct AdvancedSubtitleCleanupFilePreview: Equatable, Sendable {
     public let diagnostics: Set<AdvancedSubStationAlphaDiagnostic>
     public let cleanup: AdvancedSubStationAlphaCleanupPreview
     public let normalizationNeeded: Bool
+    public let appliesEnglishOCRRules: Bool
 
     public init(
         sourceURL: URL,
@@ -61,7 +62,8 @@ public struct AdvancedSubtitleCleanupFilePreview: Equatable, Sendable {
         encoding: SubtitleTextEncoding,
         diagnostics: Set<AdvancedSubStationAlphaDiagnostic>,
         cleanup: AdvancedSubStationAlphaCleanupPreview,
-        normalizationNeeded: Bool
+        normalizationNeeded: Bool,
+        appliesEnglishOCRRules: Bool = true
     ) {
         self.sourceURL = sourceURL
         self.sourceSHA256 = sourceSHA256
@@ -69,6 +71,7 @@ public struct AdvancedSubtitleCleanupFilePreview: Equatable, Sendable {
         self.diagnostics = diagnostics
         self.cleanup = cleanup
         self.normalizationNeeded = normalizationNeeded
+        self.appliesEnglishOCRRules = appliesEnglishOCRRules
     }
 }
 
@@ -85,13 +88,19 @@ public struct AdvancedSubtitleCleanupExecutor: Sendable {
             let normalizedOriginal = Data(
                 AdvancedSubStationAlphaCodec().serialize(parsed.document).utf8
             )
+            let appliesEnglishOCRRules = EnglishSubtitleFilenamePolicy.shouldApplyOCRRules(
+                to: sourceURL
+            )
             return AdvancedSubtitleCleanupFilePreview(
                 sourceURL: sourceURL.standardizedFileURL,
                 sourceSHA256: Data(SHA256.hash(data: sourceData)),
                 encoding: decoded.encoding,
                 diagnostics: parsed.diagnostics,
-                cleanup: AdvancedSubStationAlphaCleanupPolicy().preview(parsed.document),
-                normalizationNeeded: decoded.encoding != .utf8 || sourceData != normalizedOriginal
+                cleanup: AdvancedSubStationAlphaCleanupPolicy(
+                    appliesEnglishOCRRules: appliesEnglishOCRRules
+                ).preview(parsed.document),
+                normalizationNeeded: decoded.encoding != .utf8 || sourceData != normalizedOriginal,
+                appliesEnglishOCRRules: appliesEnglishOCRRules
             )
         }.value
     }
@@ -150,7 +159,9 @@ public struct AdvancedSubtitleCleanupExecutor: Sendable {
             SubtitleTextDecoder().decode(sourceData)
         ).document
         guard current == filePreview.cleanup.original,
-            AdvancedSubStationAlphaCleanupPolicy().preview(current) == filePreview.cleanup
+            AdvancedSubStationAlphaCleanupPolicy(
+                appliesEnglishOCRRules: filePreview.appliesEnglishOCRRules
+            ).preview(current) == filePreview.cleanup
         else {
             throw AdvancedSubtitleCleanupExecutionError.stalePreview
         }

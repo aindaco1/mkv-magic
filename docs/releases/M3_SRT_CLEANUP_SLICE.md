@@ -2,17 +2,18 @@
 
 This records engineering acceptance of the first deterministic text-subtitle
 cleanup slice. ASS/SSA cleanup is accepted separately in
-`M3_ASS_SSA_SLICE.md`; this document is not acceptance of OCR spelling rules,
-embedded-subtitle extraction/remux, external-subtitle matching/muxing, batch
-cleanup, or a public release. External SRT matching and muxing is accepted
-separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
+`M3_ASS_SSA_SLICE.md`, and OCR cleanup is accepted separately in
+`M3_ENGLISH_OCR_SLICE.md`. This document is not acceptance of embedded-subtitle
+extraction/remux, batch cleanup, or a public release. External SRT matching and
+muxing is accepted separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
 
 ## User-facing scope
 
 - Selecting an inspected `.srt` file enables **Clean SRT…**.
 - A compact native review sheet lists every suggested cue change with its exact
-  timing and before/after text. Every suggestion starts selected and can be
-  individually restored before continuing.
+  timing and before/after text. Deterministic changes start selected; uncertain
+  OCR spelling suggestions start unselected. Each can be individually changed
+  before continuing.
 - The first suggestions remove only whole cues containing the established
   `Official YIFY movies site` or `Downloaded from` patterns with a known
   `yts.mx`, `yts.lt`, or `yts.bz` domain. Ordinary dialogue containing unrelated
@@ -73,7 +74,6 @@ separately in `M3_EXTERNAL_SUBTITLE_MUX_SLICE.md`.
 ## Still pending
 
 - VoiceOver and full keyboard-only acceptance of the packaged review flow.
-- High-confidence English OCR spelling rules and uncertain-change review.
 - Embedded subtitle extraction/cleanup/remux and corresponding workflow actions.
 - Physical Intel smoke testing, real-library beta acceptance, and a public
   signed/notarized release.

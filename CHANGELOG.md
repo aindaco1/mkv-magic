@@ -75,3 +75,8 @@ semantic versioning; public release tags are immutable and signed.
   headers, style/layout fields, text, event count, and timing with the reviewed
   source. Refuse the transaction if Matroska round-tripping changes the payload;
   real bundled-tool tests cover both modern ASS and legacy SSA.
+- Add deterministic local English OCR cleanup for SRT, ASS, and SSA. Select only
+  unambiguous glyph corrections by default, leave possible spelling corrections
+  unchecked for explicit review, preserve case and apostrophe style, protect
+  markup/override tags/URLs/email, and skip the English rules when a filename has
+  an explicit non-English language suffix.

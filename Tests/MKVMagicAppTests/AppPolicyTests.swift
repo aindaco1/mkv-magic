@@ -404,6 +404,53 @@ final class AppPolicyTests: XCTestCase {
             SubtitleCleanupPresentation.time(advertisement.start),
             "25:01:01,007"
         )
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.selectedByDefault(reasons: [.ocrHighConfidence])
+        )
+        XCTAssertFalse(
+            SubtitleCleanupPresentation.selectedByDefault(reasons: [.spellingSuggestion])
+        )
+    }
+
+    func testSubtitleCleanupPresentationDistinguishesOCRConfidenceAndLanguagePolicy() {
+        let cue = SubRipCue(
+            id: 0,
+            start: SubRipTimestamp(milliseconds: 0),
+            end: SubRipTimestamp(milliseconds: 1_000),
+            lines: ["Tbe"]
+        )
+        let correctedCue = SubRipCue(
+            id: cue.id,
+            start: cue.start,
+            end: cue.end,
+            lines: ["The"]
+        )
+        let change = SubtitleCleanupChange(
+            id: cue.id,
+            reasons: [.spellingSuggestion],
+            before: cue,
+            after: correctedCue
+        )
+        let cleanup = SubtitleCleanupPreview(
+            original: SubRipDocument(cues: [cue]),
+            cleaned: SubRipDocument(cues: [correctedCue]),
+            changes: [change]
+        )
+        let preview = SubtitleCleanupFilePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.fr.srt"),
+            sourceSHA256: Data(),
+            encoding: .utf8,
+            diagnostics: [],
+            cleanup: cleanup,
+            normalizationNeeded: false,
+            appliesEnglishOCRRules: false
+        )
+
+        XCTAssertTrue(SubtitleCleanupPresentation.title(change).contains("possible"))
+        XCTAssertTrue(
+            SubtitleCleanupPresentation.normalization(preview).contains("skipped")
+        )
+        XCTAssertTrue(SubtitleCleanupPresentation.summary(preview).contains("0 of 1"))
     }
 
     func testAdvancedSubtitleCleanupPresentationKeepsOneEventAndDescribesPreservation() throws {

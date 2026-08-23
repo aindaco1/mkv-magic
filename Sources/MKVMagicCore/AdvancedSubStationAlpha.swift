@@ -370,13 +370,18 @@ public struct AdvancedSubStationAlphaCleanupPreview: Equatable, Sendable {
 }
 
 public struct AdvancedSubStationAlphaCleanupPolicy: Sendable {
-    public init() {}
+    private let appliesEnglishOCRRules: Bool
+
+    public init(appliesEnglishOCRRules: Bool = true) {
+        self.appliesEnglishOCRRules = appliesEnglishOCRRules
+    }
 
     public func preview(
         _ document: AdvancedSubStationAlphaDocument
     ) -> AdvancedSubStationAlphaCleanupPreview {
         var cleanedLines = [AdvancedSubStationAlphaLine]()
         var changes = [AdvancedSubStationAlphaCleanupChange]()
+        let ocrPolicy = EnglishOCRCorrectionPolicy()
         for line in document.lines {
             guard case .dialogue(let event) = line else {
                 cleanedLines.append(line)
@@ -393,14 +398,29 @@ public struct AdvancedSubStationAlphaCleanupPolicy: Sendable {
                 )
                 continue
             }
-            let normalizedText = event.text.trimmingCharacters(in: .whitespaces)
+            var reasons = Set<SubtitleCleanupReason>()
+            var normalizedText = event.text.trimmingCharacters(in: .whitespaces)
+            if normalizedText != event.text {
+                reasons.insert(.accidentalWhitespace)
+            }
+            if appliesEnglishOCRRules {
+                let review = ocrPolicy.review(normalizedText)
+                let automaticallyCorrected = review.automaticallyCorrectedText
+                if automaticallyCorrected != normalizedText {
+                    normalizedText = automaticallyCorrected
+                    reasons.insert(.ocrHighConfidence)
+                } else if reasons.isEmpty, review.fullySuggestedText != normalizedText {
+                    normalizedText = review.fullySuggestedText
+                    reasons.insert(.spellingSuggestion)
+                }
+            }
             let normalizedEvent = event.replacingText(normalizedText)
             cleanedLines.append(.dialogue(normalizedEvent))
-            if normalizedText != event.text {
+            if !reasons.isEmpty {
                 changes.append(
                     AdvancedSubStationAlphaCleanupChange(
                         id: event.id,
-                        reasons: [.accidentalWhitespace],
+                        reasons: reasons,
                         before: event,
                         after: normalizedEvent
                     )

@@ -349,6 +349,8 @@ public struct SubRipCodec: Sendable {
 public enum SubtitleCleanupReason: String, Codable, CaseIterable, Hashable, Sendable {
     case ytsAdvertisement
     case accidentalWhitespace
+    case ocrHighConfidence
+    case spellingSuggestion
 }
 
 public struct SubtitleCleanupChange: Codable, Equatable, Identifiable, Sendable {
@@ -397,11 +399,16 @@ public struct SubtitleCleanupPreview: Equatable, Sendable {
 }
 
 public struct SubtitleCleanupPolicy: Sendable {
-    public init() {}
+    private let appliesEnglishOCRRules: Bool
+
+    public init(appliesEnglishOCRRules: Bool = true) {
+        self.appliesEnglishOCRRules = appliesEnglishOCRRules
+    }
 
     public func preview(_ document: SubRipDocument) -> SubtitleCleanupPreview {
         var cleaned = [SubRipCue]()
         var changes = [SubtitleCleanupChange]()
+        let ocrPolicy = EnglishOCRCorrectionPolicy()
         for cue in document.cues {
             if Self.isKnownAdvertisement(cue.lines) {
                 changes.append(
@@ -414,8 +421,26 @@ public struct SubtitleCleanupPolicy: Sendable {
                 )
                 continue
             }
-            let normalizedLines = cue.lines.map {
+            var reasons = Set<SubtitleCleanupReason>()
+            var normalizedLines = cue.lines.map {
                 $0.trimmingCharacters(in: .whitespaces)
+            }
+            if normalizedLines != cue.lines {
+                reasons.insert(.accidentalWhitespace)
+            }
+            if appliesEnglishOCRRules {
+                let reviews = normalizedLines.map(ocrPolicy.review)
+                let automaticallyCorrected = reviews.map(\.automaticallyCorrectedText)
+                if automaticallyCorrected != normalizedLines {
+                    normalizedLines = automaticallyCorrected
+                    reasons.insert(.ocrHighConfidence)
+                } else if reasons.isEmpty {
+                    let suggested = reviews.map(\.fullySuggestedText)
+                    if suggested != normalizedLines {
+                        normalizedLines = suggested
+                        reasons.insert(.spellingSuggestion)
+                    }
+                }
             }
             let normalizedCue = SubRipCue(
                 id: cue.id,
@@ -426,11 +451,11 @@ public struct SubtitleCleanupPolicy: Sendable {
                 lines: normalizedLines
             )
             cleaned.append(normalizedCue)
-            if normalizedLines != cue.lines {
+            if !reasons.isEmpty {
                 changes.append(
                     SubtitleCleanupChange(
                         id: cue.id,
-                        reasons: [.accidentalWhitespace],
+                        reasons: reasons,
                         before: cue,
                         after: normalizedCue
                     )

@@ -201,6 +201,25 @@ final class SubtitleCleanupExecutorTests: XCTestCase {
         XCTAssertFalse(preview.normalizationNeeded)
     }
 
+    func testFilenameLanguageSuffixControlsEnglishOCRWithoutAffectingParsing() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let english = root.appendingPathComponent("Movie.en.srt")
+        let french = root.appendingPathComponent("Movie.fr.srt")
+        let data = Data("1\n00:00:00,000 --> 00:00:01,000\ny0u\n".utf8)
+        try data.write(to: english)
+        try data.write(to: french)
+
+        let englishPreview = try await SubtitleCleanupExecutor().preview(sourceURL: english)
+        let frenchPreview = try await SubtitleCleanupExecutor().preview(sourceURL: french)
+
+        XCTAssertTrue(englishPreview.appliesEnglishOCRRules)
+        XCTAssertEqual(englishPreview.cleanup.changes.map(\.reasons), [[.ocrHighConfidence]])
+        XCTAssertFalse(frenchPreview.appliesEnglishOCRRules)
+        XCTAssertTrue(frenchPreview.cleanup.changes.isEmpty)
+        XCTAssertEqual(frenchPreview.cleanup.original.cues[0].lines, ["y0u"])
+    }
+
     func testRefusesNonSRTDestinationBeforeCreatingOutput() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
