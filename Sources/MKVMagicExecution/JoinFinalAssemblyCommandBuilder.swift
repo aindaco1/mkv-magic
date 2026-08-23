@@ -55,23 +55,29 @@ public enum JoinFinalLaneMechanism: String, Equatable, Sendable {
 
 public struct JoinFinalLaneInput: Equatable, Sendable {
     public let laneIndex: Int
+    public let kind: MediaTrackKind
     public let mechanism: JoinFinalLaneMechanism
     public let inputFileID: Int
     public let inputTrackID: Int
     public let metadataSourceIndex: Int
+    public let sourceTrackIDs: [Int?]
 
     public init(
         laneIndex: Int,
+        kind: MediaTrackKind,
         mechanism: JoinFinalLaneMechanism,
         inputFileID: Int,
         inputTrackID: Int,
-        metadataSourceIndex: Int
+        metadataSourceIndex: Int,
+        sourceTrackIDs: [Int?]
     ) {
         self.laneIndex = laneIndex
+        self.kind = kind
         self.mechanism = mechanism
         self.inputFileID = inputFileID
         self.inputTrackID = inputTrackID
         self.metadataSourceIndex = metadataSourceIndex
+        self.sourceTrackIDs = sourceTrackIDs
     }
 }
 
@@ -246,10 +252,12 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
                 laneInputs.append(
                     JoinFinalLaneInput(
                         laneIndex: laneIndex,
+                        kind: mapping.lanes[laneIndex].kind,
                         mechanism: .normalized,
                         inputFileID: 0,
                         inputTrackID: normalizedTrack.id,
-                        metadataSourceIndex: metadataSourceIndex
+                        metadataSourceIndex: metadataSourceIndex,
+                        sourceTrackIDs: mapping.lanes[laneIndex].trackIDsBySource
                     )
                 )
             } else {
@@ -260,10 +268,12 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
                 laneInputs.append(
                     JoinFinalLaneInput(
                         laneIndex: laneIndex,
+                        kind: mapping.lanes[laneIndex].kind,
                         mechanism: .packetCopy,
                         inputFileID: 1,
                         inputTrackID: trackID,
-                        metadataSourceIndex: metadataSourceIndex
+                        metadataSourceIndex: metadataSourceIndex,
+                        sourceTrackIDs: mapping.lanes[laneIndex].trackIDsBySource
                     )
                 )
             }

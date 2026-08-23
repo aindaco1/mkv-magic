@@ -880,9 +880,13 @@ lanes are ordered with compatible source lanes appended directly, while reviewed
 track metadata, attachment selections, the segment title, and exact external
 nested chapters are rendered once. It fails closed on unpreserved Matroska tags,
 text-subtitle conversion, subtitle gaps, changed chapter/bundle facts, unsafe
-paths, or overwrite. Manual mapping, native choice controls, the revision-bound
-final executor and reopen audit, fast/exact trimming, and join-boundary decode
-spot checks remain before the M5 gate is complete.
+paths, or overwrite. The revision-bound executor now runs this command inside
+the verified-output transaction, checks duration, stream identity/order,
+reviewed metadata, attachments, title, zero-tag policy, chapter count, and new
+segment identity, canonically compares re-extracted nested chapter XML, commits
+atomically, and repeats every audit after reopening. Manual mapping, native
+choice controls and execution wiring, fast/exact trimming, and join-boundary
+decode spot checks remain before the M5 gate is complete.
 
 ### M6 — Transcoding and hardware adaptation
 

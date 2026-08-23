@@ -314,32 +314,27 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 )
             }
             let chapters = try JoinedChapterComposer().compose(chapterSources)
-            let chaptersURL = root.appendingPathComponent("chapters.xml")
-            try MatroskaChapterXMLCodec().serialize(chapters.document).write(to: chaptersURL)
             let finalURL = root.appendingPathComponent("assembled-video-and-audio.mkv")
-            let assembly = try JoinFinalAssemblyCommandBuilder().build(
+            let finalExecutor = JoinFinalAssemblyExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            )
+            let finalPreview = try await finalExecutor.preview(
                 sources: sources,
                 resolvedPlan: resolved,
                 normalizedBundle: normalized,
-                chapters: chapters,
-                chaptersURL: chaptersURL,
-                outputURL: finalURL
+                chapters: chapters
             )
             XCTAssertEqual(
-                assembly.lanes.map(\.mechanism),
+                finalPreview.commandLanes.map(\.mechanism),
                 [.normalized, .packetCopy]
             )
-            XCTAssertTrue(assembly.arguments.contains("--append-to"))
-            let result = try await runner.run(
-                CommandRequest(
-                    executableURL: try catalog.url(for: .mkvmerge),
-                    arguments: assembly.arguments,
-                    timeout: 60
-                )
+            let assembled = try await finalExecutor.execute(
+                preview: finalPreview,
+                destinationURL: finalURL
             )
-            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
-
-            let assembled = try await inspector.inspect(finalURL)
             XCTAssertEqual(assembled.tracks.map(\.kind), [.video, .audio])
             XCTAssertEqual(assembled.tracks[0].codec, "hevc")
             XCTAssertEqual(assembled.tracks[1].codec, "aac")

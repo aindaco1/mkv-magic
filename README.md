@@ -107,8 +107,13 @@ when the source contains encoder padding. A final pure compiler now emits one
 packet-copy lanes, selected attachments and track metadata, one title, and the
 exact nested joined chapters. It refuses overwrite, changed chapters/bundles,
 unsafe paths or text, unpreserved tags, subtitle conversion, and subtitle gaps.
-The preview still does not enable saving because native choice controls and the
-revision-bound final executor/reopen audit are not implemented yet.
+The revision-bound final executor now compiles that command again inside a
+verified-output transaction, semantically audits the temporary MKV, re-extracts
+and canonically compares its full nested chapter XML, commits atomically, then
+repeats the complete audit after reopening the saved path. A real mixed-lane
+fixture passes this transaction without changing either original. The native
+preview still does not enable saving because exact choice controls and app-level
+execution wiring are not implemented yet.
 The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
 and the required join filters on the running Mac. It has AV1 decoding but no AV1
 encoder, so AV1 is not presented as available: HEVC 10-bit is the current

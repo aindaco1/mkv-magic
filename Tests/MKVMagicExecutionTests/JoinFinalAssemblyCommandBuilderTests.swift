@@ -24,17 +24,21 @@ final class JoinFinalAssemblyCommandBuilderTests: XCTestCase {
             [
                 JoinFinalLaneInput(
                     laneIndex: 0,
+                    kind: .video,
                     mechanism: .normalized,
                     inputFileID: 0,
                     inputTrackID: 5,
-                    metadataSourceIndex: 0
+                    metadataSourceIndex: 0,
+                    sourceTrackIDs: [0, 0]
                 ),
                 JoinFinalLaneInput(
                     laneIndex: 1,
+                    kind: .audio,
                     mechanism: .packetCopy,
                     inputFileID: 1,
                     inputTrackID: 1,
-                    metadataSourceIndex: 0
+                    metadataSourceIndex: 0,
+                    sourceTrackIDs: [1, 1]
                 ),
             ]
         )

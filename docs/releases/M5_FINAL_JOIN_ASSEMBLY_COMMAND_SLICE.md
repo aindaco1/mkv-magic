@@ -1,8 +1,9 @@
 # M5 final common-format assembly command slice
 
 This records engineering acceptance of the pure final `mkvmerge` compiler for
-common-format hard joins. It does not claim the native choice UI, transactional
-final executor, subtitle conversion, tag preservation, HDR conversion, public
+common-format hard joins. The transactional executor was completed in the later
+`M5_FINAL_JOIN_EXECUTOR_SLICE.md`; this command slice does not claim the native
+choice UI, subtitle conversion, tag preservation, HDR conversion, public
 release, or physical Intel acceptance.
 
 ## One final mux
@@ -60,14 +61,14 @@ only mismatched video, appends AAC directly from both original sources in the
 same final `mkvmerge` process, reopens a two-track output, verifies the retained
 audio track identity and chapters, and proves both originals remain byte-exact.
 
-The current suite contains 298 tests. With the assembled bundled runtime all 298
-execute with zero skips; the standard source-only run intentionally skips the 18
-bundled-tool integrations.
+At this command-only boundary the suite contained 298 tests. With the assembled
+bundled runtime all 298 executed with zero skips; the standard source-only run
+intentionally skipped the 18 bundled-tool integrations.
 
 ## Still pending
 
-- Transactional final execution, complete output semantics, exact extracted
-  chapter comparison, post-commit reopen audit, and join-boundary decode checks.
+- Join-boundary decode checks beyond the later transactional semantic/chapter
+  audits.
 - Verified source-tag preservation and text-subtitle conversion/gap payloads.
 - Native exact-choice controls, private-library beta acceptance, and physical
   Intel performance acceptance.

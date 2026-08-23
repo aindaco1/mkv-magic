@@ -184,11 +184,10 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
 
 public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
     private let joiner: MKVLosslessJoiner<Runner>
-    private let mkvextractURL: URL
-    private let runner: Runner
     private let inspector: Inspector
     private let codec = MatroskaChapterXMLCodec()
     private let verifier = LosslessJoinOutputVerifier()
+    private let chapterAuditor: MatroskaChapterOutputAuditor<Runner>
 
     public init(
         mkvmergeURL: URL,
@@ -197,9 +196,11 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
         inspector: Inspector
     ) {
         joiner = MKVLosslessJoiner(executableURL: mkvmergeURL, runner: runner)
-        self.mkvextractURL = mkvextractURL
-        self.runner = runner
         self.inspector = inspector
+        chapterAuditor = MatroskaChapterOutputAuditor(
+            mkvextractURL: mkvextractURL,
+            runner: runner
+        )
     }
 
     public func preview(
@@ -330,57 +331,25 @@ public struct LosslessJoinExecutor<Runner: CommandRunning, Inspector: MediaInspe
     }
 
     private func verifyChapters(in fileURL: URL, expectedCanonical: Data) async throws {
-        let extracted = try await extractCanonicalChapters(from: fileURL)
-        guard extracted == expectedCanonical else {
-            throw LosslessJoinExecutionError.chapterVerificationFailed
-        }
-    }
-
-    private func extractCanonicalChapters(from fileURL: URL) async throws -> Data {
-        try await withPrivateDirectory { directory in
-            let outputURL = directory.appendingPathComponent("chapters.xml", isDirectory: false)
-            let result = try await runner.run(
-                CommandRequest(
-                    executableURL: mkvextractURL,
-                    arguments: [fileURL.path, "chapters", outputURL.path],
-                    timeout: 120,
-                    outputLimit: 1_048_576
-                )
+        do {
+            try await chapterAuditor.verify(
+                fileURL: fileURL,
+                expectedCanonical: expectedCanonical
             )
-            guard result.exitCode == 0 else {
+        } catch let error as MatroskaChapterOutputAuditError {
+            switch error {
+            case .toolFailed(let exitCode, let message):
                 throw LosslessJoinExecutionError.toolFailed(
                     tool: "mkvextract",
-                    exitCode: result.exitCode,
-                    message: conciseMessage(result)
+                    exitCode: exitCode,
+                    message: message
                 )
-            }
-            if !FileManager.default.fileExists(atPath: outputURL.path) {
-                return try codec.serialize(MatroskaChapterDocument())
-            }
-            guard
-                let values = try? outputURL.resourceValues(forKeys: [
-                    .fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey,
-                ]),
-                values.isRegularFile == true,
-                values.isSymbolicLink != true,
-                let size = values.fileSize,
-                size >= 0,
-                size <= MatroskaChapterXMLCodec.maximumInputBytes
-            else {
+            case .unsafeExtractedDocument:
                 throw LosslessJoinExecutionError.unsafeChapterOutput
+            case .mismatch:
+                throw LosslessJoinExecutionError.chapterVerificationFailed
             }
-            if size == 0 { return try codec.serialize(MatroskaChapterDocument()) }
-            let data = try Data(contentsOf: outputURL, options: .mappedIfSafe)
-            return try codec.serialize(codec.parse(data))
         }
-    }
-
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
     }
 
     private func withPrivateDirectory<T: Sendable>(

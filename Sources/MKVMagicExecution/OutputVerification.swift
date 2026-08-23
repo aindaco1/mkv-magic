@@ -330,6 +330,237 @@ public struct LosslessJoinOutputVerifier: Sendable {
     }
 }
 
+public enum JoinFinalAssemblyVerificationError: Error, Equatable, Sendable {
+    case emptyOutput
+    case wrongContainer
+    case wrongDuration
+    case wrongTracks
+    case wrongTrackMetadata(laneIndex: Int)
+    case wrongAttachments
+    case wrongChapters
+    case wrongTitle
+    case unexpectedTags
+    case invalidSegmentIdentity
+    case inconsistentPreview
+}
+
+extension JoinFinalAssemblyVerificationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .emptyOutput: "The assembled MKV is empty."
+        case .wrongContainer: "The assembled output is not Matroska."
+        case .wrongDuration: "The assembled timeline does not match the reviewed join."
+        case .wrongTracks: "The assembled track order or stream facts changed."
+        case .wrongTrackMetadata(let laneIndex):
+            "The assembled metadata for lane \(laneIndex + 1) does not match its reviewed source."
+        case .wrongAttachments: "The assembled attachments do not match the reviewed selection."
+        case .wrongChapters: "The assembled chapter count does not match the reviewed tree."
+        case .wrongTitle: "The assembled segment title does not match the reviewed title."
+        case .unexpectedTags: "The assembled MKV contains unreviewed global or track tags."
+        case .invalidSegmentIdentity: "The assembled MKV did not receive a new segment identity."
+        case .inconsistentPreview: "The final assembly preview is internally inconsistent."
+        }
+    }
+}
+
+public struct JoinFinalAssemblyOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        sources: [MediaAsset],
+        normalizedBundle: MediaAsset,
+        commandLanes: [JoinFinalLaneInput],
+        retainedAttachmentIDsBySource: [Int: Set<Int>],
+        chapters: JoinedChapterComposition,
+        output: MediaAsset
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else {
+            throw JoinFinalAssemblyVerificationError.emptyOutput
+        }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw JoinFinalAssemblyVerificationError.wrongContainer
+        }
+        try verifyDuration(sources: sources, chapters: chapters, output: output)
+
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == commandLanes.count else {
+            throw JoinFinalAssemblyVerificationError.wrongTracks
+        }
+        for (outputTrack, lane) in zip(outputTracks, commandLanes) {
+            let streamSource: MediaTrack
+            switch lane.mechanism {
+            case .normalized:
+                guard
+                    let track = normalizedBundle.tracks.first(where: {
+                        $0.kind != .attachment && $0.id == lane.inputTrackID
+                    })
+                else {
+                    throw JoinFinalAssemblyVerificationError.inconsistentPreview
+                }
+                streamSource = track
+            case .packetCopy:
+                guard let source = sources.first,
+                    lane.sourceTrackIDs.first == lane.inputTrackID,
+                    let track = source.tracks.first(where: { $0.id == lane.inputTrackID })
+                else {
+                    throw JoinFinalAssemblyVerificationError.inconsistentPreview
+                }
+                streamSource = track
+            }
+            guard
+                JoinFinalTrackTechnicalSnapshot(outputTrack)
+                    == JoinFinalTrackTechnicalSnapshot(streamSource)
+            else {
+                throw JoinFinalAssemblyVerificationError.wrongTracks
+            }
+            guard sources.indices.contains(lane.metadataSourceIndex),
+                let metadataTrack = sourceTrack(
+                    for: lane.laneIndex,
+                    sourceIndex: lane.metadataSourceIndex,
+                    sources: sources,
+                    commandLanes: commandLanes
+                ),
+                trackMetadataMatches(outputTrack, metadataTrack)
+            else {
+                throw JoinFinalAssemblyVerificationError.wrongTrackMetadata(
+                    laneIndex: lane.laneIndex
+                )
+            }
+        }
+
+        try verifyAttachments(
+            sources: sources,
+            retainedIDs: retainedAttachmentIDsBySource,
+            output: output
+        )
+        let expectedTopLevelChapterCount = chapters.document.editions.reduce(0) {
+            $0 + $1.chapters.count
+        }
+        guard output.chapterEntryCount == expectedTopLevelChapterCount else {
+            throw JoinFinalAssemblyVerificationError.wrongChapters
+        }
+        guard let firstSource = sources.first,
+            output.metadata.removingRemuxProvenance
+                == firstSource.metadata.removingRemuxProvenance
+        else {
+            throw JoinFinalAssemblyVerificationError.wrongTitle
+        }
+        guard output.globalTagCount == 0, output.trackTagCount == 0 else {
+            throw JoinFinalAssemblyVerificationError.unexpectedTags
+        }
+        let inputSegmentUIDs = Set(
+            (sources + [normalizedBundle]).compactMap(\.segmentUID)
+        )
+        guard let outputUID = output.segmentUID, !inputSegmentUIDs.contains(outputUID) else {
+            throw JoinFinalAssemblyVerificationError.invalidSegmentIdentity
+        }
+    }
+
+    private func verifyDuration(
+        sources: [MediaAsset],
+        chapters: JoinedChapterComposition,
+        output: MediaAsset
+    ) throws {
+        var expected: Int64 = 0
+        for source in sources {
+            guard let duration = source.duration, duration.nanoseconds > 0 else {
+                throw JoinFinalAssemblyVerificationError.inconsistentPreview
+            }
+            let addition = expected.addingReportingOverflow(duration.nanoseconds)
+            guard !addition.overflow else {
+                throw JoinFinalAssemblyVerificationError.inconsistentPreview
+            }
+            expected = addition.partialValue
+        }
+        guard expected == chapters.duration.nanoseconds,
+            let actual = output.duration,
+            actual.nanoseconds >= 0
+        else {
+            throw JoinFinalAssemblyVerificationError.wrongDuration
+        }
+        let difference = actual.nanoseconds.subtractingReportingOverflow(expected)
+        let tolerance = Int64(sources.count).multipliedReportingOverflow(by: 50_000_000)
+        guard !difference.overflow, !tolerance.overflow,
+            difference.partialValue.magnitude
+                <= UInt64(max(50_000_000, tolerance.partialValue))
+        else {
+            throw JoinFinalAssemblyVerificationError.wrongDuration
+        }
+    }
+
+    private func sourceTrack(
+        for laneIndex: Int,
+        sourceIndex: Int,
+        sources: [MediaAsset],
+        commandLanes: [JoinFinalLaneInput]
+    ) -> MediaTrack? {
+        guard let lane = commandLanes.first(where: { $0.laneIndex == laneIndex }),
+            sources.indices.contains(sourceIndex),
+            lane.sourceTrackIDs.indices.contains(sourceIndex),
+            let trackID = lane.sourceTrackIDs[sourceIndex]
+        else { return nil }
+        return sources[sourceIndex].tracks.first {
+            $0.id == trackID && $0.kind == lane.kind
+        }
+    }
+
+    private func trackMetadataMatches(_ actual: MediaTrack, _ expected: MediaTrack) -> Bool {
+        let actualLanguage = try? TrackLanguageTag.canonical(actual.language ?? "und")
+        let expectedLanguage = try? TrackLanguageTag.canonical(expected.language ?? "und")
+        return actualLanguage == expectedLanguage
+            && (actual.title ?? "") == (expected.title ?? "")
+            && actual.isDefault == expected.isDefault
+            && actual.isForced == expected.isForced
+            && actual.isEnabled == expected.isEnabled
+            && actual.isCommentary == expected.isCommentary
+            && actual.isHearingImpaired == expected.isHearingImpaired
+            && actual.isVisualImpaired == expected.isVisualImpaired
+            && actual.isOriginal == expected.isOriginal
+            && actual.isTextDescription == expected.isTextDescription
+    }
+
+    private func verifyAttachments(
+        sources: [MediaAsset],
+        retainedIDs: [Int: Set<Int>],
+        output: MediaAsset
+    ) throws {
+        var expected = [MediaAttachment]()
+        for (sourceIndex, ids) in retainedIDs {
+            guard sources.indices.contains(sourceIndex) else {
+                throw JoinFinalAssemblyVerificationError.inconsistentPreview
+            }
+            for id in ids {
+                guard
+                    let attachment = sources[sourceIndex].attachments.first(where: {
+                        $0.id == id
+                    })
+                else {
+                    throw JoinFinalAssemblyVerificationError.inconsistentPreview
+                }
+                expected.append(attachment)
+            }
+        }
+        var unmatched = output.attachments
+        for attachment in expected {
+            guard
+                let index = unmatched.firstIndex(where: {
+                    $0.filename == attachment.filename
+                        && $0.mimeType == attachment.mimeType
+                        && $0.size == attachment.size
+                        && $0.description == attachment.description
+                        && (attachment.uid == nil || $0.uid == attachment.uid)
+                })
+            else {
+                throw JoinFinalAssemblyVerificationError.wrongAttachments
+            }
+            unmatched.remove(at: index)
+        }
+        guard unmatched.isEmpty else {
+            throw JoinFinalAssemblyVerificationError.wrongAttachments
+        }
+    }
+}
+
 public struct EmbeddedSubtitleReplacementOutputVerifier: Sendable {
     public init() {}
 
@@ -512,6 +743,44 @@ private struct TrackTechnicalSnapshot: Equatable {
         colorInfo = track.colorInfo
         hdrFormats = track.hdrFormats
         tags = track.tags.removingEditableTrackMetadata
+    }
+}
+
+private struct JoinFinalTrackTechnicalSnapshot: Equatable {
+    let kind: MediaTrackKind
+    let codec: String
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let uid: UInt64?
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+    let dimensions: MediaDimensions?
+    let displayDimensions: MediaDimensions?
+    let pixelFormat: String?
+    let bitDepth: Int?
+    let frameRate: String?
+    let colorInfo: MediaColorInfo?
+    let hdrFormats: [String]
+
+    init(_ track: MediaTrack) {
+        kind = track.kind
+        codec = track.codec.lowercased()
+        codecID = track.codecID?.lowercased()
+        profile = track.profile
+        level = track.level
+        uid = track.uid
+        channels = track.channels
+        channelLayout = track.channelLayout?.lowercased()
+        sampleRate = track.sampleRate
+        dimensions = track.dimensions
+        displayDimensions = track.displayDimensions
+        pixelFormat = track.pixelFormat?.lowercased()
+        bitDepth = track.bitDepth
+        frameRate = track.frameRate
+        colorInfo = track.colorInfo
+        hdrFormats = track.hdrFormats.map { $0.lowercased() }
     }
 }
 
