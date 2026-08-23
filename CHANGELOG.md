@@ -15,3 +15,9 @@ semantic versioning; public release tags are immutable and signed.
 - Add a typed queue lifecycle and fail-closed, versioned job-history store that
   cannot record success before verification and commit.
 - Exercise the inspection path with the actual bundled media tools in hosted CI.
+- Add the first executable metadata action: preview a zero-transcode segment-title
+  edit, choose a new output, edit an APFS working clone with `mkvpropedit`, verify
+  all unrelated structure, and commit without replacing the original.
+- Replace blocking process waits with race-safe termination callbacks and a
+  timeout escalation path after a sequential real-tool regression exposed a
+  completed-process hang.

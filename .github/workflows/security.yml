@@ -46,3 +46,17 @@ jobs:
         uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3
         with:
           category: /language:swift
+          output: ../results
+          # GitHub code-scanning uploads require public visibility or GitHub
+          # Advanced Security. Keep private-repository analysis useful by
+          # retaining SARIF as a workflow artifact until the repo is public.
+          upload: ${{ github.event.repository.visibility == 'public' && 'always' || 'never' }}
+
+      - name: Retain private-repository SARIF
+        if: ${{ github.event.repository.visibility != 'public' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: codeql-swift-sarif-${{ github.sha }}
+          path: ../results/*.sarif
+          if-no-files-found: error
+          retention-days: 14

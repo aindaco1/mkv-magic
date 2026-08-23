@@ -4,6 +4,29 @@ import XCTest
 @testable import MKVMagicSystem
 
 final class CommandRunnerTests: XCTestCase {
+    func testDefaultEnvironmentIsMinimalAndUnicodeSafe() {
+        let environment = CommandRequest.defaultEnvironment
+
+        XCTAssertEqual(environment["LC_ALL"], "C.UTF-8")
+        XCTAssertEqual(environment["LANG"], "C.UTF-8")
+        XCTAssertEqual(environment["PATH"], "/usr/bin:/bin")
+        XCTAssertNil(environment["HOME"])
+    }
+
+    func testManySequentialCommandsAllReachTermination() async throws {
+        let runner = FoundationCommandRunner()
+        for _ in 0..<32 {
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: URL(fileURLWithPath: "/usr/bin/true"),
+                    arguments: [],
+                    timeout: 2
+                )
+            )
+            XCTAssertEqual(result.exitCode, 0)
+        }
+    }
+
     func testRunsExactExecutableWithArguments() async throws {
         let result = try await FoundationCommandRunner().run(
             CommandRequest(

@@ -35,6 +35,19 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertNil(AssetSelectionPolicy.rowToSelect(currentRow: -1, assetCount: 0))
     }
 
+    func testEditedOutputNamePreservesContainerExtension() {
+        XCTAssertEqual(
+            OutputNamingPolicy.suggestedFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.mkv")),
+            "Movie — Edited.mkv"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.suggestedFilename(
+                for: URL(fileURLWithPath: "/Media/Untitled")),
+            "Untitled — Edited.mkv"
+        )
+    }
+
     func testInspectorSeparatesAttachmentsAndAvoidsDecodedAudioBitDepth() {
         let audio = MediaTrack(id: 0, kind: .audio, codec: "aac", bitDepth: 32)
         let attachment = MediaTrack(id: 1, kind: .attachment, codec: "unknown")

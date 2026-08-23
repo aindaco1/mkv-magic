@@ -26,8 +26,9 @@ public struct CommandRequest: Sendable {
 
     public static var defaultEnvironment: [String: String] {
         var result = [
-            "LC_ALL": "C",
-            "LANG": "C",
+            // Keep deterministic tool output without breaking Unicode file paths in Qt tools.
+            "LC_ALL": "C.UTF-8",
+            "LANG": "C.UTF-8",
             "PATH": "/usr/bin:/bin",
         ]
         if let temporaryDirectory = ProcessInfo.processInfo.environment["TMPDIR"] {
@@ -122,6 +123,47 @@ private final class ProcessBox: @unchecked Sendable {
     func terminate() {
         guard process.isRunning else { return }
         process.terminate()
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2) { [self] in
+            guard process.isRunning else { return }
+            kill(process.processIdentifier, SIGKILL)
+        }
+    }
+}
+
+private final class ProcessTerminationWaiter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Int32, Never>?
+    private var exitCode: Int32?
+
+    func finish(with exitCode: Int32) {
+        let continuation: CheckedContinuation<Int32, Never>?
+        lock.lock()
+        if let waiting = self.continuation {
+            continuation = waiting
+            self.continuation = nil
+        } else {
+            self.exitCode = exitCode
+            continuation = nil
+        }
+        lock.unlock()
+        continuation?.resume(returning: exitCode)
+    }
+
+    func value() async -> Int32 {
+        await withCheckedContinuation { continuation in
+            let completedCode: Int32?
+            lock.lock()
+            if let exitCode {
+                completedCode = exitCode
+            } else {
+                self.continuation = continuation
+                completedCode = nil
+            }
+            lock.unlock()
+            if let completedCode {
+                continuation.resume(returning: completedCode)
+            }
+        }
     }
 }
 
@@ -136,6 +178,10 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
     box.process.currentDirectoryURL = request.currentDirectoryURL
     box.process.standardOutput = standardOutput
     box.process.standardError = standardError
+    let terminationWaiter = ProcessTerminationWaiter()
+    box.process.terminationHandler = { process in
+        terminationWaiter.finish(with: process.terminationStatus)
+    }
 
     do {
         try box.process.run()
@@ -151,10 +197,7 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
     }
 
     let exitCode = await withTaskCancellationHandler {
-        await Task.detached {
-            box.process.waitUntilExit()
-            return box.process.terminationStatus
-        }.value
+        await terminationWaiter.value()
     } onCancel: {
         box.terminate()
     }

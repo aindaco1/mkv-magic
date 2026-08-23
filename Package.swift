@@ -9,6 +9,7 @@ let package = Package(
         .library(name: "MKVMagicSystem", targets: ["MKVMagicSystem"]),
         .library(name: "MKVMagicMedia", targets: ["MKVMagicMedia"]),
         .library(name: "MKVMagicPlanning", targets: ["MKVMagicPlanning"]),
+        .library(name: "MKVMagicExecution", targets: ["MKVMagicExecution"]),
         .executable(name: "MKVMagic", targets: ["MKVMagic"]),
     ],
     dependencies: [
@@ -28,10 +29,15 @@ let package = Package(
             name: "MKVMagicPlanning",
             dependencies: ["MKVMagicCore"]
         ),
+        .target(
+            name: "MKVMagicExecution",
+            dependencies: ["MKVMagicCore", "MKVMagicMedia", "MKVMagicSystem"]
+        ),
         .executableTarget(
             name: "MKVMagic",
             dependencies: [
                 "MKVMagicCore",
+                "MKVMagicExecution",
                 "MKVMagicMedia",
                 "MKVMagicPlanning",
                 "MKVMagicSystem",
@@ -64,6 +70,12 @@ let package = Package(
         .testTarget(
             name: "MKVMagicPlanningTests",
             dependencies: ["MKVMagicCore", "MKVMagicPlanning"]
+        ),
+        .testTarget(
+            name: "MKVMagicExecutionTests",
+            dependencies: [
+                "MKVMagicCore", "MKVMagicExecution", "MKVMagicMedia", "MKVMagicSystem",
+            ]
         ),
         .testTarget(
             name: "MKVMagicAppTests",

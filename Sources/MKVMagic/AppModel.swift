@@ -1,5 +1,6 @@
 import Foundation
 import MKVMagicCore
+import MKVMagicExecution
 import MKVMagicMedia
 import MKVMagicSystem
 
@@ -9,6 +10,8 @@ final class AppModel {
         case ready
         case discovering
         case inspecting(String)
+        case executing(String)
+        case completed(String)
         case completedWithWarnings(String)
         case failed(String)
     }
@@ -92,6 +95,56 @@ final class AppModel {
             state = .ready
         }
         didChange?()
+    }
+
+    @discardableResult
+    func editSegmentTitle(
+        in asset: MediaAsset,
+        title: String?,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        let scopedURLs = [asset.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Creating and verifying \(destinationURL.lastPathComponent)…")
+        didChange?()
+        do {
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let executor = SegmentTitleEditExecutor(
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            let output = try await executor.execute(
+                source: asset,
+                title: title,
+                destinationURL: destinationURL
+            )
+            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
+                assets[existing] = output
+            } else {
+                assets.append(output)
+            }
+            state = .completed("Created \(destinationURL.lastPathComponent); original unchanged.")
+            didChange?()
+            return output
+        } catch {
+            state = .failed("Original unchanged. \(error.localizedDescription)")
+            didChange?()
+            throw error
+        }
     }
 
     private func makeToolCatalog() throws -> ToolCatalog {

@@ -21,3 +21,11 @@ Sparkle's separately sandboxed services and accepts only signed updates.
 The application never executes arbitrary shell text and never falls back to
 tools found on `PATH`. Bundled executables, linked libraries, manifests,
 licenses, architectures, signatures, and entitlements are release-gated.
+
+## Automated analysis
+
+CodeQL runs on every push to `main` and on a weekly schedule. While this
+repository is private without GitHub Advanced Security, the workflow retains
+its SARIF result as a short-lived Actions artifact instead of attempting an
+unsupported code-scanning upload. It automatically uploads results to GitHub
+code scanning when the repository becomes public.

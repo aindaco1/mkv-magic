@@ -12,10 +12,12 @@ named `mkv-magic`; the internal Swift package and executable are `MKVMagic`.
 The release foundation and first local inspection vertical slice are in place.
 The app can recursively discover media, inspect files with its bundled FFprobe
 and MKVToolNix runtime, and present normalized file, track, chapter, attachment,
-and tag facts without modifying the source. Execution remains deliberately
-disabled until the verified-output transaction milestone is complete. No public
-release is available yet. The canonical product and delivery plan is
-[PRODUCT_SPEC.md](PRODUCT_SPEC.md).
+and tag facts without modifying the source. The first executable action edits a
+Matroska segment title on a temporary clone, verifies that tracks, chapters,
+attachments, duration, tags, and segment identity stayed intact, then commits a
+new output without replacing the original. Other editing actions remain disabled
+until they meet the same transaction contract. No public release is available
+yet. The canonical product and delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
 ## Design promises
 

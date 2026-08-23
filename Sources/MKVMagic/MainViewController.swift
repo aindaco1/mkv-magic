@@ -1,6 +1,8 @@
 import AppKit
 import MKVMagicCore
+import MKVMagicExecution
 import MKVMagicPlanning
+import UniformTypeIdentifiers
 
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
@@ -12,6 +14,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let impactLabel = NSTextField(labelWithString: "No pending plan")
     private let previewButton = NSButton(title: "Preview Change", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
+    private var pendingTitleChange: String?
+    private var hasPendingTitleChange = false
+    private var pendingAssetID: UUID?
+    private var preferredSelectionURL: URL?
 
     init(model: AppModel) {
         self.model = model
@@ -196,6 +202,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         impactLabel.font = .systemFont(ofSize: 13, weight: .medium)
         runButton.isEnabled = false
         runButton.keyEquivalent = "\r"
+        runButton.target = self
+        runButton.action = #selector(runChange)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -233,18 +241,76 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     @objc private func previewChange() {
         guard let asset = selectedAsset else { return }
+        guard MatroskaEditingPolicy.supports(asset) else {
+            impactLabel.stringValue = "Segment-title editing requires Matroska."
+            clearPendingChange()
+            return
+        }
         let value = segmentTitleField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = value.isEmpty ? nil : value
+        if title == asset.metadata["title"] {
+            impactLabel.stringValue = "No title change"
+            clearPendingChange()
+            return
+        }
         let workflow = WorkflowDefinition(
             name: "Edit segment title",
-            operations: [.editSegmentTitle(value.isEmpty ? nil : value)]
+            operations: [.editSegmentTitle(title)]
         )
         do {
             let plan = try WorkflowPlanner().plan(asset: asset, workflow: workflow)
             let mechanism = plan.stages.first?.mechanism.rawValue ?? "none"
             impactLabel.stringValue = "\(plan.impact.videoEncodeCount) video encodes • \(mechanism)"
-            runButton.toolTip = "Execution arrives with the verified transaction milestone."
+            pendingTitleChange = title
+            hasPendingTitleChange = true
+            pendingAssetID = asset.id
+            runButton.isEnabled = true
+            runButton.toolTip =
+                "Create a new MKV from a temporary clone, verify it, then commit it."
         } catch {
             impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+            clearPendingChange()
+        }
+    }
+
+    @objc private func runChange() {
+        guard hasPendingTitleChange,
+            let asset = selectedAsset,
+            pendingAssetID == asset.id
+        else {
+            clearPendingChange()
+            return
+        }
+        let panel = NSSavePanel()
+        panel.title = "Save Verified MKV Copy"
+        panel.prompt = "Save Verified Copy"
+        panel.canCreateDirectories = true
+        panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
+        panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
+        panel.allowedContentTypes = [
+            UTType(filenameExtension: asset.sourceURL.pathExtension) ?? .data
+        ]
+        panel.allowsOtherFileTypes = false
+        panel.isExtensionHidden = false
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+
+        let title = pendingTitleChange
+        previewButton.isEnabled = false
+        runButton.isEnabled = false
+        Task {
+            do {
+                let output = try await model.editSegmentTitle(
+                    in: asset,
+                    title: title,
+                    destinationURL: destinationURL
+                )
+                preferredSelectionURL = output.sourceURL
+                clearPendingChange()
+                refresh()
+            } catch {
+                previewButton.isEnabled = true
+                runButton.isEnabled = hasPendingTitleChange && pendingAssetID == asset.id
+            }
         }
     }
 
@@ -257,6 +323,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             statusLabel.stringValue = "Finding media files…"
         case .inspecting(let filename):
             statusLabel.stringValue = "Inspecting \(filename)…"
+        case .executing(let message):
+            statusLabel.stringValue = message
+        case .completed(let message):
+            statusLabel.stringValue = message
         case .completedWithWarnings(let message):
             statusLabel.stringValue = message
         case .failed(let message):
@@ -265,13 +335,21 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         if tableView.selectedRow >= model.assets.count {
             tableView.deselectAll(nil)
         }
-        if let row = AssetSelectionPolicy.rowToSelect(
-            currentRow: tableView.selectedRow,
-            assetCount: model.assets.count
-        ) {
+        if let preferredSelectionURL,
+            let row = model.assets.firstIndex(where: { $0.sourceURL == preferredSelectionURL })
+        {
+            tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+            self.preferredSelectionURL = nil
+        } else if let row = AssetSelectionPolicy.rowToSelect(
+            currentRow: tableView.selectedRow, assetCount: model.assets.count)
+        {
             tableView.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
         }
         renderInspector()
+        if case .executing = model.state {
+            previewButton.isEnabled = false
+            runButton.isEnabled = false
+        }
     }
 
     private var selectedAsset: MediaAsset? {
@@ -327,7 +405,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         inspectorText.string = lines.joined(separator: "\n")
         segmentTitleField.stringValue = asset.metadata["title"] ?? ""
-        previewButton.isEnabled = true
+        previewButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+        previewButton.toolTip =
+            previewButton.isEnabled ? nil : "Segment-title editing currently requires Matroska."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -410,7 +490,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     func tableViewSelectionDidChange(_ notification: Notification) {
         impactLabel.stringValue = "No pending plan"
+        clearPendingChange()
         renderInspector()
+    }
+
+    private func clearPendingChange() {
+        pendingTitleChange = nil
+        hasPendingTitleChange = false
+        pendingAssetID = nil
+        runButton.isEnabled = false
     }
 }
 
@@ -427,5 +515,13 @@ enum InspectorPresentationPolicy {
 
     static func displayedBitDepth(for track: MediaTrack) -> Int? {
         track.kind == .video ? track.bitDepth : nil
+    }
+}
+
+enum OutputNamingPolicy {
+    static func suggestedFilename(for sourceURL: URL) -> String {
+        let base = sourceURL.deletingPathExtension().lastPathComponent
+        let fileExtension = sourceURL.pathExtension.isEmpty ? "mkv" : sourceURL.pathExtension
+        return "\(base) — Edited.\(fileExtension)"
     }
 }
