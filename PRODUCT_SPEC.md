@@ -1447,6 +1447,16 @@ gate runs the same mechanism with disposable keys and proves wrong-key refusal
 before successful replacement. The shipped app retains only its fixed public
 feed.
 
+A private production-key rehearsal from exact source commit `7a1fd82` has now
+exercised that updater boundary: separately notarized build `20260825` replaced
+a disposable copy of notarized build `20260824`, retained Gatekeeper and stapler
+acceptance, and passed the native fixture on the physical Apple Silicon host.
+The candidate was not published or downloaded from GitHub, did not include the
+final corresponding-source set, and was not exercised on physical Intel
+hardware, so none of the final publication gates are waived. The exact evidence
+and artifact digests are recorded in
+`docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md`.
+
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 
 ## 13. Initial implementation backlog

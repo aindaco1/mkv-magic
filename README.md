@@ -465,6 +465,14 @@ the publication gate. The production app receives no alternate-feed capability.
 See
 [docs/releases/M9_SPARKLE_UPDATE_REPLACEMENT_SLICE.md](docs/releases/M9_SPARKLE_UPDATE_REPLACEMENT_SLICE.md).
 
+A later private rehearsal from exact source commit `7a1fd82` signed and
+notarized build `20260825`, verified both packaged architecture paths, and used
+the production-key appcast to replace a disposable copy of notarized build
+`20260824`. It was not published and does not replace final-version,
+corresponding-source, downloaded-draft, clean-account, or physical-Intel gates.
+See
+[docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md](docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
