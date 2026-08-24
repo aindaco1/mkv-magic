@@ -17,6 +17,18 @@ public enum EmbeddedTextSubtitlePolicy {
         }
     }
 
+    public static func extractableTracks(in asset: MediaAsset) -> [MediaTrack] {
+        guard MatroskaEditingPolicy.supports(asset) else { return [] }
+        let stableTrackIDs = asset.tracks.filter { $0.id >= 0 }.map(\.id)
+        guard Set(stableTrackIDs).count == stableTrackIDs.count else { return [] }
+        let stableTrackUIDs = asset.tracks.compactMap(\.uid)
+        guard Set(stableTrackUIDs).count == stableTrackUIDs.count else { return [] }
+        let tracks = asset.tracks.filter { track in
+            track.id >= 0 && track.uid != nil && format(for: track) != nil
+        }
+        return tracks.sorted { $0.id < $1.id }
+    }
+
     public static func appliesEnglishOCRRules(to track: MediaTrack) -> Bool {
         let language = (track.language ?? "und")
             .trimmingCharacters(in: .whitespacesAndNewlines)

@@ -500,7 +500,19 @@ Filename cleanup is a separate workflow action, never an implicit part of media 
 - Extract tracks, subtitles, chapters, attachments, cues, and timestamps.
 - Convert MP4 TX3G text subtitles to a supported editable text format through an explicit action.
 
-Current implementation: **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
+Current implementation: **Extract Subtitle…** accepts an inspected Matroska
+source containing one or more embedded SRT, ASS, or SSA tracks with stable,
+unique track UIDs and unambiguous track IDs. A single track proceeds directly;
+multiple tracks use a readable chooser. Review re-inspects the complete media
+snapshot, binds the source revision and selected track identity, and extracts
+the bounded payload with bundled `mkvextract` into a private owner-only
+directory. Save repeats those checks and the extraction, requires exact byte and
+parsed timing/style equality, writes a separate sidecar in the original text
+format, and audits it before commit and after reopen. The source remains
+byte-unchanged and History records zero video/audio encodes. Image subtitle
+artifacts and general attachment/track extraction remain separate work.
+
+**Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable
 chooser appears for multiple tracks. The selected track is converted privately
 with bundled FFmpeg to ASS during review, binding the exact source revision and

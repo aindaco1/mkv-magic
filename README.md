@@ -97,6 +97,14 @@ sections, style definitions, override tags, layout fields, comments, and unknown
 sections. It refuses to remove every event, detects a source changed since
 preview, writes a new UTF-8 subtitle, and reopens the exact planned result before
 commit while leaving the source intact.
+For inspected Matroska files, **Extract Subtitle…** writes one selected embedded
+SRT, ASS, or SSA track to a separate sidecar in its original format and exact
+extracted bytes. A single eligible track proceeds directly; multiple tracks use
+the readable shared chooser. Review and Save each re-inspect the complete media
+snapshot, bind the source revision and stable track UID, independently extract
+and parse the bounded text payload, and require the bytes plus timing/style
+document to agree. The final sidecar is audited before commit and after reopen,
+History records zero video/audio encodes, and the MKV is never changed.
 For inspected MP4, M4V, and MOV files, **Convert MP4 Subtitle…** exposes each
 TX3G/`mov_text` track in a readable chooser and converts one selected track into
 a separate editable UTF-8 ASS sidecar. Review runs bundled FFmpeg privately and

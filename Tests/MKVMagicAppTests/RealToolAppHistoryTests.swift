@@ -290,6 +290,96 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testExtractsEmbeddedSRTExactlyAndRecordsZeroEncodeHistory() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-subtitle-extraction-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        let subtitleURL = fixtureRoot.appendingPathComponent("source.srt")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature — Subtitle.srt")
+        try Data(
+            "1\n00:00:00,250 --> 00:00:00,900\nFirst cue\n\n"
+                .appending("2\n00:00:01,100 --> 00:00:01,800\nSecond cue\n")
+                .utf8
+        ).write(to: subtitleURL)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvmerge),
+                arguments: [
+                    "--output", sourceURL.path,
+                    "--language", "0:eng",
+                    "--track-name", "0:English Full",
+                    "--default-track-flag", "0:yes",
+                    subtitleURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let track = try XCTUnwrap(
+            EmbeddedTextSubtitlePolicy.extractableTracks(in: source).first
+        )
+        let trackUID = try XCTUnwrap(track.uid)
+
+        let preview = try await model.previewMatroskaTextSubtitleExtraction(
+            in: source,
+            trackUID: trackUID
+        )
+        XCTAssertEqual(preview.format, .subRip)
+        XCTAssertEqual(preview.itemCount, 2)
+        let result = try await model.executeMatroskaTextSubtitleExtraction(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+
+        XCTAssertEqual(result.outputURL, destinationURL)
+        XCTAssertEqual(result.itemCount, 2)
+        let reopened = try SubRipCodec().parse(
+            SubtitleTextDecoder().decode(Data(contentsOf: destinationURL))
+        ).document
+        XCTAssertEqual(reopened.cues.map(\.lines), [["First cue"], ["Second cue"]])
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        let records = try await historyStore.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, BuiltInWorkflowCatalog.textSubtitleExtraction)
+        XCTAssertEqual(record.workflowName, "Extract embedded text subtitle")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

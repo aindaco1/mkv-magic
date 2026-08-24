@@ -213,6 +213,10 @@ final class MediaModelTests: XCTestCase {
             ),
             .timedTextSubtitleConversion
         )
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.textSubtitleExtraction),
+            .textSubtitleExtraction
+        )
     }
 
     func testEnglishLibraryCleanupSuggestionsPreserveAudioCommentaryAndOnlyUsefulSubtitle() {

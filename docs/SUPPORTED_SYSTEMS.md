@@ -65,6 +65,14 @@ source, the reviewed output name is forced to `.mkv`, and automatic queue
 reinspection must reproduce the same one-generation plan. Compatible
 Matroska-only operations remain governed by their individual feature boundaries.
 
+**Extract Subtitle…** supports embedded SRT, ASS, and SSA tracks in inspected
+Matroska files independently of video-encoder hardware. Bundled `mkvextract`
+writes one selected track privately; MKV Magic repeats the extraction, compares
+the exact bytes and parsed timing/style document, binds the source revision and
+stable track UID through commit, and reopens the separate same-format sidecar.
+The MKV remains unchanged. PGS and VobSub extraction is not included in this
+single-file text-subtitle path.
+
 **Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
 M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg
 converts one selected track to a separate UTF-8 ASS file; MKV Magic repeats and

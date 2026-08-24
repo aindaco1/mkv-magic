@@ -23,6 +23,10 @@ final class PrivacySafeSupportReportTests: XCTestCase {
             ),
             .timedTextSubtitleConversion
         )
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.textSubtitleExtraction),
+            .textSubtitleExtraction
+        )
     }
 
     override func setUpWithError() throws {

@@ -51,4 +51,88 @@ final class EmbeddedSubtitleTests: XCTestCase {
                 to: MediaTrack(id: 0, kind: .subtitle, codec: "SRT", language: "not a tag")
             ))
     }
+
+    func testExtractableTracksRequireMatroskaAndUniqueStableIdentities() {
+        let first = MediaTrack(
+            id: 4,
+            kind: .subtitle,
+            codec: "ASS",
+            codecID: "S_TEXT/ASS",
+            uid: 14
+        )
+        let second = MediaTrack(
+            id: 2,
+            kind: .subtitle,
+            codec: "SubRip/SRT",
+            codecID: "S_TEXT/UTF8",
+            uid: 12
+        )
+        func asset(path: String = "/Media/Movie.mkv", tracks: [MediaTrack]) -> MediaAsset {
+            MediaAsset(
+                sourceURL: URL(fileURLWithPath: path),
+                container: path.hasSuffix(".mkv") ? "matroska" : "mov,mp4",
+                tracks: tracks
+            )
+        }
+
+        XCTAssertEqual(
+            EmbeddedTextSubtitlePolicy.extractableTracks(
+                in: asset(tracks: [first, second])
+            ).map(\.id),
+            [2, 4]
+        )
+        XCTAssertTrue(
+            EmbeddedTextSubtitlePolicy.extractableTracks(
+                in: asset(path: "/Media/Movie.mp4", tracks: [first])
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            EmbeddedTextSubtitlePolicy.extractableTracks(
+                in: asset(
+                    tracks: [
+                        first,
+                        MediaTrack(
+                            id: 4,
+                            kind: .video,
+                            codec: "AV1",
+                            codecID: "V_AV1",
+                            uid: 10
+                        ),
+                    ]
+                )
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            EmbeddedTextSubtitlePolicy.extractableTracks(
+                in: asset(
+                    tracks: [
+                        first,
+                        MediaTrack(
+                            id: 5,
+                            kind: .video,
+                            codec: "AV1",
+                            codecID: "V_AV1",
+                            uid: 14
+                        ),
+                    ]
+                )
+            ).isEmpty
+        )
+        XCTAssertTrue(
+            EmbeddedTextSubtitlePolicy.extractableTracks(
+                in: asset(
+                    tracks: [
+                        first,
+                        MediaTrack(
+                            id: 5,
+                            kind: .subtitle,
+                            codec: "SSA",
+                            codecID: "S_TEXT/SSA",
+                            uid: 14
+                        ),
+                    ]
+                )
+            ).isEmpty
+        )
+    }
 }

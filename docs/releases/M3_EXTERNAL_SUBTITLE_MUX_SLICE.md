@@ -2,9 +2,11 @@
 
 This records engineering acceptance of deterministic external-text-subtitle
 matching and verified zero-encode Matroska muxing. ASS/SSA payload preservation
-is detailed in `M3_ASS_SSA_SLICE.md`. It is not acceptance of directory-wide
-automatic pairing, image-subtitle muxing, embedded-subtitle extraction/remux,
-batch execution, or a public release.
+is detailed in `M3_ASS_SSA_SLICE.md`. This historical slice by itself is not
+acceptance of directory-wide automatic pairing, image-subtitle muxing,
+embedded-subtitle extraction/remux, batch execution, or a public release.
+Embedded text cleanup/remux and direct same-format text extraction were later
+accepted in their own M3 slice records.
 
 ## User-facing scope
 
@@ -84,6 +86,6 @@ batch execution, or a public release.
 - Packaged visual, VoiceOver, full keyboard-only, and physical Intel acceptance
   of the mux flow.
 - Directory-wide candidate discovery/ranking and batch confirmation.
-- Image-subtitle muxing plus embedded subtitle extraction/cleanup/remux.
+- Image-subtitle muxing and image-subtitle sidecar extraction.
 - Saved-workflow subtitle actions, real-library beta acceptance, and a public
   signed/notarized release.

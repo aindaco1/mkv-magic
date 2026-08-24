@@ -1,0 +1,104 @@
+import Foundation
+import MKVMagicCore
+import MKVMagicSystem
+
+struct MatroskaSubtitleAssetSnapshot: Equatable {
+    let sourceURL: URL
+    let container: String
+    let duration: MediaTime?
+    let fileSize: Int64?
+    let tracks: [MediaTrack]
+    let chapters: [ChapterNode]
+    let attachments: [MediaAttachment]
+    let metadata: [String: String]
+    let chapterEntryCount: Int?
+    let globalTagCount: Int?
+    let trackTagCount: Int?
+    let segmentUID: String?
+
+    init(_ asset: MediaAsset) {
+        sourceURL = asset.sourceURL
+        container = asset.container
+        duration = asset.duration
+        fileSize = asset.fileSize
+        tracks = asset.tracks
+        chapters = asset.chapters
+        attachments = asset.attachments
+        metadata = asset.metadata
+        chapterEntryCount = asset.chapterEntryCount
+        globalTagCount = asset.globalTagCount
+        trackTagCount = asset.trackTagCount
+        segmentUID = asset.segmentUID
+    }
+}
+
+enum MatroskaTextSubtitleExtractorError: Error, Equatable, Sendable {
+    case unsafeRequest
+    case unsafeExtractedSubtitle
+    case oversizedExtractedSubtitle
+    case toolFailed(exitCode: Int32, message: String)
+}
+
+struct MatroskaTextSubtitleExtractor<Runner: CommandRunning>: Sendable {
+    let mkvextractURL: URL
+    let runner: Runner
+
+    func extract(
+        sourceURL: URL,
+        trackID: Int,
+        format: ExternalTextSubtitleFormat
+    ) async throws -> Data {
+        guard trackID >= 0, Self.safeAbsoluteFilePath(sourceURL) else {
+            throw MatroskaTextSubtitleExtractorError.unsafeRequest
+        }
+        return try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-subtitle-extraction"
+        ) { directory in
+            let outputURL = directory.appendingPathComponent(
+                "embedded-subtitle.\(format.filenameExtension)"
+            )
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: mkvextractURL,
+                    arguments: ["tracks", sourceURL.path, "\(trackID):\(outputURL.path)"],
+                    timeout: 120,
+                    outputLimit: 1_048_576
+                )
+            )
+            guard result.exitCode == 0,
+                !result.standardOutput.wasTruncated,
+                !result.standardError.wasTruncated
+            else {
+                let rawMessage =
+                    result.standardError.text.isEmpty
+                    ? result.standardOutput.text : result.standardError.text
+                throw MatroskaTextSubtitleExtractorError.toolFailed(
+                    exitCode: result.exitCode,
+                    message: String(
+                        rawMessage.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240)
+                    )
+                )
+            }
+            do {
+                return try SafeSubtitleTextFile.read(
+                    outputURL,
+                    allowedExtensions: [format.filenameExtension],
+                    maximumInputBytes: SubtitleCleanupExecutor.maximumInputBytes
+                )
+            } catch let error as SafeSubtitleTextFileError {
+                switch error {
+                case .oversizedInput:
+                    throw MatroskaTextSubtitleExtractorError.oversizedExtractedSubtitle
+                case .unsafeInput, .unsupportedExtension:
+                    throw MatroskaTextSubtitleExtractorError.unsafeExtractedSubtitle
+                }
+            }
+        }
+    }
+
+    private static func safeAbsoluteFilePath(_ url: URL) -> Bool {
+        let path = url.path
+        return url.isFileURL && path.hasPrefix("/") && !path.contains("\0")
+            && (1...4_096).contains(path.utf8.count)
+    }
+}

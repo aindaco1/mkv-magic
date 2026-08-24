@@ -272,6 +272,7 @@ public enum BuiltInWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case videoTranscode
     case remuxToMKV
     case timedTextSubtitleConversion
+    case textSubtitleExtraction
 }
 
 public enum BuiltInWorkflowCatalog {
@@ -307,6 +308,9 @@ public enum BuiltInWorkflowCatalog {
     public static let timedTextSubtitleConversion = UUID(
         uuidString: "C37188E7-8636-43F4-918F-216FF865E041"
     )!
+    public static let textSubtitleExtraction = UUID(
+        uuidString: "757E7F0F-89BC-4A84-BBCB-B8518FB4C22B"
+    )!
 
     public static func kind(for id: UUID) -> BuiltInWorkflowKind? {
         switch id {
@@ -325,6 +329,7 @@ public enum BuiltInWorkflowCatalog {
         case videoTranscode: .videoTranscode
         case remuxToMKV: .remuxToMKV
         case timedTextSubtitleConversion: .timedTextSubtitleConversion
+        case textSubtitleExtraction: .textSubtitleExtraction
         default: nil
         }
     }

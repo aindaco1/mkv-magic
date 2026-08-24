@@ -365,10 +365,10 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
     Sendable
 {
     private let ffprobeURL: URL
-    private let mkvextractURL: URL
     private let runner: Runner
     private let inspector: Inspector
     private let replacer: MKVEmbeddedSubtitleReplacer<Runner>
+    private let subtitleExtractor: MatroskaTextSubtitleExtractor<Runner>
     private let verifier = EmbeddedSubtitleReplacementOutputVerifier()
 
     public init(
@@ -380,12 +380,15 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         inspector: Inspector
     ) {
         self.ffprobeURL = ffprobeURL
-        self.mkvextractURL = mkvextractURL
         self.runner = runner
         self.inspector = inspector
         replacer = MKVEmbeddedSubtitleReplacer(
             mkvmergeURL: mkvmergeURL,
             mkvpropeditURL: mkvpropeditURL,
+            runner: runner
+        )
+        subtitleExtractor = MatroskaTextSubtitleExtractor(
+            mkvextractURL: mkvextractURL,
             runner: runner
         )
     }
@@ -398,7 +401,7 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
             throw EmbeddedSubtitleCleanupError.unsupportedSource
         }
         let current = try await inspector.inspect(source.sourceURL)
-        guard EmbeddedSubtitleAssetSnapshot(current) == EmbeddedSubtitleAssetSnapshot(source) else {
+        guard MatroskaSubtitleAssetSnapshot(current) == MatroskaSubtitleAssetSnapshot(source) else {
             throw EmbeddedSubtitleCleanupError.staleSource
         }
         let track = try Self.selectedTrack(in: current, trackUID: trackUID)
@@ -440,7 +443,7 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         }
         let current = try await inspector.inspect(preview.source.sourceURL)
         guard
-            EmbeddedSubtitleAssetSnapshot(current) == EmbeddedSubtitleAssetSnapshot(preview.source),
+            MatroskaSubtitleAssetSnapshot(current) == MatroskaSubtitleAssetSnapshot(preview.source),
             try EmbeddedSubtitleSourceRevision.read(current.sourceURL)
                 == Self.sourceRevision(in: preview)
         else {
@@ -717,64 +720,24 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         trackID: Int,
         format: ExternalTextSubtitleFormat
     ) async throws -> Data {
-        try await extractArtifact(
-            sourceURL: sourceURL,
-            outputFilename: "embedded-subtitle.\(format.filenameExtension)",
-            allowedExtension: format.filenameExtension,
-            arguments: { outputURL in
-                ["tracks", sourceURL.path, "\(trackID):\(outputURL.path)"]
-            }
-        )
-    }
-
-    private func extractArtifact(
-        sourceURL: URL,
-        outputFilename: String,
-        allowedExtension: String,
-        arguments: (URL) -> [String]
-    ) async throws -> Data {
-        let fileManager = FileManager.default
-        let directory: URL
         do {
-            directory = try fileManager.url(
-                for: .itemReplacementDirectory,
-                in: .userDomainMask,
-                appropriateFor: sourceURL,
-                create: true
+            return try await subtitleExtractor.extract(
+                sourceURL: sourceURL,
+                trackID: trackID,
+                format: format
             )
-        } catch {
-            throw EmbeddedSubtitleCleanupError.unsafeExtractedSubtitle
-        }
-        defer { try? fileManager.removeItem(at: directory) }
-        let outputURL = directory.appendingPathComponent(outputFilename)
-        let result = try await runner.run(
-            CommandRequest(
-                executableURL: mkvextractURL,
-                arguments: arguments(outputURL),
-                timeout: 120,
-                outputLimit: 1_048_576
-            ))
-        guard result.exitCode == 0 else {
-            let output =
-                result.standardError.text.isEmpty
-                ? result.standardOutput.text : result.standardError.text
-            throw EmbeddedSubtitleCleanupError.toolFailed(
-                tool: "mkvextract",
-                exitCode: result.exitCode,
-                message: String(output.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
-            )
-        }
-        do {
-            return try SafeSubtitleTextFile.read(
-                outputURL,
-                allowedExtensions: [allowedExtension],
-                maximumInputBytes: SubtitleCleanupExecutor.maximumInputBytes
-            )
-        } catch let error as SafeSubtitleTextFileError {
+        } catch let error as MatroskaTextSubtitleExtractorError {
             switch error {
-            case .oversizedInput: throw EmbeddedSubtitleCleanupError.oversizedExtractedSubtitle
-            case .unsafeInput, .unsupportedExtension:
+            case .oversizedExtractedSubtitle:
+                throw EmbeddedSubtitleCleanupError.oversizedExtractedSubtitle
+            case .unsafeRequest, .unsafeExtractedSubtitle:
                 throw EmbeddedSubtitleCleanupError.unsafeExtractedSubtitle
+            case .toolFailed(let exitCode, let message):
+                throw EmbeddedSubtitleCleanupError.toolFailed(
+                    tool: "mkvextract",
+                    exitCode: exitCode,
+                    message: message
+                )
             }
         }
     }
@@ -858,36 +821,6 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         case .subRip(let preview): preview.packetTimelineSHA256
         case .advanced(let preview): preview.packetTimelineSHA256
         }
-    }
-}
-
-private struct EmbeddedSubtitleAssetSnapshot: Equatable {
-    let sourceURL: URL
-    let container: String
-    let duration: MediaTime?
-    let fileSize: Int64?
-    let tracks: [MediaTrack]
-    let chapters: [ChapterNode]
-    let attachments: [MediaAttachment]
-    let metadata: [String: String]
-    let chapterEntryCount: Int?
-    let globalTagCount: Int?
-    let trackTagCount: Int?
-    let segmentUID: String?
-
-    init(_ asset: MediaAsset) {
-        sourceURL = asset.sourceURL
-        container = asset.container
-        duration = asset.duration
-        fileSize = asset.fileSize
-        tracks = asset.tracks
-        chapters = asset.chapters
-        attachments = asset.attachments
-        metadata = asset.metadata
-        chapterEntryCount = asset.chapterEntryCount
-        globalTagCount = asset.globalTagCount
-        trackTagCount = asset.trackTagCount
-        segmentUID = asset.segmentUID
     }
 }
 
