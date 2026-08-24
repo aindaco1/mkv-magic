@@ -26,12 +26,14 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
     init(
         media: MediaAsset,
         preview: ExternalSubtitleFilePreview,
-        match: ExternalSubtitleMatch
+        match: ExternalSubtitleMatch,
+        reviewedCleanupChangeCount: Int? = nil
     ) {
         muxViewController = ExternalSubtitleMuxViewController(
             media: media,
             preview: preview,
-            match: match
+            match: match,
+            reviewedCleanupChangeCount: reviewedCleanupChangeCount
         )
         let window = NSPanel(contentViewController: muxViewController)
         window.title = "Add External Subtitle"
@@ -79,6 +81,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
     private let media: MediaAsset
     private let preview: ExternalSubtitleFilePreview
     private let match: ExternalSubtitleMatch
+    private let reviewedCleanupChangeCount: Int?
     private let languageField = NSComboBox()
     private let nameField = NSTextField()
     private let defaultCheck = NSButton(
@@ -92,11 +95,13 @@ final class ExternalSubtitleMuxViewController: NSViewController {
     init(
         media: MediaAsset,
         preview: ExternalSubtitleFilePreview,
-        match: ExternalSubtitleMatch
+        match: ExternalSubtitleMatch,
+        reviewedCleanupChangeCount: Int? = nil
     ) {
         self.media = media
         self.preview = preview
         self.match = match
+        self.reviewedCleanupChangeCount = reviewedCleanupChangeCount
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -112,6 +117,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         let explanation = NSTextField(
             wrappingLabelWithString:
                 "MKV Magic will copy every existing stream and add this \(preview.format.displayName) subtitle as the last track. Video and audio are not encoded."
+                + cleanupExplanation
         )
         explanation.textColor = .secondaryLabelColor
 
@@ -152,7 +158,8 @@ final class ExternalSubtitleMuxViewController: NSViewController {
 
         let warnings = ExternalSubtitleMuxPresentation.warnings(
             preview: preview,
-            match: match
+            match: match,
+            cleanupWasReviewed: reviewedCleanupChangeCount != nil
         )
         let warningLabel = NSTextField(
             wrappingLabelWithString: warnings.isEmpty
@@ -204,6 +211,14 @@ final class ExternalSubtitleMuxViewController: NSViewController {
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         view = root
+    }
+
+    private var cleanupExplanation: String {
+        guard let reviewedCleanupChangeCount else { return "" }
+        let noun = reviewedCleanupChangeCount == 1 ? "change" : "changes"
+        return reviewedCleanupChangeCount == 0
+            ? " Cleanup was reviewed; no text changes were selected."
+            : " \(reviewedCleanupChangeCount) reviewed cleanup \(noun) will be applied inside this same remux."
     }
 
     @objc private func cancel() { onCancel?() }
@@ -289,7 +304,8 @@ enum ExternalSubtitleMuxPresentation {
 
     static func warnings(
         preview: ExternalSubtitleFilePreview,
-        match: ExternalSubtitleMatch
+        match: ExternalSubtitleMatch,
+        cleanupWasReviewed: Bool = false
     ) -> [String] {
         var values = [String]()
         if match.confidence == .low {
@@ -304,7 +320,7 @@ enum ExternalSubtitleMuxPresentation {
                 "Subtitle end time differs from the video by \(durationDifference(difference))."
             )
         }
-        if preview.cleanupChangeCount > 0 {
+        if preview.cleanupChangeCount > 0, !cleanupWasReviewed {
             values.append(
                 "\(preview.cleanupChangeCount) cleanup suggestion(s) will not be applied. Use Clean Subtitle first if you want them."
             )

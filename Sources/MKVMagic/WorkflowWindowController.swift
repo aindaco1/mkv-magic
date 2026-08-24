@@ -355,7 +355,12 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         guard let workflowIndex = selectedWorkflowIndex,
             workflows[workflowIndex].steps.indices.contains(sender.tag)
         else { return }
-        workflows[workflowIndex].steps[sender.tag].isEnabled = sender.state == .on
+        WorkflowEditorPolicy.setStepEnabled(
+            sender.state == .on,
+            at: sender.tag,
+            in: &workflows[workflowIndex]
+        )
+        stepTable.reloadData()
         markUnsaved()
         refreshEditorButtons()
     }
@@ -604,6 +609,7 @@ enum WorkflowEditorPolicy {
         .removeRedundantEnglishSDH,
         .removeSegmentTitle,
         .addExternalSubtitle,
+        .cleanExternalSubtitleText,
     ]
 
     static func newWorkflow() -> SavedWorkflow {
@@ -628,7 +634,11 @@ enum WorkflowEditorPolicy {
 
     static func availableActions(for workflow: SavedWorkflow) -> [SavedWorkflowAction] {
         let existing = Set(workflow.steps.map(\.action))
-        return actionCatalog.filter { !existing.contains($0) }
+        return actionCatalog.filter { action in
+            guard !existing.contains(action) else { return false }
+            return action != .cleanExternalSubtitleText
+                || existing.contains(.addExternalSubtitle)
+        }
     }
 
     @discardableResult
@@ -641,7 +651,34 @@ enum WorkflowEditorPolicy {
     @discardableResult
     static func removeStep(at index: Int, from workflow: inout SavedWorkflow) -> Bool {
         guard workflow.steps.indices.contains(index) else { return false }
+        let removedAction = workflow.steps[index].action
         workflow.steps.remove(at: index)
+        if removedAction == .addExternalSubtitle {
+            workflow.steps.removeAll { $0.action == .cleanExternalSubtitleText }
+        }
+        return true
+    }
+
+    @discardableResult
+    static func setStepEnabled(
+        _ isEnabled: Bool,
+        at index: Int,
+        in workflow: inout SavedWorkflow
+    ) -> Bool {
+        guard workflow.steps.indices.contains(index) else { return false }
+        let action = workflow.steps[index].action
+        workflow.steps[index].isEnabled = isEnabled
+        if action == .addExternalSubtitle, !isEnabled {
+            for cleanupIndex in workflow.steps.indices
+            where workflow.steps[cleanupIndex].action == .cleanExternalSubtitleText {
+                workflow.steps[cleanupIndex].isEnabled = false
+            }
+        } else if action == .cleanExternalSubtitleText, isEnabled {
+            for addIndex in workflow.steps.indices
+            where workflow.steps[addIndex].action == .addExternalSubtitle {
+                workflow.steps[addIndex].isEnabled = true
+            }
+        }
         return true
     }
 

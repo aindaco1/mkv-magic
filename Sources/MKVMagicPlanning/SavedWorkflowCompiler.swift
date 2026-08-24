@@ -11,6 +11,8 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case unsupportedContainer
     case missingExternalSubtitleInput
     case invalidExternalSubtitleInput
+    case externalSubtitleCleanupRequiresAddStep
+    case missingExternalSubtitleCleanupReview
     case unstableTrackIdentity
     case wouldRemoveAllTracks
     case noApplicableChanges
@@ -30,6 +32,10 @@ extension SavedWorkflowCompilationError: LocalizedError {
             "Choose and confirm an external subtitle before previewing this workflow."
         case .invalidExternalSubtitleInput:
             "The external subtitle input does not match the reviewed workflow input."
+        case .externalSubtitleCleanupRequiresAddStep:
+            "Enable Add one external text subtitle before cleaning its text."
+        case .missingExternalSubtitleCleanupReview:
+            "Review the external subtitle cleanup suggestions before previewing this workflow."
         case .unstableTrackIdentity:
             "This file does not expose stable Matroska identifiers for every track."
         case .wouldRemoveAllTracks: "This workflow would remove every playable track."
@@ -42,15 +48,18 @@ public struct SavedWorkflowExternalSubtitleInput: Equatable, Sendable {
     public let sourceURL: URL
     public let metadata: ExternalSubtitleTrackMetadata
     public let format: ExternalTextSubtitleFormat
+    public let reviewedCleanupChangeCount: Int?
 
     public init(
         sourceURL: URL,
         metadata: ExternalSubtitleTrackMetadata,
-        format: ExternalTextSubtitleFormat
+        format: ExternalTextSubtitleFormat,
+        reviewedCleanupChangeCount: Int? = nil
     ) {
         self.sourceURL = sourceURL
         self.metadata = metadata
         self.format = format
+        self.reviewedCleanupChangeCount = reviewedCleanupChangeCount
     }
 }
 
@@ -113,6 +122,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let plan: ExecutionPlan
     public let summaries: [String]
     public let stepOutcomes: [SavedWorkflowStepOutcome]
+    public let externalSubtitleCleanupChangeCount: Int?
 
     public init(
         workflowID: UUID,
@@ -120,7 +130,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         operations: [WorkflowOperation],
         plan: ExecutionPlan,
         summaries: [String],
-        stepOutcomes: [SavedWorkflowStepOutcome] = []
+        stepOutcomes: [SavedWorkflowStepOutcome] = [],
+        externalSubtitleCleanupChangeCount: Int? = nil
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
@@ -128,6 +139,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         self.plan = plan
         self.summaries = summaries
         self.stepOutcomes = stepOutcomes
+        self.externalSubtitleCleanupChangeCount = externalSubtitleCleanupChangeCount
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -150,7 +162,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
                 return SavedWorkflowExternalSubtitleInput(
                     sourceURL: url,
                     metadata: metadata,
-                    format: format
+                    format: format,
+                    reviewedCleanupChangeCount: externalSubtitleCleanupChangeCount
                 )
             }
         }
@@ -207,6 +220,12 @@ public struct SavedWorkflowCompiler: Sendable {
         }
         guard MatroskaEditingPolicy.supports(asset) else {
             throw SavedWorkflowCompilationError.unsupportedContainer
+        }
+        let enabledActions = Set(enabledSteps.map(\.action))
+        if enabledActions.contains(.cleanExternalSubtitleText),
+            !enabledActions.contains(.addExternalSubtitle)
+        {
+            throw SavedWorkflowCompilationError.externalSubtitleCleanupRequiresAddStep
         }
 
         var operations = [WorkflowOperation]()
@@ -290,6 +309,34 @@ public struct SavedWorkflowCompiler: Sendable {
                             "Add one reviewed \(input.format.displayName) subtitle as the last track"
                     )
                 )
+            case .cleanExternalSubtitleText:
+                guard let input = inputs.externalSubtitle,
+                    let reviewedChangeCount = input.reviewedCleanupChangeCount
+                else {
+                    throw SavedWorkflowCompilationError.missingExternalSubtitleCleanupReview
+                }
+                guard reviewedChangeCount >= 0 else {
+                    throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
+                }
+                if reviewedChangeCount > 0 {
+                    let noun = reviewedChangeCount == 1 ? "change" : "changes"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail:
+                                "Apply \(reviewedChangeCount) reviewed subtitle text \(noun) inside the same remux"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No subtitle text cleanup changes were selected."
+                        )
+                    )
+                }
             }
         }
         if !removalTrackUIDs.isEmpty {
@@ -331,7 +378,10 @@ public struct SavedWorkflowCompiler: Sendable {
             operations: operations,
             plan: try WorkflowPlanner().plan(asset: asset, workflow: resolved),
             summaries: stepOutcomes.filter { $0.disposition == .applied }.map(\.detail),
-            stepOutcomes: stepOutcomes
+            stepOutcomes: stepOutcomes,
+            externalSubtitleCleanupChangeCount: enabledActions.contains(
+                .cleanExternalSubtitleText
+            ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil
         )
         return SavedWorkflowCompilationPreview(
             workflowID: workflow.id,
@@ -383,6 +433,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove the segment title"
         case .addExternalSubtitle:
             "Add one external subtitle"
+        case .cleanExternalSubtitleText:
+            "Clean the added subtitle text"
         }
     }
 
@@ -398,6 +450,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No segment title is present."
         case .addExternalSubtitle:
             "No external subtitle was selected."
+        case .cleanExternalSubtitleText:
+            "No subtitle text cleanup changes were selected."
         }
     }
 }

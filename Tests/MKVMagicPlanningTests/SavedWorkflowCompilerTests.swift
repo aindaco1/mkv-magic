@@ -134,6 +134,93 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         }
     }
 
+    func testReviewedSubtitleCleanupFusesWithExternalInputWithoutPersistingReviewData() throws {
+        let workflow = SavedWorkflow(
+            name: "Clean and add subtitle",
+            steps: [
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let subtitleURL = URL(fileURLWithPath: "/private/input/Movie.en.srt")
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeAsset(title: "Movie"),
+            inputs: SavedWorkflowResolvedInputs(
+                externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                    sourceURL: subtitleURL,
+                    metadata: ExternalSubtitleTrackMetadata(language: "en"),
+                    format: .subRip,
+                    reviewedCleanupChangeCount: 2
+                )
+            )
+        )
+
+        XCTAssertEqual(compiled.operations.count, 2)
+        XCTAssertEqual(compiled.externalSubtitleInput?.reviewedCleanupChangeCount, 2)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(
+            compiled.stepOutcomes.map(\.detail),
+            [
+                "Apply 2 reviewed subtitle text changes inside the same remux",
+                "Add one reviewed SRT subtitle as the last track",
+                "Remove the segment title",
+            ]
+        )
+        let portableJSON = try XCTUnwrap(
+            String(data: JSONEncoder().encode(workflow), encoding: .utf8)
+        )
+        XCTAssertTrue(portableJSON.contains("cleanExternalSubtitleText"))
+        XCTAssertFalse(portableJSON.contains(subtitleURL.path))
+        XCTAssertFalse(portableJSON.contains("reviewedCleanupChangeCount"))
+    }
+
+    func testSubtitleCleanupRequiresEnabledAddStepAndEphemeralReview() {
+        let missingAdd = SavedWorkflow(
+            name: "Invalid cleanup",
+            steps: [SavedWorkflowStep(action: .cleanExternalSubtitleText)]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(missingAdd, for: makeAsset())
+        ) { error in
+            XCTAssertEqual(
+                error as? SavedWorkflowCompilationError,
+                .externalSubtitleCleanupRequiresAddStep
+            )
+        }
+
+        let missingReview = SavedWorkflow(
+            name: "Review required",
+            steps: [
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+            ]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                missingReview,
+                for: makeAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                        sourceURL: URL(fileURLWithPath: "/private/input/Movie.en.srt"),
+                        metadata: ExternalSubtitleTrackMetadata(language: "en"),
+                        format: .subRip
+                    )
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SavedWorkflowCompilationError,
+                .missingExternalSubtitleCleanupReview
+            )
+        }
+    }
+
     func testGranularSubtitleConditionsFuseIntoOneStableUIDRemoval() throws {
         let workflow = SavedWorkflow(
             name: "Selective English cleanup",

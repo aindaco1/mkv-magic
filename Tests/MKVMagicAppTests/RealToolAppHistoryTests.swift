@@ -90,12 +90,14 @@ final class RealToolAppHistoryTests: XCTestCase {
         let externalSubtitle = fixtureRoot.appendingPathComponent("Movie.en.srt")
         let source = fixtureRoot.appendingPathComponent("Movie.mkv")
         let output = fixtureRoot.appendingPathComponent("Movie — Prepared.mkv")
+        let extractedOutputSubtitle = fixtureRoot.appendingPathComponent("Verified English.srt")
         try Data(repeating: 0, count: 192_000).write(to: rawAudio)
         try Data(
             "1\n00:00:00,000 --> 00:00:01,000\nBonjour\n".utf8
         ).write(to: originalSubtitle)
         try Data(
-            "1\n00:00:00,000 --> 00:00:01,000\nHello\n".utf8
+            ("1\n00:00:00,000 --> 00:00:01,000\nDownloaded from\nYTS.MX\n\n"
+                + "2\n00:00:01,000 --> 00:00:02,000\n  Hello  \n").utf8
         ).write(to: externalSubtitle)
         let externalSubtitleDigest = SHA256.hash(data: try Data(contentsOf: externalSubtitle))
 
@@ -143,10 +145,12 @@ final class RealToolAppHistoryTests: XCTestCase {
             name: "Clean and add English subtitles",
             steps: [
                 SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
                 SavedWorkflowStep(action: .addExternalSubtitle),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
         )
+        XCTAssertEqual(subtitlePreview.cleanup.changes.count, 2)
         let compiled = try SavedWorkflowCompiler().compile(
             workflow,
             for: asset,
@@ -154,7 +158,8 @@ final class RealToolAppHistoryTests: XCTestCase {
                 externalSubtitle: SavedWorkflowExternalSubtitleInput(
                     sourceURL: externalSubtitle,
                     metadata: metadata,
-                    format: .subRip
+                    format: .subRip,
+                    reviewedCleanupChangeCount: 2
                 )
             )
         )
@@ -165,7 +170,10 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         let outputAsset = try await model.runSavedWorkflow(
             compiled,
-            externalSubtitlePreview: .subRip(subtitlePreview),
+            externalSubtitlePayload: .reviewedCleanup(
+                .subRip(subtitlePreview),
+                restoringIDs: []
+            ),
             in: asset,
             destinationURL: output
         )
@@ -183,6 +191,26 @@ final class RealToolAppHistoryTests: XCTestCase {
             SHA256.hash(data: try Data(contentsOf: externalSubtitle)),
             externalSubtitleDigest
         )
+        let addedTrackID = try XCTUnwrap(outputAsset.tracks.last?.id)
+        let extractResult = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvextract),
+                arguments: [
+                    "tracks", output.path,
+                    "\(addedTrackID):\(extractedOutputSubtitle.path)",
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(extractResult.exitCode, 0, extractResult.standardError.text)
+        let extractedText = try String(contentsOf: extractedOutputSubtitle, encoding: .utf8)
+        XCTAssertTrue(extractedText.contains("Hello"))
+        XCTAssertFalse(extractedText.contains("YTS.MX"))
+        let portableJSON = try XCTUnwrap(
+            String(data: JSONEncoder().encode(workflow), encoding: .utf8)
+        )
+        XCTAssertFalse(portableJSON.contains(externalSubtitle.path))
+        XCTAssertFalse(portableJSON.contains("restoringIDs"))
 
         let records = try await store.load()
         let record = try XCTUnwrap(records.first)

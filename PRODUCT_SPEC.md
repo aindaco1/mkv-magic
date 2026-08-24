@@ -485,17 +485,29 @@ Run** is enabled. A recipe with no applicable changes shows its skipped cards,
 offers only Done, and creates no destination.
 
 The first interactive input card adds one external SRT, ASS, or SSA subtitle.
-The portable v2 recipe stores only that input-slot intent: it contains no path,
+The portable recipe stores only that input-slot intent: it contains no path,
 bookmark, track metadata, subtitle text, or inspected-media identity. Save &
 Preview asks for the file, runs the existing local match and editable metadata
 confirmation, and binds that ephemeral review to the compiled plan. Compilation
 fails closed if the input is absent or its reviewed path/format changes. Track
 cleanup and subtitle addition fuse into one `mkvmerge`; optional segment-title
 removal runs once on that temporary output before the normal pre-commit and
-post-commit audits. The subtitle card preserves the reviewed normalized source
-content; cleanup suggestions remain visible but require a separate explicit
-cleanup action. Original v1 workflows migrate to v2 without changing recipe or
-step identity, order, enablement, or action semantics.
+post-commit audits. The subtitle card alone preserves the reviewed normalized
+source content and only discloses cleanup suggestions.
+
+The dependent **Clean the added subtitle text** card makes those suggestions an
+explicit per-run review. It is authorable only after the external-subtitle card;
+disabling or removing its input card also disables or removes the dependent
+cleanup card. Accepted deterministic ad, whitespace, and English OCR changes
+exist only in the active plan and feed the external subtitle's private temporary
+payload. They do not create a cleaned sidecar or another remux. SRT and ASS/SSA
+payloads selected by this card are re-extracted and semantically compared before
+commit and after reopening the final MKV. Source and sidecar content hashes must
+still match the reviewed revisions. Workflow schema v3 persists only the cleanup
+action—not a path, subtitle text, metadata, cue/event selection, or review
+identifier. v1 and v2 workflows migrate without changing recipe or step
+identity, order, enablement, or action semantics; a file cannot claim an older
+schema while using a newer action.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1091,8 +1103,11 @@ adding and removing the safe card catalog with duplicate prevention, in addition
 to enable/disable and reordering. The external text-subtitle input card now asks
 for and confirms one SRT, ASS, or SSA during preview, keeps that runtime input out
 of the portable recipe, and fuses it with granular cleanup and title removal in
-one verified output transaction. Subtitle text-cleanup cards, broader conditions,
-queue execution, and filename cleanup remain open.
+one verified output transaction. A dependent subtitle text-cleanup card now
+reuses the deterministic cue review and feeds only accepted changes into that
+same remux. The review is ephemeral and both the temporary and committed MKV
+must pass extracted SRT or ASS/SSA payload comparison. Broader conditions, queue
+execution, and filename cleanup remain open.
 
 Deliverables:
 

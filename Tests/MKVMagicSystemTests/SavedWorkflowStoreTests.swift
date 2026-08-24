@@ -67,16 +67,41 @@ final class SavedWorkflowStoreTests: XCTestCase {
     func testPortableFileRoundTripsInputSlotIntentWithoutAnInputPath() throws {
         let workflow = SavedWorkflow(
             name: "Add a subtitle",
-            steps: [SavedWorkflowStep(action: .addExternalSubtitle)]
+            steps: [
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+            ]
         )
 
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
         XCTAssertTrue(json.contains("addExternalSubtitle"))
+        XCTAssertTrue(json.contains("cleanExternalSubtitleText"))
         XCTAssertFalse(json.contains("sourceURL"))
+        XCTAssertFalse(json.contains("restoringIDs"))
+        XCTAssertFalse(json.contains("subtitleText"))
         XCTAssertFalse(json.contains("/private/"))
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionTwoWorkflowMigratesButCannotClaimVersionThreeCleanupAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":2,"name":"Add subtitle","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"addExternalSubtitle"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":2,"name":"Invalid backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"cleanExternalSubtitleText"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
     }
 
     func testVersionOnePortableWorkflowMigratesWithoutChangingIntentOrIdentity() throws {

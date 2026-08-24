@@ -61,6 +61,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         removesSegmentTitle: Bool,
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
+        externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
         destinationURL: URL,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
@@ -70,20 +71,28 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         guard trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil else {
             throw SavedWorkflowExecutionError.noOperations
         }
+        guard externalSubtitlePreview == nil || externalSubtitlePayload == nil else {
+            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+        }
+        let resolvedPayload =
+            externalSubtitlePayload
+            ?? externalSubtitlePreview.map(ExternalSubtitleMuxPayload.original)
         if let externalSubtitleInput {
-            guard let externalSubtitlePreview else {
+            guard let resolvedPayload else {
                 throw SavedWorkflowExecutionError.missingExternalSubtitleInput
             }
             guard
-                externalSubtitlePreview.sourceURL.standardizedFileURL
+                resolvedPayload.sourceURL.standardizedFileURL
                     == externalSubtitleInput.sourceURL.standardizedFileURL,
-                externalSubtitlePreview.format == externalSubtitleInput.format
+                resolvedPayload.format == externalSubtitleInput.format,
+                resolvedPayload.reviewedCleanupChangeCount
+                    == externalSubtitleInput.reviewedCleanupChangeCount
             else {
                 throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
             }
             return try await externalSubtitleExecutor.execute(
                 source: source,
-                subtitlePreview: externalSubtitlePreview,
+                subtitlePayload: resolvedPayload,
                 metadata: externalSubtitleInput.metadata,
                 trackRemoval: trackRemoval,
                 removesSegmentTitle: removesSegmentTitle,
@@ -91,7 +100,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                 onStage: onStage
             )
         }
-        guard externalSubtitlePreview == nil else {
+        guard resolvedPayload == nil else {
             throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
         }
 

@@ -8,6 +8,7 @@ public enum ExternalSubtitleMuxError: Error, Equatable, Sendable {
     case unsupportedDestination
     case invalidTrackName
     case sourceAndSubtitleAreSame
+    case invalidCleanupReview
     case missingPropertyEditor
     case subtitleVerificationFailed
     case toolFailed(exitCode: Int32, message: String)
@@ -25,6 +26,8 @@ extension ExternalSubtitleMuxError: LocalizedError {
             "The subtitle track name is too large or contains an unsupported null character."
         case .sourceAndSubtitleAreSame:
             "The external subtitle must be a different file from the video source."
+        case .invalidCleanupReview:
+            "The reviewed subtitle cleanup selection is no longer valid. Preview it again."
         case .missingPropertyEditor:
             "This combined workflow requires the bundled Matroska property editor."
         case .subtitleVerificationFailed:
@@ -88,17 +91,109 @@ public enum ExternalSubtitleFilePreview: Equatable, Sendable {
         }
     }
 
-    fileprivate var advancedDocument: AdvancedSubStationAlphaDocument? {
-        guard case .advanced(let preview) = self else { return nil }
-        return preview.cleanup.original
-    }
-
     fileprivate func validateCurrent() throws {
         switch self {
         case .subRip(let preview):
             try SubtitleCleanupExecutor().validateCurrent(preview)
         case .advanced(let preview):
             try AdvancedSubtitleCleanupExecutor().validateCurrent(preview)
+        }
+    }
+}
+
+/// The per-run subtitle payload chosen by the user. Saved workflows persist only the
+/// cleanup action; this review and its cue identifiers remain ephemeral.
+public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
+    case original(ExternalSubtitleFilePreview)
+    case reviewedCleanup(ExternalSubtitleFilePreview, restoringIDs: Set<Int>)
+
+    public var preview: ExternalSubtitleFilePreview {
+        switch self {
+        case .original(let preview), .reviewedCleanup(let preview, _): preview
+        }
+    }
+
+    public var sourceURL: URL { preview.sourceURL }
+    public var format: ExternalTextSubtitleFormat { preview.format }
+
+    public var appliedCleanupChangeCount: Int {
+        switch self {
+        case .original: return 0
+        case .reviewedCleanup(let preview, let restoringIDs):
+            return preview.cleanupChangeCount - restoringIDs.count
+        }
+    }
+
+    public var reviewedCleanupChangeCount: Int? {
+        switch self {
+        case .original: nil
+        case .reviewedCleanup: appliedCleanupChangeCount
+        }
+    }
+
+    public func validateForReview() throws {
+        try validateCurrent()
+    }
+
+    fileprivate var normalizedData: Data {
+        switch self {
+        case .original(let preview):
+            return preview.normalizedOriginalData
+        case .reviewedCleanup(.subRip(let preview), let restoringIDs):
+            let desired = preview.cleanup.document(restoringCueIDs: restoringIDs)
+            return Data(SubRipCodec().serialize(desired).utf8)
+        case .reviewedCleanup(.advanced(let preview), let restoringIDs):
+            let desired = preview.cleanup.document(restoringEventIDs: restoringIDs)
+            return Data(AdvancedSubStationAlphaCodec().serialize(desired).utf8)
+        }
+    }
+
+    fileprivate var subtitleEnd: SubRipTimestamp {
+        switch self {
+        case .original(let preview): return preview.subtitleEnd
+        case .reviewedCleanup(.subRip(let preview), let restoringIDs):
+            return preview.cleanup.document(restoringCueIDs: restoringIDs).cues.map(\.end).max()
+                ?? SubRipTimestamp(milliseconds: 0)
+        case .reviewedCleanup(.advanced(let preview), let restoringIDs):
+            return preview.cleanup.document(restoringEventIDs: restoringIDs).events.map(\.end).max()
+                ?? SubRipTimestamp(milliseconds: 0)
+        }
+    }
+
+    fileprivate var subRipDocumentForAudit: SubRipDocument? {
+        guard case .reviewedCleanup(.subRip(let preview), let restoringIDs) = self else {
+            return nil
+        }
+        return preview.cleanup.document(restoringCueIDs: restoringIDs)
+    }
+
+    fileprivate var advancedDocumentForAudit: AdvancedSubStationAlphaDocument? {
+        switch self {
+        case .original(.advanced(let preview)):
+            return preview.cleanup.original
+        case .reviewedCleanup(.advanced(let preview), let restoringIDs):
+            return preview.cleanup.document(restoringEventIDs: restoringIDs)
+        case .original(.subRip), .reviewedCleanup(.subRip, _):
+            return nil
+        }
+    }
+
+    fileprivate func validateCurrent() throws {
+        try preview.validateCurrent()
+        guard case .reviewedCleanup(let preview, let restoringIDs) = self else { return }
+        let validIDs: Set<Int>
+        let hasRemainingText: Bool
+        switch preview {
+        case .subRip(let preview):
+            validIDs = Set(preview.cleanup.changes.map(\.id))
+            hasRemainingText = !preview.cleanup.document(restoringCueIDs: restoringIDs).cues.isEmpty
+        case .advanced(let preview):
+            validIDs = Set(preview.cleanup.changes.map(\.id))
+            hasRemainingText =
+                !preview.cleanup.document(restoringEventIDs: restoringIDs).events.isEmpty
+        }
+        guard restoringIDs.isSubset(of: validIDs), hasRemainingText else {
+            throw ExternalSubtitleMuxError.invalidCleanupReview
         }
     }
 }
@@ -264,6 +359,28 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             _ in
         }
     ) async throws -> MediaAsset {
+        try await execute(
+            source: source,
+            subtitlePayload: .original(subtitlePreview),
+            metadata: metadata,
+            trackRemoval: trackRemoval,
+            removesSegmentTitle: removesSegmentTitle,
+            destinationURL: destinationURL,
+            onStage: onStage
+        )
+    }
+
+    public func execute(
+        source: MediaAsset,
+        subtitlePayload: ExternalSubtitleMuxPayload,
+        metadata: ExternalSubtitleTrackMetadata,
+        trackRemoval: TrackRemoval? = nil,
+        removesSegmentTitle: Bool = false,
+        destinationURL: URL,
+        onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
+            _ in
+        }
+    ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
             throw ExternalSubtitleMuxError.unsupportedSource
         }
@@ -272,11 +389,11 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         }
         guard
             source.sourceURL.standardizedFileURL
-                != subtitlePreview.sourceURL.standardizedFileURL
+                != subtitlePayload.sourceURL.standardizedFileURL
         else {
             throw ExternalSubtitleMuxError.sourceAndSubtitleAreSame
         }
-        try subtitlePreview.validateCurrent()
+        try subtitlePayload.validateCurrent()
         if removesSegmentTitle, propertyEditor == nil {
             throw ExternalSubtitleMuxError.missingPropertyEditor
         }
@@ -287,9 +404,9 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             produce: { outputURL in
                 let normalizedSubtitleURL = outputURL.deletingLastPathComponent()
                     .appendingPathComponent(
-                        "external-subtitle.\(subtitlePreview.format.filenameExtension)"
+                        "external-subtitle.\(subtitlePayload.format.filenameExtension)"
                     )
-                let normalizedSubtitle = subtitlePreview.normalizedOriginalData
+                let normalizedSubtitle = subtitlePayload.normalizedData
                 try normalizedSubtitle.write(
                     to: normalizedSubtitleURL, options: .withoutOverwriting)
                 defer { try? FileManager.default.removeItem(at: normalizedSubtitleURL) }
@@ -306,20 +423,15 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     }
                     try await propertyEditor.editSegmentTitle(at: outputURL, title: nil)
                 }
-                if let advancedDocument = subtitlePreview.advancedDocument {
-                    try await verifyAdvancedSubtitlePayload(
-                        outputURL: outputURL,
-                        original: advancedDocument
-                    )
-                }
+                try await verifySubtitlePayload(outputURL: outputURL, payload: subtitlePayload)
             },
             verify: { output in
                 try verifier.verify(
                     original: source,
                     output: output,
                     expectedMetadata: metadata,
-                    expectedFormat: subtitlePreview.format,
-                    subtitleEnd: subtitlePreview.subtitleEnd,
+                    expectedFormat: subtitlePayload.format,
+                    subtitleEnd: subtitlePayload.subtitleEnd,
                     trackRemoval: trackRemoval,
                     segmentTitle: removesSegmentTitle ? .set(nil) : .preserve
                 )
@@ -332,20 +444,61 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             },
             onStage: onStage
         )
-        if let advancedDocument = subtitlePreview.advancedDocument {
-            do {
-                try await verifyAdvancedSubtitlePayload(
-                    outputURL: output.sourceURL,
-                    original: advancedDocument
-                )
-            } catch {
-                throw ExternalSubtitleMuxError.committedOutputAuditFailed(
-                    outputURL: output.sourceURL,
-                    reason: error.localizedDescription
-                )
-            }
+        do {
+            try await verifySubtitlePayload(outputURL: output.sourceURL, payload: subtitlePayload)
+        } catch {
+            throw ExternalSubtitleMuxError.committedOutputAuditFailed(
+                outputURL: output.sourceURL,
+                reason: error.localizedDescription
+            )
         }
         return output
+    }
+
+    private func verifySubtitlePayload(
+        outputURL: URL,
+        payload: ExternalSubtitleMuxPayload
+    ) async throws {
+        if let subRipDocument = payload.subRipDocumentForAudit {
+            try await verifySubRipSubtitlePayload(
+                outputURL: outputURL,
+                intended: subRipDocument
+            )
+        }
+        if let advancedDocument = payload.advancedDocumentForAudit {
+            try await verifyAdvancedSubtitlePayload(
+                outputURL: outputURL,
+                original: advancedDocument
+            )
+        }
+    }
+
+    private func verifySubRipSubtitlePayload(
+        outputURL: URL,
+        intended: SubRipDocument
+    ) async throws {
+        guard let mkvextractURL else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        let auditURL = outputURL.deletingLastPathComponent()
+            .appendingPathComponent("external-subtitle-audit.srt")
+        let extractedData = try await extractAddedSubtitle(
+            outputURL: outputURL,
+            auditURL: auditURL,
+            mkvextractURL: mkvextractURL,
+            allowedExtensions: ["srt"]
+        )
+        let extracted: SubRipDocument
+        do {
+            extracted = try SubRipCodec().parse(
+                SubtitleTextDecoder().decode(extractedData)
+            ).document
+        } catch {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        guard SubRipMuxPayloadVerifier().verify(intended: intended, extracted: extracted) else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
     }
 
     private func verifyAdvancedSubtitlePayload(
@@ -355,36 +508,14 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         guard let mkvextractURL else {
             throw ExternalSubtitleMuxError.subtitleVerificationFailed
         }
-        let preliminaryOutput = try await inspector.inspect(outputURL)
-        guard let addedTrack = preliminaryOutput.tracks.filter({ $0.kind != .attachment }).last,
-            addedTrack.kind == .subtitle
-        else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
         let auditURL = outputURL.deletingLastPathComponent()
             .appendingPathComponent("external-subtitle-audit.ass")
-        defer { try? FileManager.default.removeItem(at: auditURL) }
-        let result = try await runner.run(
-            CommandRequest(
-                executableURL: mkvextractURL,
-                arguments: ["tracks", outputURL.path, "\(addedTrack.id):\(auditURL.path)"],
-                timeout: 120,
-                outputLimit: 1_048_576
-            )
+        let extractedData = try await extractAddedSubtitle(
+            outputURL: outputURL,
+            auditURL: auditURL,
+            mkvextractURL: mkvextractURL,
+            allowedExtensions: ["ass"]
         )
-        guard result.exitCode == 0 else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        let extractedData: Data
-        do {
-            extractedData = try SafeSubtitleTextFile.read(
-                auditURL,
-                allowedExtensions: ["ass"],
-                maximumInputBytes: AdvancedSubtitleCleanupExecutor.maximumInputBytes
-            )
-        } catch {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
         let extracted: AdvancedSubStationAlphaDocument
         do {
             extracted = try AdvancedSubStationAlphaCodec().parse(
@@ -401,6 +532,60 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         else {
             throw ExternalSubtitleMuxError.subtitleVerificationFailed
         }
+    }
+
+    private func extractAddedSubtitle(
+        outputURL: URL,
+        auditURL: URL,
+        mkvextractURL: URL,
+        allowedExtensions: Set<String>
+    ) async throws -> Data {
+        let preliminaryOutput = try await inspector.inspect(outputURL)
+        guard let addedTrack = preliminaryOutput.tracks.filter({ $0.kind != .attachment }).last,
+            addedTrack.kind == .subtitle
+        else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        defer { try? FileManager.default.removeItem(at: auditURL) }
+        let result = try await runner.run(
+            CommandRequest(
+                executableURL: mkvextractURL,
+                arguments: ["tracks", outputURL.path, "\(addedTrack.id):\(auditURL.path)"],
+                timeout: 120,
+                outputLimit: 1_048_576
+            )
+        )
+        guard result.exitCode == 0 else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        let extractedData: Data
+        do {
+            extractedData = try SafeSubtitleTextFile.read(
+                auditURL,
+                allowedExtensions: allowedExtensions,
+                maximumInputBytes: AdvancedSubtitleCleanupExecutor.maximumInputBytes
+            )
+        } catch {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        return extractedData
+    }
+}
+
+struct SubRipMuxPayloadVerifier {
+    func verify(intended: SubRipDocument, extracted: SubRipDocument) -> Bool {
+        guard intended.cues.count == extracted.cues.count else { return false }
+        return zip(intended.cues, extracted.cues).allSatisfy { intended, extracted in
+            timestampsMatch(intended.start, extracted.start)
+                && timestampsMatch(intended.end, extracted.end)
+                && intended.lines == extracted.lines
+        }
+    }
+
+    private func timestampsMatch(_ lhs: SubRipTimestamp, _ rhs: SubRipTimestamp) -> Bool {
+        let difference = lhs.milliseconds.subtractingReportingOverflow(rhs.milliseconds)
+        guard !difference.overflow, difference.partialValue != Int64.min else { return false }
+        return abs(difference.partialValue) <= 1
     }
 }
 

@@ -10,10 +10,25 @@ import XCTest
 private actor SavedWorkflowRecordingRunner: CommandRunning {
     private(set) var executableNames = [String]()
     private(set) var requests = [CommandRequest]()
+    private(set) var subtitleInputs = [Data]()
 
     func run(_ request: CommandRequest) async throws -> CommandResult {
         executableNames.append(request.executableURL.lastPathComponent)
         requests.append(request)
+        if request.executableURL.lastPathComponent == "mkvextract",
+            request.arguments.first == "tracks",
+            request.arguments.count == 3,
+            let separator = request.arguments[2].firstIndex(of: ":"),
+            let subtitleData = subtitleInputs.last
+        {
+            let outputPath = String(
+                request.arguments[2][request.arguments[2].index(after: separator)...]
+            )
+            try subtitleData.write(
+                to: URL(fileURLWithPath: outputPath),
+                options: .withoutOverwriting
+            )
+        }
         if request.executableURL.lastPathComponent == "mkvmerge" {
             guard request.arguments.first == "--output", request.arguments.count > 1 else {
                 throw CocoaError(.fileWriteUnknown)
@@ -22,6 +37,11 @@ private actor SavedWorkflowRecordingRunner: CommandRunning {
                 to: URL(fileURLWithPath: request.arguments[1]),
                 options: .withoutOverwriting
             )
+            if let subtitlePath = request.arguments.first(where: {
+                URL(fileURLWithPath: $0).lastPathComponent.hasPrefix("external-subtitle.")
+            }) {
+                subtitleInputs.append(try Data(contentsOf: URL(fileURLWithPath: subtitlePath)))
+            }
         }
         return CommandResult(
             exitCode: 0,
@@ -107,7 +127,7 @@ final class SavedWorkflowExecutorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: destinationURL.path))
     }
 
-    func testCleanupExternalSubtitleAndTitleRemovalUseOneRemux() async throws {
+    func testTrackAndReviewedSubtitleCleanupWithTitleRemovalUseOneRemux() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-saved-workflow-subtitle-\(UUID().uuidString)",
             isDirectory: true
@@ -118,7 +138,10 @@ final class SavedWorkflowExecutorTests: XCTestCase {
         let subtitleURL = root.appendingPathComponent("Movie.en.srt")
         let destinationURL = root.appendingPathComponent("output.mkv")
         let sourceBytes = Data("original".utf8)
-        let subtitleBytes = Data("1\n00:00:00,000 --> 00:00:01,000\nEnglish\n".utf8)
+        let subtitleBytes = Data(
+            ("1\n00:00:00,000 --> 00:00:01,000\nDownloaded from\nYTS.MX\n\n"
+                + "2\n00:00:01,000 --> 00:00:02,000\n  English  \n").utf8
+        )
         try sourceBytes.write(to: sourceURL)
         try subtitleBytes.write(to: subtitleURL)
         let subtitlePreview = try await SubtitleCleanupExecutor().preview(
@@ -162,12 +185,14 @@ final class SavedWorkflowExecutorTests: XCTestCase {
         let runtimeInput = SavedWorkflowExternalSubtitleInput(
             sourceURL: subtitleURL,
             metadata: metadata,
-            format: .subRip
+            format: .subRip,
+            reviewedCleanupChangeCount: 2
         )
         let runner = SavedWorkflowRecordingRunner()
         let executor = SavedWorkflowExecutor(
             mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
             mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
             runner: runner,
             inspector: CombinedWorkflowInspector(tracks: [video, added])
         )
@@ -177,13 +202,20 @@ final class SavedWorkflowExecutorTests: XCTestCase {
             trackRemoval: TrackRemoval(trackUIDs: [20]),
             removesSegmentTitle: true,
             externalSubtitleInput: runtimeInput,
-            externalSubtitlePreview: .subRip(subtitlePreview),
+            externalSubtitlePayload: .reviewedCleanup(
+                .subRip(subtitlePreview),
+                restoringIDs: []
+            ),
             destinationURL: destinationURL
         )
         let executableNames = await runner.executableNames
         let requests = await runner.requests
+        let subtitleInputs = await runner.subtitleInputs
 
-        XCTAssertEqual(executableNames, ["mkvmerge", "mkvpropedit"])
+        XCTAssertEqual(
+            executableNames,
+            ["mkvmerge", "mkvpropedit", "mkvextract", "mkvextract"]
+        )
         XCTAssertEqual(
             requests.filter { $0.executableURL.lastPathComponent == "mkvmerge" }.count,
             1
@@ -194,5 +226,9 @@ final class SavedWorkflowExecutorTests: XCTestCase {
         XCTAssertNil(output.metadata["title"])
         XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
         XCTAssertEqual(try Data(contentsOf: subtitleURL), subtitleBytes)
+        XCTAssertEqual(
+            subtitleInputs,
+            [Data("1\n00:00:01,000 --> 00:00:02,000\nEnglish\n".utf8)]
+        )
     }
 }

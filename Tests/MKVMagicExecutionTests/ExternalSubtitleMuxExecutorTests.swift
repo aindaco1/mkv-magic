@@ -87,6 +87,126 @@ private enum InjectedSubtitleMuxFailure: Error {
 }
 
 final class ExternalSubtitleMuxExecutorTests: XCTestCase {
+    func testReviewedSRTCleanupFeedsOneRemuxAndIsExtractedAfterVerifyAndCommit() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Movie.mkv")
+        let subtitleURL = root.appendingPathComponent("Movie.en.srt")
+        let outputURL = root.appendingPathComponent("Movie — Clean Subtitled.mkv")
+        let sourceBytes = Data("original".utf8)
+        let subtitleBytes = Data(
+            ("1\n00:00:00,000 --> 00:00:01,000\nDownloaded from\nYTS.MX\n\n"
+                + "2\n00:00:01,000 --> 00:00:02,000\n  Dialogue  \n").utf8
+        )
+        try sourceBytes.write(to: sourceURL)
+        try subtitleBytes.write(to: subtitleURL)
+        let preview = try await SubtitleCleanupExecutor().preview(sourceURL: subtitleURL)
+        XCTAssertEqual(preview.cleanup.changes.count, 2)
+        let payload = ExternalSubtitleMuxPayload.reviewedCleanup(
+            .subRip(preview),
+            restoringIDs: []
+        )
+        let sourceTrack = MediaTrack(
+            id: 0,
+            kind: .video,
+            codec: "av1",
+            codecID: "V_AV1",
+            uid: 42
+        )
+        let runner = SubtitleMuxRecordingRunner()
+        let executor = ExternalSubtitleMuxExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
+            runner: runner,
+            inspector: SubtitleMuxInspector(
+                sourceTrack: sourceTrack,
+                addedTrack: MediaTrack(
+                    id: 1,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    codecID: "S_TEXT/UTF8",
+                    uid: 84,
+                    language: "en"
+                )
+            )
+        )
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska",
+            duration: MediaTime(seconds: 10),
+            fileSize: Int64(sourceBytes.count),
+            tracks: [sourceTrack],
+            metadata: ["encoder": "source"],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: "source-segment"
+        )
+
+        _ = try await executor.execute(
+            source: source,
+            subtitlePayload: payload,
+            metadata: ExternalSubtitleTrackMetadata(language: "en"),
+            destinationURL: outputURL
+        )
+        let requests = await runner.requests
+        let subtitleInputs = await runner.subtitleInputs
+
+        XCTAssertEqual(payload.appliedCleanupChangeCount, 2)
+        XCTAssertEqual(requests.filter { $0.arguments.first == "--output" }.count, 1)
+        XCTAssertEqual(requests.filter { $0.arguments.first == "tracks" }.count, 2)
+        XCTAssertEqual(
+            subtitleInputs,
+            [Data("1\n00:00:01,000 --> 00:00:02,000\nDialogue\n".utf8)]
+        )
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertEqual(try Data(contentsOf: subtitleURL), subtitleBytes)
+    }
+
+    func testReviewedCleanupRejectsUnknownChangeIdentifierBeforeToolExecution() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Movie.mkv")
+        let subtitleURL = root.appendingPathComponent("Movie.en.srt")
+        let outputURL = root.appendingPathComponent("Output.mkv")
+        try Data("source".utf8).write(to: sourceURL)
+        try Data("1\n00:00:00,000 --> 00:00:01,000\n Text \n".utf8).write(
+            to: subtitleURL
+        )
+        let preview = try await SubtitleCleanupExecutor().preview(sourceURL: subtitleURL)
+        let runner = SubtitleMuxRecordingRunner()
+        let sourceTrack = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 42)
+        let executor = ExternalSubtitleMuxExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
+            runner: runner,
+            inspector: SubtitleMuxInspector(
+                sourceTrack: sourceTrack,
+                addedTrack: MediaTrack(id: 1, kind: .subtitle, codec: "subrip", uid: 84)
+            )
+        )
+
+        do {
+            _ = try await executor.execute(
+                source: MediaAsset(
+                    sourceURL: sourceURL,
+                    container: "matroska",
+                    duration: MediaTime(seconds: 1),
+                    tracks: [sourceTrack]
+                ),
+                subtitlePayload: .reviewedCleanup(.subRip(preview), restoringIDs: [999]),
+                metadata: ExternalSubtitleTrackMetadata(language: "en"),
+                destinationURL: outputURL
+            )
+            XCTFail("Expected invalid review refusal")
+        } catch {
+            XCTAssertEqual(error as? ExternalSubtitleMuxError, .invalidCleanupReview)
+        }
+        let requests = await runner.requests
+        XCTAssertTrue(requests.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: outputURL.path))
+    }
+
     func testMuxesSubtitleLastWithoutEncodingAndVerifiesCommittedOutput() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }

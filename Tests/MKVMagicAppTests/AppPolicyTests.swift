@@ -1452,6 +1452,38 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(workflow.steps.isEmpty)
     }
 
+    func testWorkflowEditorKeepsExternalSubtitleCleanupDependencyIntuitive() {
+        var workflow = SavedWorkflow(name: "Subtitle recipe", steps: [])
+
+        XCTAssertFalse(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(
+                .cleanExternalSubtitleText
+            )
+        )
+        XCTAssertFalse(
+            WorkflowEditorPolicy.add(.cleanExternalSubtitleText, to: &workflow)
+        )
+        XCTAssertTrue(WorkflowEditorPolicy.add(.addExternalSubtitle, to: &workflow))
+        XCTAssertTrue(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(
+                .cleanExternalSubtitleText
+            )
+        )
+        XCTAssertTrue(
+            WorkflowEditorPolicy.add(.cleanExternalSubtitleText, to: &workflow)
+        )
+        XCTAssertTrue(
+            WorkflowEditorPolicy.setStepEnabled(false, at: 0, in: &workflow)
+        )
+        XCTAssertEqual(workflow.steps.map(\.isEnabled), [false, false])
+        XCTAssertTrue(
+            WorkflowEditorPolicy.setStepEnabled(true, at: 1, in: &workflow)
+        )
+        XCTAssertEqual(workflow.steps.map(\.isEnabled), [true, true])
+        XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
+        XCTAssertTrue(workflow.steps.isEmpty)
+    }
+
     @MainActor
     func testWorkflowPlanReviewShowsAppliedSkippedAndDisabledStepsAtMinimumSize() throws {
         let workflow = SavedWorkflow(
@@ -1545,6 +1577,7 @@ final class AppPolicyTests: XCTestCase {
         let workflow = SavedWorkflow(
             name: "Add English subtitles",
             steps: [
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
                 SavedWorkflowStep(action: .addExternalSubtitle),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
@@ -1565,7 +1598,8 @@ final class AppPolicyTests: XCTestCase {
                         language: "en",
                         name: "English"
                     ),
-                    format: .subRip
+                    format: .subRip,
+                    reviewedCleanupChangeCount: 2
                 )
             )
         )
@@ -1582,6 +1616,7 @@ final class AppPolicyTests: XCTestCase {
             .compactMap { ($0 as? NSTextField)?.stringValue }
             .joined(separator: "\n")
         XCTAssertTrue(text.contains("No transcoding • one MKV remux • one metadata pass"))
+        XCTAssertTrue(text.contains("Apply 2 reviewed subtitle text changes inside the same remux"))
         XCTAssertTrue(text.contains("Add one reviewed SRT subtitle as the last track"))
         XCTAssertTrue(text.contains("Remove the segment title"))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
@@ -1959,6 +1994,47 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(window.contentViewController is ExternalSubtitleMuxViewController)
         XCTAssertEqual(contentView.frame.size.width, 620, accuracy: 1)
         XCTAssertEqual(contentView.frame.size.height, 530, accuracy: 1)
+    }
+
+    @MainActor
+    func testExternalSubtitleConfirmationExplainsReviewedCleanupWithoutDiscardWarning() throws {
+        let preview = try advancedSubtitlePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.en.ass"),
+            text:
+                "[Events]\nFormat: Layer, Start, End, Style, Text\n"
+                + "Dialogue: 0,0:00:00.00,0:00:01.00,Default, Text \n"
+        )
+        let media = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska",
+            duration: MediaTime(seconds: 1),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1")]
+        )
+        let match = ExternalSubtitleMatcher().match(
+            media: media,
+            subtitleURL: preview.sourceURL,
+            subtitle: preview.cleanup.original
+        )
+
+        XCTAssertFalse(
+            ExternalSubtitleMuxPresentation.warnings(
+                preview: .advanced(preview),
+                match: match,
+                cleanupWasReviewed: true
+            ).contains { $0.contains("will not be applied") }
+        )
+        let controller = ExternalSubtitleMuxWindowController(
+            media: media,
+            preview: .advanced(preview),
+            match: match,
+            reviewedCleanupChangeCount: 1
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+        XCTAssertTrue(text.contains("1 reviewed cleanup change will be applied"))
+        XCTAssertFalse(text.contains("Use Clean Subtitle first"))
     }
 
     @MainActor

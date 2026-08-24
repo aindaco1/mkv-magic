@@ -39,8 +39,14 @@ current plan. Its path and metadata are never saved in the workflow JSON. Track
 cleanup, subtitle addition, and segment-title removal share one MKV remux plus at
 most one metadata pass before the existing verify-and-commit transaction. Any
 subtitle cleanup suggestions are disclosed during confirmation but are not
-silently applied by the mux card. Original v1 workflow files migrate to the v2
-intent schema without changing recipe IDs, card IDs, order, or actions.
+silently applied by the mux card. The dependent **Clean the added subtitle
+text** card opens the existing cue-by-cue deterministic cleanup review, applies
+only accepted changes to the private subtitle payload, and feeds it into that
+same remux. The source sidecar remains unchanged; reviewed SRT and ASS/SSA
+payloads are extracted and audited before commit and after reopening the saved
+MKV. Workflow schema v3 still stores only portable action intent—never paths,
+subtitle text, or per-file review IDs. Original v1 and v2 workflow files migrate
+without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

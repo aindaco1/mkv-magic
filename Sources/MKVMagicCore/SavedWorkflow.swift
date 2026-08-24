@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 2
+    public static let currentSchemaVersion = 3
 
     public let id: UUID
     public var schemaVersion: Int
@@ -45,6 +45,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case removeRedundantEnglishSDH
     case removeSegmentTitle
     case addExternalSubtitle
+    case cleanExternalSubtitleText
 
     public var displayName: String {
         switch self {
@@ -53,6 +54,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeRedundantEnglishSDH: "If redundant: Remove English SDH subtitles"
         case .removeSegmentTitle: "If present: Remove segment title"
         case .addExternalSubtitle: "Add one external text subtitle"
+        case .cleanExternalSubtitleText: "Clean the added subtitle text"
         }
     }
 
@@ -68,6 +70,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Remove the Matroska segment title without encoding video or audio."
         case .addExternalSubtitle:
             "Ask for one SRT, ASS, or SSA file at preview time, confirm its track details, and add it last without encoding."
+        case .cleanExternalSubtitleText:
+            "Review deterministic ad, whitespace, and English OCR suggestions for the added subtitle, then feed only accepted edits into the same remux."
         }
     }
 }
@@ -83,8 +87,19 @@ public struct SavedWorkflowMigrator: Sendable {
         switch workflow.schemaVersion {
         case SavedWorkflow.currentSchemaVersion:
             return workflow
+        case 2:
+            guard workflow.steps.allSatisfy({ $0.action != .cleanExternalSubtitleText }) else {
+                throw SavedWorkflowMigrationError.unsupportedSchema
+            }
+            var migrated = workflow
+            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
+            return migrated
         case 1:
-            guard workflow.steps.allSatisfy({ $0.action != .addExternalSubtitle }) else {
+            guard
+                workflow.steps.allSatisfy({
+                    $0.action != .addExternalSubtitle && $0.action != .cleanExternalSubtitleText
+                })
+            else {
                 throw SavedWorkflowMigrationError.unsupportedSchema
             }
             var migrated = workflow

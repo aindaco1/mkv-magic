@@ -15,7 +15,7 @@ final class AppModel {
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
-        case saved(CompiledSavedWorkflow, ExternalSubtitleFilePreview?)
+        case saved(CompiledSavedWorkflow, ExternalSubtitleMuxPayload?)
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
@@ -1143,7 +1143,21 @@ final class AppModel {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .saved(workflow, externalSubtitlePreview)
+            edit: .saved(workflow, externalSubtitlePreview.map(ExternalSubtitleMuxPayload.original))
+        )
+    }
+
+    @discardableResult
+    func runSavedWorkflow(
+        _ workflow: CompiledSavedWorkflow,
+        externalSubtitlePayload: ExternalSubtitleMuxPayload?,
+        in asset: MediaAsset,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .saved(workflow, externalSubtitlePayload)
         )
     }
 
@@ -1398,7 +1412,7 @@ final class AppModel {
                         )
                     }
                 )
-            case .saved(let workflow, let externalSubtitlePreview):
+            case .saved(let workflow, let externalSubtitlePayload):
                 let executor = SavedWorkflowExecutor(
                     mkvmergeURL: try catalog.url(for: .mkvmerge),
                     mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -1411,7 +1425,7 @@ final class AppModel {
                     trackRemoval: workflow.trackRemoval,
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     externalSubtitleInput: workflow.externalSubtitleInput,
-                    externalSubtitlePreview: externalSubtitlePreview,
+                    externalSubtitlePayload: externalSubtitlePayload,
                     destinationURL: destinationURL,
                     onStage: { stage in
                         try await Self.record(
