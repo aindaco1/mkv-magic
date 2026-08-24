@@ -132,7 +132,6 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         for lane in videoLanes {
             guard mapping.lanes.indices.contains(lane.laneIndex),
                 let choice = resolvedPlan.choices.videoTargetsByLane[lane.laneIndex],
-                lane.recommendedPreset == choice.preset,
                 lane.recommendedCanvas == choice.canvas,
                 lane.recommendedDynamicRange == choice.dynamicRange,
                 lane.dynamicRangeChoices == [choice.dynamicRange],

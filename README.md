@@ -125,7 +125,12 @@ fixture passes this transaction without changing either original. The native
 review now enables **Review Common Format…** only when those exact contracts are
 executable. A compact second sheet lists the resolved targets, nested chapter
 output, packet-copy behavior, and one-generation impact, then requires explicit
-approval before Save. The app binds the approval to unchanged source and chapter
+approval before Save. For each video lane that actually needs conversion, this
+sheet now offers every locally verified codec compatible with the reviewed color
+range, the same Smaller File/Balanced/Higher Quality tiers as Exact Trim, and an
+optional exact RF/SVT-speed or bitrate disclosure. Changing any target clears
+approval and recompiles the immutable plan; it never adds another video
+generation. The app binds the approval to unchanged source and chapter
 revisions, creates the verified normalized bundle only in private temporary
 storage, assembles the final MKV, adds only the reopened final result to the
 library, and records exactly one sanitized History job. Source tags, executable

@@ -22,10 +22,10 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             runner: runner
         ).probe()
         guard
-            capabilities.softwareAV1 == .verified
-                || capabilities.hevc10VideoToolbox == .verified
+            capabilities.softwareAV1 == .verified,
+            capabilities.hevc10VideoToolbox == .verified
         else {
-            throw XCTSkip("No bundled 10-bit AV1 or HEVC encoder verified on this Mac")
+            throw XCTSkip("This regression needs both bundled AV1 and HEVC encoders")
         }
 
         try await PrivateTemporaryDirectory.withDirectory(
@@ -68,7 +68,7 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             let proposal = try JoinNormalizationPlanner().propose(
                 sources: sources,
                 mapping: mapping,
-                preferredVideoPreset: .hevcCompatibility
+                preferredVideoPreset: .av1Quality
             )
             XCTAssertTrue(
                 proposal.blockers.isEmpty,
@@ -78,6 +78,7 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 proposal.videoLanes[0].recommendedCanvas,
                 MediaDimensions(width: 80, height: 64)
             )
+            XCTAssertEqual(proposal.videoLanes[0].recommendedPreset, .av1Quality)
             let choice = JoinVideoTargetChoice(
                 preset: .hevcCompatibility,
                 canvas: try XCTUnwrap(proposal.videoLanes[0].recommendedCanvas),

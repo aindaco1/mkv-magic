@@ -328,10 +328,33 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         XCTAssertEqual(value(after: "-preset:v:0", in: command.arguments), "5")
     }
 
+    func testBuildsTheReviewedAvailableCodecInsteadOfTheInitialRecommendation() throws {
+        let sources = incompatibleVideoSources()
+        let resolved = try resolve(
+            sources: sources,
+            mapping: mapping(video: [0, 0]),
+            preset: .hevcCompatibility,
+            proposalPreset: .av1Quality,
+            rateControl: .averageBitrate(12_000_000)
+        )
+
+        let command = try JoinNormalizationCommandBuilder().build(
+            sources: sources,
+            resolvedPlan: resolved,
+            capabilities: capabilities(),
+            outputURL: URL(fileURLWithPath: "/output/reviewed-hevc.mkv")
+        )
+
+        XCTAssertEqual(value(after: "-c:v:0", in: command.arguments), "hevc_videotoolbox")
+        XCTAssertEqual(value(after: "-b:v:0", in: command.arguments), "12000000")
+        XCTAssertFalse(command.arguments.contains("libsvtav1"))
+    }
+
     private func resolve(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         preset: VideoPreset = .hevcCompatibility,
+        proposalPreset: VideoPreset? = nil,
         rateControl explicitRateControl: JoinVideoRateControl? = nil,
         encoderTuning: VideoEncoderTuning = .codecDefault,
         allowsSyntheticSilence: Bool = false
@@ -339,7 +362,7 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         let proposal = try JoinNormalizationPlanner().propose(
             sources: sources,
             mapping: mapping,
-            preferredVideoPreset: preset
+            preferredVideoPreset: proposalPreset ?? preset
         )
         var videoTargets = [Int: JoinVideoTargetChoice]()
         for lane in proposal.videoLanes where lane.encodesVideo {

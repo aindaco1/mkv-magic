@@ -358,7 +358,6 @@ public struct JoinNormalizationChoiceResolver: Sendable {
         availableVideoPresets: Set<VideoPreset>
     ) throws {
         guard lane.encodesVideo,
-            lane.recommendedPreset == videoChoice.preset,
             lane.recommendedCanvas == videoChoice.canvas,
             lane.recommendedFrameRatePolicy == videoChoice.frameRatePolicy,
             lane.dynamicRangeChoices.contains(videoChoice.dynamicRange),

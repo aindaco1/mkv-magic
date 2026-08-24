@@ -996,6 +996,11 @@ Exact Trim now exposes Smaller File, Balanced, and Higher Quality choices plus
 an optional exact control for AV1 RF and SVT speed or HEVC/H.264 bitrate. Those
 bounded, Codable choices pass planner validation and the shared one-generation
 encoder compiler; old serialized choices decode to the stable codec default.
+Common-format Join exposes the same bounded controls for each encoded video lane
+and permits any actively verified codec compatible with the reviewed SDR or
+static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
+plan against the exact inspected sources, and still compiles one fused video
+generation rather than chaining conversions.
 Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding,
 representative beta-corpus tuning, advanced audio formats, and physical Intel
 performance acceptance remain open.

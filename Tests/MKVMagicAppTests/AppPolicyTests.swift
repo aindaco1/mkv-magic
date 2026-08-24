@@ -345,6 +345,13 @@ final class AppPolicyTests: XCTestCase {
 
         let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
         XCTAssertTrue(snapshot.isReady, "\(snapshot.blockerSummaries)")
+        XCTAssertEqual(
+            CommonFormatJoinChoicePolicy.availableVideoPresets(
+                for: try XCTUnwrap(candidate.proposal.videoLanes.first),
+                capabilities: capabilities
+            ),
+            [.hevcCompatibility]
+        )
         let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
         XCTAssertEqual(resolved.choices.videoTargetsByLane[0]?.dynamicRange, .hdr10)
         XCTAssertEqual(resolved.choices.videoTargetsByLane[0]?.preset, .hevcCompatibility)
@@ -354,6 +361,190 @@ final class AppPolicyTests: XCTestCase {
                 resolvedPlan: resolved
             ).contains { $0.contains("HDR10 with static metadata preserved") }
         )
+    }
+
+    @MainActor
+    func testCommonFormatJoinVideoTargetCanChangeCodecTierAndExactValues() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .verified,
+            softwareAV1Encoder: "libsvtav1",
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: losslessJoinVideoOption(
+                        part: 1,
+                        codec: "h264",
+                        width: 1_920,
+                        height: 1_080
+                    ),
+                    editionID: nil
+                ),
+                LosslessJoinSourceSelection(
+                    option: losslessJoinVideoOption(
+                        part: 2,
+                        codec: "hevc",
+                        width: 3_840,
+                        height: 2_160
+                    ),
+                    editionID: nil
+                ),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        let controller = try CommonFormatJoinWindowController(candidate: candidate)
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 560))
+
+        let popups = descendants(in: content).compactMap { $0 as? NSPopUpButton }
+        let format = try XCTUnwrap(
+            popups.first { $0.itemTitles.contains(VideoPreset.av1Quality.displayName) }
+        )
+        let quality = try XCTUnwrap(
+            popups.first { $0.itemTitles.contains(VideoQualityTier.higherQuality.displayName) }
+        )
+        XCTAssertEqual(format.titleOfSelectedItem, VideoPreset.av1Quality.displayName)
+        XCTAssertEqual(quality.titleOfSelectedItem, VideoQualityTier.balanced.displayName)
+
+        format.selectItem(withTitle: VideoPreset.hevcCompatibility.displayName)
+        XCTAssertTrue(
+            NSApplication.shared.sendAction(
+                try XCTUnwrap(format.action),
+                to: format.target,
+                from: format
+            )
+        )
+        quality.selectItem(withTitle: VideoQualityTier.higherQuality.displayName)
+        XCTAssertTrue(
+            NSApplication.shared.sendAction(
+                try XCTUnwrap(quality.action),
+                to: quality.target,
+                from: quality
+            )
+        )
+        XCTAssertEqual(
+            controller.reviewedPlan.choices.videoTargetsByLane[0]?.preset,
+            .hevcCompatibility
+        )
+        guard
+            case .averageBitrate(let tierBitrate) = controller.reviewedPlan.choices
+                .videoTargetsByLane[0]?.rateControl
+        else { return XCTFail("Expected a reviewed HEVC bitrate") }
+        XCTAssertGreaterThan(tierBitrate, 5_000_000)
+
+        let exact = try XCTUnwrap(
+            buttons(in: content).first {
+                $0.title == "Show exact controls for video lane 1"
+            }
+        )
+        exact.performClick(nil)
+        content.layoutSubtreeIfNeeded()
+        let rate = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.isEditable
+            }
+        )
+        rate.stringValue = "12000"
+        NotificationCenter.default.post(
+            name: NSControl.textDidChangeNotification,
+            object: rate
+        )
+        guard
+            case .averageBitrate(let exactBitrate) = controller.reviewedPlan.choices
+                .videoTargetsByLane[0]?.rateControl
+        else { return XCTFail("Expected the reviewed exact HEVC bitrate") }
+        XCTAssertEqual(exactBitrate, 12_000_000)
+
+        let approval = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "I approve every common-format choice above." }
+        )
+        let save = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Continue to Save…" }
+        )
+        approval.performClick(nil)
+        XCTAssertTrue(save.isEnabled)
+        rate.stringValue = "0"
+        NotificationCenter.default.post(
+            name: NSControl.textDidChangeNotification,
+            object: rate
+        )
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.contains("valid bounded rate") }
+        )
+
+        format.selectItem(withTitle: VideoPreset.av1Quality.displayName)
+        XCTAssertTrue(
+            NSApplication.shared.sendAction(
+                try XCTUnwrap(format.action),
+                to: format.target,
+                from: format
+            )
+        )
+        content.layoutSubtreeIfNeeded()
+        let av1Fields = descendants(in: content).compactMap { $0 as? NSTextField }.filter {
+            $0.isEditable
+        }.sorted {
+            $0.convert($0.bounds, to: content).minX < $1.convert($1.bounds, to: content).minX
+        }
+        XCTAssertEqual(av1Fields.count, 2)
+        av1Fields[0].stringValue = "24"
+        NotificationCenter.default.post(
+            name: NSControl.textDidChangeNotification,
+            object: av1Fields[0]
+        )
+        av1Fields[1].stringValue = "5"
+        NotificationCenter.default.post(
+            name: NSControl.textDidChangeNotification,
+            object: av1Fields[1]
+        )
+        let av1Choice = try XCTUnwrap(controller.reviewedPlan.choices.videoTargetsByLane[0])
+        XCTAssertEqual(av1Choice.preset, .av1Quality)
+        XCTAssertEqual(av1Choice.rateControl, .constantQuality(24))
+        XCTAssertEqual(av1Choice.encoderTuning, .svtAV1Preset(5))
+        XCTAssertTrue(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first?.string
+                .contains("SVT speed preset 5") == true
+        )
+
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_COMMON_JOIN_TARGET_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            controller.showWindow(nil)
+            window.appearance = NSAppearance(named: .aqua)
+            content.wantsLayer = true
+            content.layer?.backgroundColor = NSColor.white.cgColor
+            window.displayIfNeeded()
+            content.layoutSubtreeIfNeeded()
+            let representation = try XCTUnwrap(
+                content.bitmapImageRepForCachingDisplay(in: content.bounds)
+            )
+            content.cacheDisplay(in: content.bounds, to: representation)
+            let png = try XCTUnwrap(
+                representation.representation(using: .png, properties: [:])
+            )
+            try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
+        }
+
+        for control in [format, quality, exact, rate] where !control.isHidden {
+            let frame = control.convert(control.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
     }
 
     @MainActor

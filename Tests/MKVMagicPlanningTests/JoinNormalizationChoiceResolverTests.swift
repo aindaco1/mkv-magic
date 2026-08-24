@@ -23,6 +23,37 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
         XCTAssertEqual(resolved.choices, choices)
     }
 
+    func testAcceptsAReviewedAvailableCodecInsteadOfOnlyTheRecommendation() throws {
+        let sources = incompatibleVideoSources()
+        let proposal = try proposal(for: sources, preferredPreset: .av1Quality)
+        let choices = JoinNormalizationChoices(videoTargetsByLane: [
+            0: JoinVideoTargetChoice(
+                preset: .hevcCompatibility,
+                canvas: try XCTUnwrap(proposal.videoLanes[0].recommendedCanvas),
+                frameRatePolicy: .preserveSourceTiming,
+                dynamicRange: .sdr,
+                rateControl: .averageBitrate(12_000_000)
+            )
+        ])
+
+        let resolved = try JoinNormalizationChoiceResolver().resolve(
+            sources: sources,
+            proposal: proposal,
+            choices: choices,
+            availableVideoPresets: [.av1Quality, .hevcCompatibility],
+            aacAvailable: false
+        )
+
+        XCTAssertEqual(
+            resolved.choices.videoTargetsByLane[0]?.preset,
+            .hevcCompatibility
+        )
+        XCTAssertEqual(
+            resolved.choices.videoTargetsByLane[0]?.rateControl,
+            .averageBitrate(12_000_000)
+        )
+    }
+
     func testRejectsMissingUnavailableAndInvalidVideoChoices() throws {
         let sources = incompatibleVideoSources()
         let proposal = try proposal(for: sources, preferredPreset: .hevcCompatibility)
