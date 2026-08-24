@@ -180,7 +180,8 @@ final class RealToolAppHistoryTests: XCTestCase {
             id: UUID(uuidString: "9B4FF1CE-EA70-46CD-8163-F3608F0BD65B")!,
             name: "Prepare for Jellyfin",
             steps: [
-                SavedWorkflowStep(action: .englishLibraryCleanup),
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
         )

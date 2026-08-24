@@ -100,30 +100,18 @@ public struct SavedWorkflowCompiler: Sendable {
 
         var operations = [WorkflowOperation]()
         var summaries = [String]()
+        var removalTrackUIDs = Set<UInt64>()
+        var removalInsertionIndex: Int?
         for step in enabledSteps {
             switch step.action {
-            case .englishLibraryCleanup:
-                let suggestions = EnglishLibraryCleanupPolicy.trackSuggestions(for: asset)
+            case .englishLibraryCleanup, .removeNonEnglishSubtitles,
+                .removeRedundantEnglishSDH:
+                let suggestions = cleanupSuggestions(for: step.action, asset: asset)
                 let identifiers = Set(suggestions.map(\.trackUID))
                 if !identifiers.isEmpty {
-                    let playableTracks = asset.tracks.filter { $0.kind != .attachment }
-                    guard playableTracks.allSatisfy({ $0.uid != nil }),
-                        Set(playableTracks.compactMap(\.uid)).count == playableTracks.count
-                    else {
-                        throw SavedWorkflowCompilationError.unstableTrackIdentity
-                    }
-                    guard
-                        playableTracks.contains(where: { track in
-                            track.uid.map { !identifiers.contains($0) } ?? false
-                        })
-                    else {
-                        throw SavedWorkflowCompilationError.wouldRemoveAllTracks
-                    }
-                    operations.append(.removeTracksByUID(TrackRemoval(trackUIDs: identifiers)))
-                    summaries.append(
-                        "Remove \(identifiers.count) suggested subtitle track"
-                            + (identifiers.count == 1 ? "" : "s")
-                    )
+                    if removalInsertionIndex == nil { removalInsertionIndex = operations.count }
+                    removalTrackUIDs.formUnion(identifiers)
+                    summaries.append(cleanupSummary(for: step.action, count: identifiers.count))
                 }
             case .removeSegmentTitle:
                 if asset.metadata.keys.contains(where: {
@@ -133,6 +121,25 @@ public struct SavedWorkflowCompiler: Sendable {
                     summaries.append("Remove the segment title")
                 }
             }
+        }
+        if !removalTrackUIDs.isEmpty {
+            let playableTracks = asset.tracks.filter { $0.kind != .attachment }
+            guard playableTracks.allSatisfy({ $0.uid != nil }),
+                Set(playableTracks.compactMap(\.uid)).count == playableTracks.count
+            else {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+            guard
+                playableTracks.contains(where: { track in
+                    track.uid.map { !removalTrackUIDs.contains($0) } ?? false
+                })
+            else {
+                throw SavedWorkflowCompilationError.wouldRemoveAllTracks
+            }
+            operations.insert(
+                .removeTracksByUID(TrackRemoval(trackUIDs: removalTrackUIDs)),
+                at: removalInsertionIndex ?? operations.endIndex
+            )
         }
         guard !operations.isEmpty else {
             throw SavedWorkflowCompilationError.noApplicableChanges
@@ -150,5 +157,35 @@ public struct SavedWorkflowCompiler: Sendable {
             plan: try WorkflowPlanner().plan(asset: asset, workflow: resolved),
             summaries: summaries
         )
+    }
+
+    private func cleanupSuggestions(
+        for action: SavedWorkflowAction,
+        asset: MediaAsset
+    ) -> [CleanMKVTrackSuggestion] {
+        EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).filter { suggestion in
+            switch (action, suggestion.reason) {
+            case (.englishLibraryCleanup, _),
+                (.removeNonEnglishSubtitles, .nonEnglishSubtitle(_)),
+                (.removeRedundantEnglishSDH, .redundantSDH):
+                true
+            default:
+                false
+            }
+        }
+    }
+
+    private func cleanupSummary(for action: SavedWorkflowAction, count: Int) -> String {
+        let noun = count == 1 ? "track" : "tracks"
+        return switch action {
+        case .englishLibraryCleanup:
+            "Remove \(count) suggested subtitle \(noun)"
+        case .removeNonEnglishSubtitles:
+            "Remove \(count) explicitly non-English subtitle \(noun)"
+        case .removeRedundantEnglishSDH:
+            "Remove \(count) redundant English SDH subtitle \(noun)"
+        case .removeSegmentTitle:
+            "Remove the segment title"
+        }
     }
 }

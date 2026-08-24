@@ -1352,6 +1352,23 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 680)
         XCTAssertEqual(window.minSize.height, 480)
+        let tables = descendants(in: contentView).compactMap { $0 as? NSTableView }
+        let steps = try XCTUnwrap(tables.first { $0.rowHeight == 62 })
+        XCTAssertEqual(steps.numberOfRows, 3)
+        XCTAssertEqual(
+            WorkflowEditorPolicy.newWorkflow().steps.map(\.action),
+            [
+                .removeNonEnglishSubtitles,
+                .removeRedundantEnglishSDH,
+                .removeSegmentTitle,
+            ]
+        )
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_WORKFLOW_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            window.setContentSize(window.minSize)
+            try captureTrimWindow(window: window, content: contentView, at: capturePath)
+        }
     }
 
     func testWorkflowEditorDuplicatesPortableIntentWithFreshIdentifiers() {

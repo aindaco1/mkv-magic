@@ -41,11 +41,15 @@ public struct SavedWorkflowStep: Codable, Hashable, Identifiable, Sendable {
 
 public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendable {
     case englishLibraryCleanup
+    case removeNonEnglishSubtitles
+    case removeRedundantEnglishSDH
     case removeSegmentTitle
 
     public var displayName: String {
         switch self {
         case .englishLibraryCleanup: "English Library Cleanup"
+        case .removeNonEnglishSubtitles: "If present: Remove non-English subtitles"
+        case .removeRedundantEnglishSDH: "If redundant: Remove English SDH subtitles"
         case .removeSegmentTitle: "Remove segment title"
         }
     }
@@ -54,6 +58,10 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         switch self {
         case .englishLibraryCleanup:
             "Suggest removable subtitle tracks while preserving audio, commentary, signs, and unknown languages."
+        case .removeNonEnglishSubtitles:
+            "Remove subtitle tracks explicitly labeled as non-English; preserve English, unknown, commentary, and signs/songs tracks."
+        case .removeRedundantEnglishSDH:
+            "Remove an English SDH track only when another preferred English subtitle track remains."
         case .removeSegmentTitle:
             "Remove the Matroska segment title without encoding video or audio."
         }

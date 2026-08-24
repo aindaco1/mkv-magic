@@ -12,6 +12,9 @@ release.
   and enabled or disabled step by step.
 - The first reusable actions are deterministic English Library Cleanup and
   segment-title removal.
+- A later M7 slice presents the combined cleanup policy as independently enabled
+  non-English and redundant-English-SDH conditions for new workflows. The
+  original combined action remains supported for imported portable files.
 - Save & Preview compiles intent against the currently selected inspection and
   shows the encode count and mechanisms before the existing Verify & Run gate.
 - A workflow that has no applicable change reports that the selected file is
@@ -64,10 +67,10 @@ release.
 
 ## Still pending
 
-- Packaged visual and accessibility acceptance of the workflow builder on a
-  logged-in macOS desktop session.
-- Conditional workflow cards, subtitle cleanup/muxing actions, track-role
-  normalization, chapters, trimming, joining, encoding presets, queue/batch
-  execution, cancellation, and verified-original Trash behavior.
+- Accessibility acceptance of the workflow builder on a logged-in macOS desktop
+  session.
+- Subtitle cleanup/muxing actions, broader conditions, track-role normalization,
+  chapters, trimming, joining, encoding presets, queue/batch execution,
+  cancellation, and verified-original Trash behavior.
 - Public signed/notarized release, updater publication, physical Intel smoke
   testing, and real-library beta acceptance.

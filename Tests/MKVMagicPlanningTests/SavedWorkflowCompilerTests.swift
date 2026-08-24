@@ -57,6 +57,72 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
     }
 
+    func testGranularSubtitleConditionsFuseIntoOneStableUIDRemoval() throws {
+        let workflow = SavedWorkflow(
+            name: "Selective English cleanup",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1),
+                MediaTrack(
+                    id: 1,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 10,
+                    language: "en",
+                    title: "English"
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 11,
+                    language: "en",
+                    title: "English SDH",
+                    isHearingImpaired: true
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 12,
+                    language: "fr",
+                    title: "French"
+                ),
+            ],
+            metadata: ["title": "Movie"]
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+
+        XCTAssertEqual(compiled.trackRemoval?.trackUIDs, [11, 12])
+        XCTAssertEqual(
+            compiled.operations.filter {
+                if case .removeTracksByUID = $0 { return true }
+                return false
+            }.count,
+            1
+        )
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertTrue(
+            compiled.summaries.contains("Remove 1 explicitly non-English subtitle track")
+        )
+        XCTAssertTrue(
+            compiled.summaries.contains("Remove 1 redundant English SDH subtitle track")
+        )
+    }
+
     func testDisabledStepsDoNotCompileAndNoApplicableChangesIsExplicit() throws {
         let onlyDisabled = SavedWorkflow(
             name: "Disabled",
@@ -74,6 +140,19 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
         XCTAssertThrowsError(
             try SavedWorkflowCompiler().compile(alreadyClean, for: makeAsset())
+        ) { error in
+            XCTAssertEqual(error as? SavedWorkflowCompilationError, .noApplicableChanges)
+        }
+
+        let granularCleanupAlreadySatisfied = SavedWorkflow(
+            name: "No subtitle cleanup needed",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+            ]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(granularCleanupAlreadySatisfied, for: makeAsset())
         ) { error in
             XCTAssertEqual(error as? SavedWorkflowCompilationError, .noApplicableChanges)
         }

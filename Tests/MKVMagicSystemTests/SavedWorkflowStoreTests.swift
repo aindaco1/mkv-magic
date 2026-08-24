@@ -47,6 +47,23 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(data), workflow)
     }
 
+    func testPortableFileRoundTripsGranularConditionalCleanupActions() throws {
+        let workflow = SavedWorkflow(
+            name: "Selective cleanup",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+            ]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("removeNonEnglishSubtitles"))
+        XCTAssertTrue(json.contains("removeRedundantEnglishSDH"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
     func testUnexpectedFieldsAtEveryLevelFailClosed() throws {
         let unexpectedWorkflow = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":1,"name":"Clean","steps":[],"sourceURL":"/private/media/Movie.mkv"}"#

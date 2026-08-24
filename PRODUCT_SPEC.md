@@ -445,7 +445,8 @@ Example:
 ```text
 For every MKV
 → Clean subtitle text
-→ Apply English Library Cleanup
+→ If present, remove non-English subtitles
+→ If redundant, remove English SDH subtitles
 → Prefer English track flags
 → Convert video only when not already AV1 or HEVC
 → Verify
@@ -461,6 +462,14 @@ Every card and compiled plan displays one of:
 - Video transcode required
 
 Workflows can be named, duplicated, reordered, enabled/disabled step-by-step, and exported/imported as versioned human-readable `.mkvmagic-workflow` JSON.
+
+The first conditional implementation separates explicitly non-English subtitle
+removal from redundant English SDH removal. Each condition is evaluated against
+the selected inspection; all applicable stable UIDs are unioned into one removal
+operation and one verified remux even when metadata work appears between the
+cards. The saved recipe never contains media paths or track identity. The legacy
+combined English Library Cleanup action remains decodable and executable for
+portable workflow compatibility.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1043,6 +1052,14 @@ SDR-to-HDR conversion, HDR10+, HLG, Dolby Vision transcoding, representative
 beta-corpus tuning, and physical Intel performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
+
+The builder now starts new recipes with two independently enabled subtitle
+conditions: remove explicitly non-English subtitles when present, and remove an
+English SDH track only when a preferred English track remains. Compilation
+resolves stable track UIDs from the current inspection, fuses both conditions
+into one zero-encode remux, and preserves the original combined cleanup action
+for imported workflows. Subtitle text cleanup/mux cards, broader conditions,
+queue execution, and filename cleanup remain open.
 
 Deliverables:
 

@@ -20,10 +20,13 @@ retained streams without encoding, preserves their order, chapters, tags, and
 attachments, and uses the same verify-before-commit rule. A deterministic Clean
 MKV preview can suggest English-library subtitle removals for individual review.
 The native Workflows builder can name, duplicate, reorder, enable, save, import,
-and export portable recipes. Its first reusable actions are English Library
-Cleanup and segment-title removal. Workflows store intent rather than media
-paths or track identifiers, compile against the selected inspection, show a
-zero-encode impact preview, and share one verified output pipeline.
+and export portable recipes. New workflows begin with separate plain-language
+conditions for removing explicitly non-English subtitles and removing redundant
+English SDH subtitles, plus optional segment-title removal. Applicable subtitle
+removals are fused into one remux. Workflows store intent rather than media paths
+or track identifiers, compile against the selected inspection, show a zero-encode
+impact preview, and share one verified output pipeline. Imported workflows using
+the original combined English Library Cleanup action remain supported.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

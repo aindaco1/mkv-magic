@@ -509,7 +509,8 @@ enum WorkflowEditorPolicy {
         SavedWorkflow(
             name: "New Workflow",
             steps: [
-                SavedWorkflowStep(action: .englishLibraryCleanup),
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
                 SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
             ]
         )
