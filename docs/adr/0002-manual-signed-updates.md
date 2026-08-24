@@ -19,8 +19,14 @@ Update archives and the appcast require a dedicated MKV Magic Ed25519 key.
 Release automation signs nested Sparkle services inside out and generates the
 feed only from the final notarized ZIP.
 
+Release acceptance uses Sparkle's external updater driver from that same pinned
+source revision. It replaces only a temporary copy of the prior app from a
+loopback-only feed whose archive signature must match the downloaded draft
+appcast. No alternate-feed control is compiled into the shipped application.
+
 ## Consequences
 
 Update checks are explicit and cryptographically authenticated. The dedicated
 private key becomes release-critical offline material and must never enter Git
-or ordinary CI.
+or ordinary CI. CI exercises real replacement with a one-time disposable key
+and proves that a mismatched key is rejected without changing the prior build.

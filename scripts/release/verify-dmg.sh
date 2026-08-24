@@ -52,7 +52,11 @@ if [[ "${MKV_MAGIC_REQUIRE_DISTRIBUTION:-0}" == 1 ]]; then
     xcrun stapler validate "$mounted_app"
     spctl --assess --type execute --verbose=2 "$mounted_app"
 fi
-for architecture in arm64 x86_64; do
+verification_architectures="$({
+    mkv_magic_verification_architectures \
+        "${MKV_MAGIC_VERIFY_ARCHITECTURES:-arm64 x86_64}"
+})"
+while IFS= read -r architecture; do
     if [[ "${MKV_MAGIC_VERIFY_BUNDLED_TOOLS:-0}" == 1 ]]; then
         /usr/bin/arch "-$architecture" "$mounted_app/Contents/MacOS/MKVMagic" \
             --verify-bundled-tools
@@ -65,5 +69,5 @@ for architecture in arm64 x86_64; do
         /usr/bin/arch "-$architecture" "$mounted_app/Contents/MacOS/MKVMagic" \
             --run-native-release-verification
     fi
-done
+done <<< "$verification_architectures"
 echo "verified MKV Magic DMG: $dmg_path"

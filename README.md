@@ -457,6 +457,14 @@ verified-output fixture from the currently selected architecture without
 reading user media. See
 [docs/releases/M9_NATIVE_RELEASE_VERIFICATION_SLICE.md](docs/releases/M9_NATIVE_RELEASE_VERIFICATION_SLICE.md).
 
+Prior-version updater acceptance now has a reproducible, fail-closed operator
+path. It uses Sparkle's pinned external updater against a disposable prior-app
+copy and a loopback-only signed feed, compares the archive signature to the
+downloaded draft appcast, then prints the exact candidate DMG digest required by
+the publication gate. The production app receives no alternate-feed capability.
+See
+[docs/releases/M9_SPARKLE_UPDATE_REPLACEMENT_SLICE.md](docs/releases/M9_SPARKLE_UPDATE_REPLACEMENT_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

@@ -720,6 +720,7 @@ HandBrake is a UX, preset, and benchmark reference. HandBrakeCLI/libhb is not bu
 - Sparkle's sandboxed Downloader and Installer XPC services own update networking. The appcast and update archive require a dedicated MKV Magic Ed25519 key pair; never reuse another app's private update key.
 - Sign Sparkle's nested helpers inside out while preserving only the upstream Downloader entitlements, then sign the framework and app.
 - Generate the signed appcast only from the final notarized and stapled ZIP. Exercise update replacement and relaunch from the prior public version before release.
+- Exercise replacement through Sparkle's pinned external updater against a disposable copy of the prior app and a loopback-only signed acceptance feed. Require the acceptance feed's archive signature to equal the downloaded draft appcast's signature; do not add an alternate-feed control to the shipped app. For the first public version only, the separately notarized private rehearsal may serve as the prior build when its production identifier and update key match.
 
 ### 9.2 Diagnostics boundary
 
@@ -1435,6 +1436,16 @@ candidate DMG digest against clean-account Apple Silicon, clean-account Intel,
 and prior-version updater acceptance before publication, then reverify a fresh
 public download. The digest gate binds the operator's evidence to exact bytes;
 it does not pretend automation observed physical hardware.
+
+The updater-acceptance continuation closes the reproducibility gap before that
+manual digest entry. A production-only operator harness revalidates the
+downloaded artifacts, exercises the pinned Sparkle driver against a disposable
+prior-app copy, verifies that the local archive signature is the draft archive
+signature, repeats Gatekeeper, stapling, and native-fixture checks on the
+replaced copy, and emits the exact candidate DMG digest. The ordinary package
+gate runs the same mechanism with disposable keys and proves wrong-key refusal
+before successful replacement. The shipped app retains only its fixed public
+feed.
 
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 

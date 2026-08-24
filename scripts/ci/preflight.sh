@@ -8,16 +8,21 @@ fi
 required_commands=(
     actionlint
     codesign
+    curl
     ditto
     git
     hdiutil
     jq
     lipo
+    openssl
     plutil
+    python3
     rg
     shasum
     shellcheck
+    spctl
     swift
+    unzip
     xcodebuild
     xcrun
 )

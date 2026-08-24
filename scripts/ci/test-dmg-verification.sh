@@ -11,6 +11,19 @@ trap cleanup EXIT
 dmg_path="$fixture_root/MKV-Magic-0.0.0-universal.dmg"
 : > "$dmg_path"
 
+if [[ "$(mkv_magic_verification_architectures arm64)" != arm64 || \
+      "$(mkv_magic_verification_architectures x86_64)" != x86_64 || \
+      "$(mkv_magic_verification_architectures 'arm64 x86_64')" != \
+        $'arm64\nx86_64' ]]; then
+    echo "DMG verification architecture selection is inconsistent" >&2
+    exit 1
+fi
+if mkv_magic_verification_architectures 'x86_64 arm64' >/dev/null 2>&1 || \
+    mkv_magic_verification_architectures 'arm64 invalid' >/dev/null 2>&1; then
+    echo "DMG verification accepted an unsafe architecture list" >&2
+    exit 1
+fi
+
 verify_calls=0
 detached_device=''
 hdiutil() {

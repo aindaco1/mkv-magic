@@ -1,6 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+mkv_magic_verification_architectures() {
+    if [[ $# -ne 1 ]]; then
+        echo "usage: mkv_magic_verification_architectures <architecture-list>" >&2
+        return 64
+    fi
+    case "$1" in
+        arm64) printf 'arm64\n' ;;
+        x86_64) printf 'x86_64\n' ;;
+        'arm64 x86_64') printf 'arm64\nx86_64\n' ;;
+        *)
+            echo "verification architectures must be arm64, x86_64, or arm64 x86_64" >&2
+            return 64
+            ;;
+    esac
+}
+
 canonical_existing_path() {
     local input_path="$1"
     local directory
