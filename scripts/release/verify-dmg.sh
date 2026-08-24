@@ -58,4 +58,10 @@ if [[ "${MKV_MAGIC_VERIFY_BUNDLED_TOOLS:-0}" == 1 ]]; then
     /usr/bin/arch -x86_64 "$mounted_app/Contents/MacOS/MKVMagic" \
         --verify-bundled-tools
 fi
+if [[ "${MKV_MAGIC_VERIFY_BUNDLED_FIXTURE:-0}" == 1 ]]; then
+    /usr/bin/arch -arm64 "$mounted_app/Contents/MacOS/MKVMagic" \
+        --run-bundled-fixture-smoke
+    /usr/bin/arch -x86_64 "$mounted_app/Contents/MacOS/MKVMagic" \
+        --run-bundled-fixture-smoke
+fi
 echo "verified MKV Magic DMG: $dmg_path"

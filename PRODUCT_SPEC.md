@@ -1416,6 +1416,13 @@ files, executable licenses, and unbounded license content fail before app
 assembly or signing. A real ad-hoc package rehearsal launches every pinned tool
 from both architecture selections in the mounted DMG.
 
+The signed-fixture continuation closes the App Sandbox inheritance boundary.
+Mounted release verification runs a fixed private Matroska fixture from both
+the ARM64 and x86_64 app slices, exercising FFmpeg, FFprobe, `mkvmerge`,
+`mkvpropedit`, and `mkvextract` while proving verified-copy output and original
+preservation. Unsandboxed direct-helper tests cannot substitute for this
+signed-parent execution path.
+
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 
 ## 13. Initial implementation backlog

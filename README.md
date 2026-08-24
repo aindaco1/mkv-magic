@@ -433,6 +433,11 @@ cannot ride inside the app. A real pinned-runtime DMG rehearsal passed both
 ARM64 and Rosetta x86_64 tool launch checks. See
 [docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md](docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md).
 
+Release verification now goes beyond tool version output: the mounted signed
+app creates, inspects, safely edits, verifies, preserves, and extracts a fixed
+Matroska fixture under both ARM64 and x86_64 sandbox inheritance. See
+[docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md](docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

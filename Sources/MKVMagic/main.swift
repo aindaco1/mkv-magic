@@ -37,6 +37,30 @@ if CommandLine.arguments == [CommandLine.arguments[0], "--verify-bundled-tools"]
     dispatchMain()
 }
 
+if CommandLine.arguments == [CommandLine.arguments[0], "--run-bundled-fixture-smoke"] {
+    Task.detached {
+        guard let resources = Bundle.main.resourceURL else {
+            FileHandle.standardError.write(Data("missing app resource directory\n".utf8))
+            exit(1)
+        }
+        do {
+            let report = try await BundledFixtureSmoke().run(
+                toolRoot: resources.appendingPathComponent("Tools", isDirectory: true)
+            )
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+            FileHandle.standardOutput.write(try encoder.encode(report))
+            FileHandle.standardOutput.write(Data("\n".utf8))
+            exit(0)
+        } catch {
+            FileHandle.standardError.write(
+                Data("bundled fixture smoke failed: \(error)\n".utf8))
+            exit(1)
+        }
+    }
+    dispatchMain()
+}
+
 let application = NSApplication.shared
 let delegate = AppDelegate()
 application.delegate = delegate

@@ -324,6 +324,26 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(BundledToolVerification.arguments(for: .mkvmerge), ["--version"])
     }
 
+    func testBundledFixtureSmokeReportIsVersionedBoundedAndPathFree() throws {
+        let report = BundledFixtureSmokeReport(
+            architecture: "arm64",
+            sourceBytes: 12_000,
+            outputBytes: 12_100,
+            extractedTrackBytes: 8_000,
+            trackCount: 1,
+            originalPreserved: true
+        )
+        let encoded = try JSONEncoder().encode(report)
+        let text = String(decoding: encoded, as: UTF8.self)
+
+        XCTAssertEqual(report.schema, "mkv-magic-bundled-fixture-smoke-v1")
+        XCTAssertEqual(report.architecture, "arm64")
+        XCTAssertTrue(report.originalPreserved)
+        XCTAssertFalse(text.contains("/"))
+        XCTAssertFalse(text.contains("source.mkv"))
+        XCTAssertFalse(text.contains("Signed Fixture"))
+    }
+
     func testFirstInspectedAssetIsSelectedAutomatically() {
         XCTAssertEqual(AssetSelectionPolicy.rowToSelect(currentRow: -1, assetCount: 1), 0)
         XCTAssertNil(AssetSelectionPolicy.rowToSelect(currentRow: 0, assetCount: 2))
