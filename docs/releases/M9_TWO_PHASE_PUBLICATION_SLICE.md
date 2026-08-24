@@ -33,7 +33,8 @@ Publication is a separate manual workflow protected by the
 6. requires the exact confirmation `publish-vMAJOR.MINOR.PATCH`;
 7. publishes only after every digest matches the newly downloaded DMG; and
 8. downloads the public assets into another fresh directory and repeats the
-   complete verifier.
+   complete verifier. If this public readback does not succeed, an `always()`
+   recovery step returns the release to draft and confirms that state.
 
 The repeated digest is intentionally not a generic checkbox: it binds each
 operator acceptance statement to the exact bytes being published. It is still

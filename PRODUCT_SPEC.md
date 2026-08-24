@@ -1444,7 +1444,9 @@ draft. A separate manual workflow must reverify the draft and match the exact
 candidate DMG digest against clean-account Apple Silicon, clean-account Intel,
 and prior-version updater acceptance before publication, then reverify a fresh
 public download. The digest gate binds the operator's evidence to exact bytes;
-it does not pretend automation observed physical hardware.
+it does not pretend automation observed physical hardware. If public readback
+does not complete successfully, the workflow returns the release to draft and
+verifies that recovery instead of leaving an unverified publication live.
 
 The updater-acceptance continuation closes the reproducibility gap before that
 manual digest entry. A production-only operator harness revalidates the

@@ -11,7 +11,11 @@ artifact verifier. The protected release workflow invokes it after downloading
 the draft candidate and again from a new directory after making the release
 public. The post-publication step first confirms that GitHub reports the exact
 tag as non-draft. A successful draft readback alone no longer closes the
-workflow.
+workflow. If that fresh public readback is skipped or fails after the publish
+step succeeds, an `always()` recovery step returns the release to draft and
+verifies the restored state. A runner or GitHub outage can still interrupt
+recovery, so the workflow's final success remains the observed acceptance
+record.
 
 The verifier requires the exact release asset set. It rejects missing, empty,
 symbolic-link, special, nested, and unexpected assets. `SHA256SUMS` must contain

@@ -88,11 +88,13 @@ jobs:
             "$RELEASE_TAG"
 
       - name: Publish accepted release
+        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest
 
       - name: Re-download and verify published release
+        id: public_readback
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -106,3 +108,15 @@ jobs:
           MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
             ./scripts/release/verify-downloaded-release.sh \
               "$public_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
+
+      - name: Return unverified publication to draft
+        if: ${{ always() && steps.publish.outcome == 'success' && steps.public_readback.outcome != 'success' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release edit "$RELEASE_TAG" --draft=true
+          release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.isDraft == true and .tagName == $tag' \
+            <<< "$release_state" >/dev/null
+          echo "Public readback did not complete; $RELEASE_TAG is a draft again."
