@@ -1,5 +1,6 @@
 import Foundation
 import MKVMagicCore
+import MKVMagicPlanning
 import XCTest
 
 @testable import MKVMagicExecution
@@ -542,6 +543,112 @@ final class OutputVerificationTests: XCTestCase {
             ) { error in
                 XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
             }
+        }
+    }
+
+    func testCompleteAudioConversionVerifierAcceptsOnlyReviewedAudioChanges() throws {
+        let sourceTracks = [
+            MediaTrack(
+                id: 0,
+                kind: .video,
+                codec: "av1",
+                codecID: "V_AV1",
+                dimensions: MediaDimensions(width: 1920, height: 1080),
+                bitDepth: 10
+            ),
+            MediaTrack(
+                id: 1,
+                kind: .audio,
+                codec: "aac",
+                codecID: "A_AAC",
+                language: "en",
+                title: "Main",
+                isDefault: true,
+                channels: 6,
+                channelLayout: "5.1",
+                sampleRate: 48_000
+            ),
+            MediaTrack(
+                id: 2,
+                kind: .subtitle,
+                codec: "subrip",
+                codecID: "S_TEXT/UTF8",
+                language: "en"
+            ),
+        ]
+        let original = asset(title: "Movie", tracks: sourceTracks)
+        let plan = try CompleteAudioConversionPlanner().resolve(
+            source: original,
+            preset: .flacLossless,
+            availableAudioPresets: [.flacLossless]
+        )
+        let outputTracks = [
+            sourceTracks[0],
+            MediaTrack(
+                id: 1,
+                kind: .audio,
+                codec: "flac",
+                codecID: "A_FLAC",
+                language: "en",
+                title: "Main",
+                isDefault: true,
+                channels: 6,
+                channelLayout: "5.1",
+                sampleRate: 48_000
+            ),
+            sourceTracks[2],
+        ]
+        let output = asset(
+            title: "Movie",
+            tracks: outputTracks,
+            segmentUID: "2233",
+            encoder: "ffmpeg"
+        )
+        let chapters = MatroskaChapterDocument(editions: [
+            MatroskaChapterEdition(
+                chapters: [
+                    MatroskaChapterAtom(
+                        start: .zero,
+                        displays: [ChapterDisplay(title: "Chapter 1")]
+                    )
+                ]
+            )
+        ])
+        let verifier = CompleteAudioConversionOutputVerifier()
+
+        XCTAssertNoThrow(
+            try verifier.verify(
+                resolvedPlan: plan,
+                chapters: chapters,
+                output: output
+            )
+        )
+
+        var changedVideo = outputTracks
+        changedVideo[0] = MediaTrack(
+            id: 0,
+            kind: .video,
+            codec: "hevc",
+            codecID: "V_MPEGH/ISO/HEVC",
+            dimensions: MediaDimensions(width: 1920, height: 1080),
+            bitDepth: 10
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                resolvedPlan: plan,
+                chapters: chapters,
+                output: asset(
+                    title: "Movie",
+                    tracks: changedVideo,
+                    segmentUID: "2233",
+                    encoder: "ffmpeg"
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? CompleteAudioConversionVerificationError,
+                .copiedTrackMismatch(trackID: 0)
+            )
         }
     }
 

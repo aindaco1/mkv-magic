@@ -68,11 +68,16 @@ final class AppModel {
                 if workflow.createsUnchangedCopy {
                     return "Zero encodes; create and verify one unchanged output copy."
                 }
+                let audioCount = workflow.plan.impact.audioEncodeCount
                 guard workflow.plan.impact.videoEncodeCount > 0 else {
+                    if audioCount > 0 {
+                        let noun = audioCount == 1 ? "track" : "tracks"
+                        return
+                            "Zero video encodes; encode \(audioCount) audio \(noun) once while packet-copying video and subtitles."
+                    }
                     return
                         "Zero video encodes; all enabled steps share one verified output pipeline."
                 }
-                let audioCount = workflow.plan.impact.audioEncodeCount
                 guard audioCount > 0 else {
                     return "All video-affecting steps are fused into one encode."
                 }
@@ -104,6 +109,10 @@ final class AppModel {
                     return workflow.hasDeterministicMediaOperations
                         ? "Preparing one verified private remux, then \(encoding)."
                         : "\(encoding.prefix(1).uppercased())\(encoding.dropFirst()) while copying every retained subtitle."
+                } else if workflow.audioConversionPreset != nil {
+                    return workflow.hasDeterministicMediaOperations
+                        ? "Preparing one verified private remux, then encoding every retained audio track once."
+                        : "Encoding every audio track once while packet-copying video and subtitles."
                 } else if workflow.createsUnchangedCopy {
                     return "Creating one unchanged temporary clone."
                 } else if workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil {
@@ -1624,7 +1633,7 @@ final class AppModel {
         expectedSourceRevision: MediaFileRevision? = nil
     ) async throws -> MediaAsset {
         if case .saved(let workflow, _) = edit,
-            workflow.videoConversionChoice != nil,
+            workflow.videoConversionChoice != nil || workflow.audioConversionPreset != nil,
             cachedEncodingCapabilities == nil
         {
             _ = await probeEncodingCapabilities()
@@ -1703,6 +1712,31 @@ final class AppModel {
             case .saved(let workflow, let externalSubtitlePayload):
                 if workflow.videoConversionChoice != nil {
                     let executor = SavedWorkflowVideoConversionExecutor(
+                        ffmpegURL: try catalog.url(for: .ffmpeg),
+                        ffprobeURL: try catalog.url(for: .ffprobe),
+                        mkvmergeURL: try catalog.url(for: .mkvmerge),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
+                        mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                        runner: runner,
+                        inspector: inspector
+                    )
+                    output = try await executor.execute(
+                        source: asset,
+                        workflow: workflow,
+                        externalSubtitlePayload: externalSubtitlePayload,
+                        capabilities: cachedEncodingCapabilities ?? .unavailable,
+                        expectedSourceRevision: expectedSourceRevision,
+                        destinationURL: destinationURL,
+                        onStage: { stage in
+                            try await Self.record(
+                                stage,
+                                jobID: execution.jobID,
+                                using: execution.recorder
+                            )
+                        }
+                    )
+                } else if workflow.audioConversionPreset != nil {
+                    let executor = SavedWorkflowAudioConversionExecutor(
                         ffmpegURL: try catalog.url(for: .ffmpeg),
                         ffprobeURL: try catalog.url(for: .ffprobe),
                         mkvmergeURL: try catalog.url(for: .mkvmerge),

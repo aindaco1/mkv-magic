@@ -280,6 +280,83 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         }
     }
 
+    func testStandaloneAudioConversionCompilesWithoutVideoAndCopiesVideo() throws {
+        let workflow = SavedWorkflow(
+            name: "Audio only",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
+        )
+        let asset = makeConvertibleAsset()
+
+        XCTAssertTrue(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset)
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: asset,
+            inputs: SavedWorkflowResolvedInputs(
+                availableAudioPresets: [.flacLossless]
+            )
+        )
+
+        XCTAssertNil(compiled.videoConversionChoice)
+        XCTAssertEqual(compiled.audioConversionPreset, .flacLossless)
+        XCTAssertEqual(compiled.operations, [.transcodeAudio(.flacLossless)])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+        XCTAssertTrue(compiled.plan.impact.copiesVideo)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.ffmpegEncode, .verify, .commit]
+        )
+        XCTAssertEqual(
+            compiled.plan.stages[0].summary,
+            "Encode 1 audio track once as FLAC (Lossless) while packet-copying video and subtitles"
+        )
+    }
+
+    func testStandaloneAudioConversionFusesWithVideoAndSkipsFilesWithoutAudio() throws {
+        let workflow = SavedWorkflow(
+            name: "One media pass",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .transcodeAllAudioOpus),
+            ]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeConvertibleAsset(),
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.h264Compatibility],
+                availableAudioPresets: [.opusQuality]
+            )
+        )
+
+        XCTAssertEqual(
+            compiled.plan.stages.filter { $0.mechanism == .ffmpegEncode }.count,
+            1
+        )
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+        XCTAssertEqual(compiled.videoConversionChoice?.audioPolicy, .opusPreserveLayout)
+
+        let noAudio = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Silent.mkv"),
+            container: "matroska",
+            duration: MediaTime(seconds: 10),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1")]
+        )
+        let audioOnly = SavedWorkflow(
+            name: "No-op on silent files",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioAAC)]
+        )
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: audioOnly, asset: noAudio)
+        )
+        XCTAssertNil(
+            try SavedWorkflowCompiler().preview(audioOnly, for: noAudio).compiledWorkflow
+        )
+    }
+
     func testFilenameOnlyWorkflowCreatesReviewedUnchangedCopyPlan() throws {
         let workflow = SavedWorkflow(
             name: "Jellyfin filename",

@@ -361,14 +361,15 @@ encodes directly to the final verified output. When deterministic track,
 subtitle, or title steps also apply, MKV Magic first creates a private
 verified packet-copy/metadata intermediate and then performs exactly one final
 video encode. It never chains conversion generations. Audio and text subtitles
-remain packet-copied by default. Once a video card exists, one dependent audio
-card may instead choose AAC, Opus, AC-3, E-AC-3, or FLAC for every retained audio
-track. The active probe and exact layout/rate policy must approve that format;
-each retained audio track is then encoded once inside the same FFmpeg process as
-the one video generation. Queue reinspection must reproduce the codec-bearing,
-audio-policy-bearing semantic plan before automatic execution. The reviewed
-source revision is retained through both immediate and queued starts. This
-dependent card does not yet claim a standalone audio-only workflow path.
+remain packet-copied by default. One audio card may instead choose AAC, Opus,
+AC-3, E-AC-3, or FLAC for every retained audio track. The active probe and exact
+layout/rate policy must approve that format. With video conversion, every audio
+track is encoded once inside the same FFmpeg process as the one video generation.
+Without video conversion, one audio-only FFmpeg process packet-copies video and
+subtitles, and independent packet fingerprints prove those copied payloads.
+Queue reinspection must reproduce the codec-bearing, audio-policy-bearing
+semantic plan before automatic execution. The reviewed source revision is
+retained through both immediate and queued starts.
 
 #### Video presets
 
@@ -540,9 +541,19 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v7 preserves that boundary. v1-v6 workflows
+identifier—and current schema v8 preserves that boundary. v1-v7 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
+
+Schema v8 adds five standalone **Convert all audio** actions. The editor permits
+one without a video card and keeps it when a video card is removed or disabled.
+Compilation applies one format to every retained audio track, fails closed when
+the local encoder, exact layout, or sample rate is not supported, and reports an
+audio-heavy plan with zero video generations. Audio-only execution packet-copies
+video and subtitles and independently fingerprints their encoded packets.
+If a video conversion is also applicable, both policies compile into the same
+single FFmpeg process. Imported schema-v6 **With video conversion** actions keep
+their historical dependency and are not emitted by the current editor.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1143,9 +1154,9 @@ static-HDR10 target. Each change invalidates approval, resolves a fresh immutabl
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
 Portable saved workflows now share the complete-file conversion path. Their
-schema-v7 cards choose the local recommendation, one explicit video preset, or
-the lossless-first AV1/HEVC condition, plus an optional dependent AAC, Opus,
-AC-3, E-AC-3, or FLAC audio policy. Plan
+schema-v8 cards choose the local recommendation, one explicit video preset, or
+the lossless-first AV1/HEVC condition, plus an optional AAC, Opus, AC-3, E-AC-3,
+or FLAC audio policy that may also run without video conversion. Plan
 review binds both locally verified choices and composes deterministic cleanup
 into a private verified intermediate followed by one final FFmpeg process. A
 pinned-runtime integration proves the edit precedes that only invocation, each
@@ -1199,8 +1210,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v7
-retains that boundary and strictly migrates v1-v6 without allowing an older
+only the naming intent, never a source or generated filename; current schema v8
+retains that boundary and strictly migrates v1-v7 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 

@@ -94,6 +94,49 @@ final class WorkflowPlannerTests: XCTestCase {
         XCTAssertEqual(plan.impact.videoEncodeCount, 1)
     }
 
+    func testAudioOnlyAndVideoAudioPlansUseOneEncodingStage() throws {
+        let audioAsset = MediaAsset(
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            tracks: asset.tracks + [
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000
+                )
+            ]
+        )
+        let audioOnly = try WorkflowPlanner().plan(
+            asset: audioAsset,
+            workflow: WorkflowDefinition(
+                name: "Audio",
+                operations: [.transcodeAudio(.flacLossless)]
+            )
+        )
+        XCTAssertEqual(audioOnly.stages.map(\.mechanism), [.ffmpegEncode, .verify, .commit])
+        XCTAssertEqual(audioOnly.impact.videoEncodeCount, 0)
+        XCTAssertEqual(audioOnly.impact.audioEncodeCount, 1)
+        XCTAssertTrue(audioOnly.impact.copiesVideo)
+
+        let fused = try WorkflowPlanner().plan(
+            asset: audioAsset,
+            workflow: WorkflowDefinition(
+                name: "Media",
+                operations: [
+                    .transcodeVideo(.av1Quality),
+                    .transcodeAudio(.opusQuality),
+                ]
+            )
+        )
+        XCTAssertEqual(fused.stages.filter { $0.mechanism == .ffmpegEncode }.count, 1)
+        XCTAssertEqual(fused.impact.videoEncodeCount, 1)
+        XCTAssertEqual(fused.impact.audioEncodeCount, 1)
+        XCTAssertFalse(fused.impact.copiesVideo)
+    }
+
     func testInvalidTrimRangeFailsPlanning() {
         XCTAssertThrowsError(
             try WorkflowPlanner().plan(

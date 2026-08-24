@@ -1145,11 +1145,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?
     ) {
-        let needsVideoCapabilities = SavedWorkflowCompiler().needsEncodingCapabilities(
+        let needsEncodingCapabilities = SavedWorkflowCompiler().needsEncodingCapabilities(
             for: workflow,
             asset: asset
         )
-        guard needsVideoCapabilities else {
+        guard needsEncodingCapabilities else {
             compileAndPresentSavedWorkflowReview(
                 workflow,
                 asset: asset,

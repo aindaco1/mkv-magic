@@ -683,11 +683,11 @@ enum WorkflowEditorPolicy {
         .convertVideoHEVC,
         .convertVideoH264,
         .convertVideoProRes,
-        .convertAudioAAC,
-        .convertAudioOpus,
-        .convertAudioAC3,
-        .convertAudioEAC3,
-        .convertAudioFLAC,
+        .transcodeAllAudioAAC,
+        .transcodeAllAudioOpus,
+        .transcodeAllAudioAC3,
+        .transcodeAllAudioEAC3,
+        .transcodeAllAudioFLAC,
     ]
 
     static func newWorkflow() -> SavedWorkflow {
@@ -720,8 +720,9 @@ enum WorkflowEditorPolicy {
                 return false
             }
             if action.isAudioConversion {
-                return workflow.steps.contains(where: { $0.action.isVideoConversion })
-                    && !workflow.steps.contains(where: { $0.action.isAudioConversion })
+                return !workflow.steps.contains(where: { $0.action.isAudioConversion })
+                    && (!action.requiresVideoConversion
+                        || workflow.steps.contains(where: { $0.action.isVideoConversion }))
             }
             return action != .cleanExternalSubtitleText || existing.contains(.addExternalSubtitle)
         }
@@ -731,7 +732,7 @@ enum WorkflowEditorPolicy {
     static func add(_ action: SavedWorkflowAction, to workflow: inout SavedWorkflow) -> Bool {
         guard availableActions(for: workflow).contains(action) else { return false }
         workflow.steps.append(SavedWorkflowStep(action: action))
-        if action.isAudioConversion {
+        if action.requiresVideoConversion {
             for videoIndex in workflow.steps.indices
             where workflow.steps[videoIndex].action.isVideoConversion {
                 workflow.steps[videoIndex].isEnabled = true
@@ -748,7 +749,7 @@ enum WorkflowEditorPolicy {
         if removedAction == .addExternalSubtitle {
             workflow.steps.removeAll { $0.action == .cleanExternalSubtitleText }
         } else if removedAction.isVideoConversion {
-            workflow.steps.removeAll { $0.action.isAudioConversion }
+            workflow.steps.removeAll { $0.action.requiresVideoConversion }
         }
         return true
     }
@@ -774,10 +775,10 @@ enum WorkflowEditorPolicy {
             }
         } else if action.isVideoConversion, !isEnabled {
             for audioIndex in workflow.steps.indices
-            where workflow.steps[audioIndex].action.isAudioConversion {
+            where workflow.steps[audioIndex].action.requiresVideoConversion {
                 workflow.steps[audioIndex].isEnabled = false
             }
-        } else if action.isAudioConversion, isEnabled {
+        } else if action.requiresVideoConversion, isEnabled {
             for videoIndex in workflow.steps.indices
             where workflow.steps[videoIndex].action.isVideoConversion {
                 workflow.steps[videoIndex].isEnabled = true

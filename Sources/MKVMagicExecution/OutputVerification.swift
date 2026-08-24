@@ -726,6 +726,177 @@ public struct ExactTrimOutputVerifier: Sendable {
     }
 }
 
+public enum CompleteAudioConversionVerificationError: Error, Equatable, Sendable {
+    case emptyOutput
+    case wrongContainer
+    case wrongDuration
+    case wrongTrackCount
+    case wrongTrackOrder
+    case audioMismatch(trackID: Int)
+    case copiedTrackMismatch(trackID: Int)
+    case trackMetadataMismatch(trackID: Int)
+    case attachmentsChanged
+    case metadataChanged
+    case chaptersChanged
+    case segmentIdentityChanged
+}
+
+extension CompleteAudioConversionVerificationError: LocalizedError {
+    public var errorDescription: String? {
+        switch self {
+        case .emptyOutput: "The audio-converted MKV is empty."
+        case .wrongContainer: "Audio conversion did not create a Matroska MKV."
+        case .wrongDuration: "The audio-converted duration does not match the source."
+        case .wrongTrackCount: "Audio conversion added or removed a media track."
+        case .wrongTrackOrder: "Audio conversion changed the reviewed media-track order."
+        case .audioMismatch(let trackID):
+            "Converted audio for source track \(trackID) does not match the reviewed format and layout."
+        case .copiedTrackMismatch(let trackID):
+            "Packet-copied source track \(trackID) changed unexpectedly."
+        case .trackMetadataMismatch(let trackID):
+            "Track \(trackID) lost reviewed language, name, or disposition metadata."
+        case .attachmentsChanged: "Audio conversion did not preserve every attachment."
+        case .metadataChanged: "Audio conversion changed unreviewed metadata or tags."
+        case .chaptersChanged: "The audio-converted chapter count does not match the review."
+        case .segmentIdentityChanged:
+            "The audio-converted MKV did not receive a new segment identity."
+        }
+    }
+}
+
+public struct CompleteAudioConversionOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        resolvedPlan: ResolvedCompleteAudioConversionPlan,
+        chapters: MatroskaChapterDocument,
+        output: MediaAsset
+    ) throws {
+        let original = resolvedPlan.source
+        guard output.fileSize ?? 0 > 0 else {
+            throw CompleteAudioConversionVerificationError.emptyOutput
+        }
+        guard output.container.localizedCaseInsensitiveContains("matroska") else {
+            throw CompleteAudioConversionVerificationError.wrongContainer
+        }
+        guard let expectedDuration = original.duration,
+            let actualDuration = output.duration,
+            actualDuration.nanoseconds >= 0
+        else {
+            throw CompleteAudioConversionVerificationError.wrongDuration
+        }
+        let durationDifference = actualDuration.nanoseconds.subtractingReportingOverflow(
+            expectedDuration.nanoseconds
+        )
+        guard !durationDifference.overflow,
+            durationDifference.partialValue.magnitude <= 100_000_000
+        else {
+            throw CompleteAudioConversionVerificationError.wrongDuration
+        }
+
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard outputTracks.count == originalTracks.count else {
+            throw CompleteAudioConversionVerificationError.wrongTrackCount
+        }
+        guard outputTracks.map(\.kind) == originalTracks.map(\.kind) else {
+            throw CompleteAudioConversionVerificationError.wrongTrackOrder
+        }
+        for (sourceTrack, outputTrack) in zip(originalTracks, outputTracks) {
+            guard trackMetadataMatches(outputTrack, sourceTrack) else {
+                throw CompleteAudioConversionVerificationError.trackMetadataMismatch(
+                    trackID: sourceTrack.id
+                )
+            }
+            if sourceTrack.kind == .audio {
+                guard let inputRate = sourceTrack.sampleRate,
+                    let expectedRate = resolvedPlan.preset.outputSampleRate(forInput: inputRate),
+                    normalized(outputTrack.codec) == resolvedPlan.preset.codecName,
+                    outputTrack.channels == sourceTrack.channels,
+                    outputTrack.sampleRate == expectedRate,
+                    normalized(outputTrack.channelLayout)
+                        == normalized(sourceTrack.channelLayout)
+                else {
+                    throw CompleteAudioConversionVerificationError.audioMismatch(
+                        trackID: sourceTrack.id
+                    )
+                }
+            } else {
+                guard
+                    CompleteAudioCopiedTrackSnapshot(outputTrack)
+                        == CompleteAudioCopiedTrackSnapshot(sourceTrack)
+                else {
+                    throw CompleteAudioConversionVerificationError.copiedTrackMismatch(
+                        trackID: sourceTrack.id
+                    )
+                }
+            }
+        }
+        try verifyAttachments(original.attachments, output.attachments)
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == 0,
+            output.trackTagCount == 0
+        else {
+            throw CompleteAudioConversionVerificationError.metadataChanged
+        }
+        let expectedChapterCount = chapters.editions.reduce(0) {
+            $0 + $1.chapters.count
+        }
+        guard output.chapterEntryCount == expectedChapterCount else {
+            throw CompleteAudioConversionVerificationError.chaptersChanged
+        }
+        guard let outputUID = output.segmentUID,
+            original.segmentUID == nil || outputUID != original.segmentUID
+        else {
+            throw CompleteAudioConversionVerificationError.segmentIdentityChanged
+        }
+    }
+
+    private func trackMetadataMatches(_ actual: MediaTrack, _ expected: MediaTrack) -> Bool {
+        let actualLanguage = try? TrackLanguageTag.canonical(actual.language ?? "und")
+        let expectedLanguage = try? TrackLanguageTag.canonical(expected.language ?? "und")
+        return actualLanguage == expectedLanguage
+            && (actual.title ?? "") == (expected.title ?? "")
+            && actual.isDefault == expected.isDefault
+            && actual.isForced == expected.isForced
+            && actual.isEnabled == expected.isEnabled
+            && actual.isCommentary == expected.isCommentary
+            && actual.isHearingImpaired == expected.isHearingImpaired
+            && actual.isVisualImpaired == expected.isVisualImpaired
+            && actual.isOriginal == expected.isOriginal
+            && actual.isTextDescription == expected.isTextDescription
+    }
+
+    private func verifyAttachments(
+        _ expected: [MediaAttachment],
+        _ actual: [MediaAttachment]
+    ) throws {
+        var unmatched = actual
+        for attachment in expected {
+            guard
+                let index = unmatched.firstIndex(where: {
+                    $0.filename == attachment.filename
+                        && $0.mimeType == attachment.mimeType
+                        && $0.size == attachment.size
+                        && $0.description == attachment.description
+                })
+            else {
+                throw CompleteAudioConversionVerificationError.attachmentsChanged
+            }
+            unmatched.remove(at: index)
+        }
+        guard unmatched.isEmpty else {
+            throw CompleteAudioConversionVerificationError.attachmentsChanged
+        }
+    }
+
+    private func normalized(_ value: String?) -> String {
+        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
+    }
+}
+
 public enum JoinFinalAssemblyVerificationError: Error, Equatable, Sendable {
     case emptyOutput
     case wrongContainer
@@ -1285,6 +1456,40 @@ private struct ExactTrimCopiedSubtitleSnapshot: Equatable {
         codec = track.codec.lowercased()
         codecID = track.codecID?.lowercased()
         profile = track.profile
+    }
+}
+
+private struct CompleteAudioCopiedTrackSnapshot: Equatable {
+    let kind: MediaTrackKind
+    let codec: String
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let dimensions: MediaDimensions?
+    let displayDimensions: MediaDimensions?
+    let pixelFormat: String?
+    let bitDepth: Int?
+    let frameRate: String?
+    let colorInfo: MediaColorInfo?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
+    let hdrFormats: [String]
+
+    init(_ track: MediaTrack) {
+        kind = track.kind
+        codec = track.codec.lowercased()
+        codecID = track.codecID?.lowercased()
+        profile = track.profile
+        level = track.level
+        dimensions = track.dimensions
+        displayDimensions = track.displayDimensions
+        pixelFormat = track.pixelFormat?.lowercased()
+        bitDepth = track.bitDepth
+        frameRate = track.frameRate
+        colorInfo = track.colorInfo
+        masteringDisplayMetadata = track.masteringDisplayMetadata
+        contentLightLevelMetadata = track.contentLightLevelMetadata
+        hdrFormats = track.hdrFormats.map { $0.lowercased() }
     }
 }
 

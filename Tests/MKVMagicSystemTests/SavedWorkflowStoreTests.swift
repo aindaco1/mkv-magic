@@ -159,6 +159,41 @@ final class SavedWorkflowStoreTests: XCTestCase {
         }
     }
 
+    func testVersionSevenMigratesButCannotClaimVersionEightStandaloneAudioAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":7,"name":"Conditional video","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"convertVideoIfNotAV1OrHEVC"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":7,"name":"Invalid audio backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"transcodeAllAudioFLAC"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
+    func testPortableFileRoundTripsStandaloneAudioIntentWithoutEncoderDetails() throws {
+        let workflow = SavedWorkflow(
+            name: "Lossless audio",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("transcodeAllAudioFLAC"))
+        XCTAssertFalse(json.contains("audioCapabilities"))
+        XCTAssertFalse(json.contains("encoder"))
+        XCTAssertFalse(json.contains("ffmpeg"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
     func testVersionFourMigratesButCannotClaimVersionFiveConversionAction() throws {
         let valid = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":4,"name":"Clean name","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"normalizeFilename"}]}"#

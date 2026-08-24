@@ -59,20 +59,20 @@ The reviewed plan binds the actual local preset and its one-generation impact.
 If cleanup, track removal, title removal, or subtitle muxing is also applicable,
 MKV Magic commits those packet-copy changes only to a private verified
 intermediate, then performs one complete-file video encode into the final
-destination. Audio and subtitles remain exact packet copies by default. After
-adding a video card, an optional single audio card can explicitly convert every
-retained audio track once to locally verified AAC, Opus, AC-3, E-AC-3, or FLAC
-while preserving each known channel layout. Unsafe layout/rate choices fail
-before execution, and video plus audio remain fused in the same single FFmpeg
-process. Nested chapters, attachments, HDR10, and reviewed metadata are
+destination. Audio and subtitles remain exact packet copies by default. One
+optional audio card can explicitly convert every retained audio track once to
+locally verified AAC, Opus, AC-3, E-AC-3, or FLAC while preserving each known
+channel layout. It can run alone while packet-copying video and subtitles, or
+fuse into the video card's same single FFmpeg process. Unsafe layout/rate
+choices fail before execution. Nested chapters, attachments, HDR10, and reviewed metadata are
 verified, and the source revision is bound from plan acceptance through queueing
 or immediate execution. A conversion-only recipe skips the intermediate.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
-or move the job to Needs Review. Standalone audio-only workflow conversion is
-not claimed by this fused card.
-Workflow schema v7 still stores only portable action intent—never paths, local
+or move the job to Needs Review. Audio-only execution independently fingerprints
+every copied video and subtitle packet before commit.
+Workflow schema v8 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v6 workflow files migrate
+Original v1-v7 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,

@@ -87,10 +87,11 @@ control. The most common prerequisites are:
 - Convert Video always creates a new MKV in this beta. Embedded subtitles are
   packet-copied and verified; MP4/MOV/WebM output and subtitle conversion are
   not silently substituted.
-- A saved-workflow audio card is available only after adding a video-conversion
-  card. It converts every retained audio track in that same FFmpeg process; use
-  the default packet-copy behavior when any track's exact layout or sample rate
-  is not accepted by the chosen audio format.
+- A saved-workflow audio card converts every retained audio track to one chosen
+  format. By itself it packet-copies video and text subtitles; with a video card
+  both conversions share one FFmpeg process. Use the default packet-copy behavior
+  when any track's exact layout or sample rate is not accepted by the chosen
+  audio format.
 - **If needed: Convert video unless it is already AV1 or HEVC** intentionally
   skips both video and its dependent audio card for modern sources. Other
   applicable metadata, subtitle, or naming cards can still run without a video

@@ -50,6 +50,7 @@ public enum WorkflowOperation: Codable, Hashable, Sendable {
     )
     case trim(start: MediaTime, end: MediaTime, exact: Bool)
     case transcodeVideo(VideoPreset)
+    case transcodeAudio(AudioTranscodePreset)
 }
 
 public enum ExecutionMechanism: String, Codable, Hashable, Sendable {

@@ -2540,6 +2540,11 @@ final class AppPolicyTests: XCTestCase {
                 .convertVideoHEVC,
                 .convertVideoH264,
                 .convertVideoProRes,
+                .transcodeAllAudioAAC,
+                .transcodeAllAudioOpus,
+                .transcodeAllAudioAC3,
+                .transcodeAllAudioEAC3,
+                .transcodeAllAudioFLAC,
             ]
         )
         XCTAssertTrue(WorkflowEditorPolicy.add(.removeSegmentTitle, to: &workflow))
@@ -2569,15 +2574,27 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
-    func testWorkflowEditorKeepsAudioConversionDependentOnVideoConversion() {
+    func testWorkflowEditorOffersStandaloneAudioAndFusesItWhenVideoIsPresent() {
         var workflow = SavedWorkflow(name: "One fused conversion", steps: [])
 
-        XCTAssertFalse(WorkflowEditorPolicy.add(.convertAudioAAC, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.add(.transcodeAllAudioAAC, to: &workflow))
+        XCTAssertFalse(WorkflowEditorPolicy.add(.transcodeAllAudioOpus, to: &workflow))
         XCTAssertTrue(WorkflowEditorPolicy.add(.convertVideoRecommended, to: &workflow))
-        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 0, in: &workflow))
-        XCTAssertTrue(WorkflowEditorPolicy.add(.convertAudioAAC, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 1, in: &workflow))
         XCTAssertTrue(workflow.steps[0].isEnabled)
-        XCTAssertFalse(WorkflowEditorPolicy.add(.convertAudioOpus, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 1, from: &workflow))
+        XCTAssertEqual(workflow.steps.map(\.action), [.transcodeAllAudioAAC])
+    }
+
+    func testWorkflowEditorPreservesLegacyDependentAudioSemantics() {
+        var workflow = SavedWorkflow(
+            name: "Imported legacy conversion",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoRecommended),
+                SavedWorkflowStep(action: .convertAudioAAC),
+            ]
+        )
+
         XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 0, in: &workflow))
         XCTAssertFalse(workflow.steps[1].isEnabled)
         XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(true, at: 1, in: &workflow))

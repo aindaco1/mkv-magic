@@ -553,6 +553,99 @@ final class RealToolExactTrimTests: XCTestCase {
         }
     }
 
+    func testBundledToolsSavedWorkflowConvertsOnlyAudioAndProvesCopiedPackets() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let fixtureRunner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: fixtureRunner
+        ).probe()
+        guard capabilities.availableAudioPresets.contains(.flacLossless) else {
+            throw XCTSkip("The bundled FLAC conversion encoder is unavailable")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-workflow-audio"
+        ) { root in
+            let sourceURL = try await makeFixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: fixtureRunner,
+                includeSubtitle: true
+            )
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let runner = WorkflowConversionRecordingRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            let sourceVideo = try XCTUnwrap(source.tracks.first { $0.kind == .video })
+            let sourceSubtitle = try XCTUnwrap(source.tracks.first { $0.kind == .subtitle })
+            let workflow = SavedWorkflow(
+                name: "Lossless audio",
+                steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
+            )
+            let compiled = try SavedWorkflowCompiler().compile(
+                workflow,
+                for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableAudioPresets: capabilities.availableAudioPresets
+                )
+            )
+            let destination = root.appendingPathComponent("Audio Converted.mkv")
+            let output = try await SavedWorkflowAudioConversionExecutor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            ).execute(
+                source: source,
+                workflow: compiled,
+                capabilities: capabilities,
+                expectedSourceRevision: try MediaFileRevisionReader().read(sourceURL),
+                destinationURL: destination
+            )
+
+            let executableNames = await runner.capturedExecutableNames()
+            XCTAssertEqual(executableNames.filter { $0 == "ffmpeg" }.count, 1)
+            XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+            XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+            XCTAssertTrue(compiled.plan.impact.copiesVideo)
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+            XCTAssertEqual(output.tracks[0].codec, sourceVideo.codec)
+            XCTAssertEqual(output.tracks[1].codec, "flac")
+            XCTAssertEqual(output.tracks[2].codec, sourceSubtitle.codec)
+            XCTAssertEqual(output.tracks[2].language, sourceSubtitle.language)
+            XCTAssertEqual(output.tracks[2].title, sourceSubtitle.title)
+            XCTAssertEqual(output.attachments.count, source.attachments.count)
+            XCTAssertEqual(output.attachments[0].filename, source.attachments[0].filename)
+            XCTAssertEqual(output.attachments[0].mimeType, source.attachments[0].mimeType)
+            XCTAssertEqual(output.attachments[0].size, source.attachments[0].size)
+            XCTAssertEqual(
+                output.attachments[0].description,
+                source.attachments[0].description
+            )
+            XCTAssertEqual(output.chapterEntryCount, source.chapterEntryCount)
+            XCTAssertEqual(segmentTitle(output), segmentTitle(source))
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+        }
+    }
+
     private func makeFixture(
         root: URL,
         ffmpegURL: URL,

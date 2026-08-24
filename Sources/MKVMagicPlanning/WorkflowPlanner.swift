@@ -16,6 +16,7 @@ public struct WorkflowPlanner: Sendable {
         var needsPropertyEdit = false
         var needsRemux = false
         var needsVideoEncode = false
+        var needsAudioEncode = false
         var needsStreamCopyTrim = false
         var warnings: [String] = []
 
@@ -35,15 +36,28 @@ public struct WorkflowPlanner: Sendable {
                 }
             case .transcodeVideo:
                 needsVideoEncode = true
+            case .transcodeAudio:
+                needsAudioEncode = true
             }
         }
 
         var stages: [PlanStage] = []
-        if needsVideoEncode {
+        if needsVideoEncode || needsAudioEncode {
+            let summary: String
+            switch (needsVideoEncode, needsAudioEncode) {
+            case (true, true):
+                summary = "Fuse reviewed video and audio conversion into one FFmpeg process"
+            case (true, false):
+                summary = "Fuse all video-affecting operations into one final encode"
+            case (false, true):
+                summary = "Convert every reviewed audio track once while packet-copying video"
+            case (false, false):
+                preconditionFailure("An encode stage requires video or audio work")
+            }
             stages.append(
                 PlanStage(
                     mechanism: .ffmpegEncode,
-                    summary: "Fuse all video-affecting operations into one final encode"
+                    summary: summary
                 )
             )
         } else if needsStreamCopyTrim {
@@ -76,15 +90,17 @@ public struct WorkflowPlanner: Sendable {
         stages.append(PlanStage(mechanism: .verify, summary: "Verify the planned output contract"))
         stages.append(PlanStage(mechanism: .commit, summary: "Commit the verified result"))
 
-        let encodeCount = stages.filter { $0.mechanism == .ffmpegEncode }.count
-        guard encodeCount <= 1 else { throw PlanningError.multipleVideoEncodes }
+        let encodeStageCount = stages.filter { $0.mechanism == .ffmpegEncode }.count
+        guard encodeStageCount <= 1 else { throw PlanningError.multipleVideoEncodes }
 
         return ExecutionPlan(
             stages: stages,
             impact: PlanImpact(
-                videoEncodeCount: encodeCount,
-                audioEncodeCount: 0,
-                copiesVideo: encodeCount == 0,
+                videoEncodeCount: needsVideoEncode ? 1 : 0,
+                audioEncodeCount: needsAudioEncode
+                    ? asset.tracks.count { $0.kind == .audio }
+                    : 0,
+                copiesVideo: !needsVideoEncode,
                 warnings: warnings
             )
         )

@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 7
+    public static let currentSchemaVersion = 8
 
     public let id: UUID
     public var schemaVersion: Int
@@ -58,6 +58,11 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case convertAudioAC3
     case convertAudioEAC3
     case convertAudioFLAC
+    case transcodeAllAudioAAC
+    case transcodeAllAudioOpus
+    case transcodeAllAudioAC3
+    case transcodeAllAudioEAC3
+    case transcodeAllAudioFLAC
 
     public var isVideoConversion: Bool {
         switch self {
@@ -81,8 +86,26 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .convertAudioAC3: .ac3Compatibility
         case .convertAudioEAC3: .eac3Compatibility
         case .convertAudioFLAC: .flacLossless
+        case .transcodeAllAudioAAC: .aacCompatibility
+        case .transcodeAllAudioOpus: .opusQuality
+        case .transcodeAllAudioAC3: .ac3Compatibility
+        case .transcodeAllAudioEAC3: .eac3Compatibility
+        case .transcodeAllAudioFLAC: .flacLossless
         default: nil
         }
+    }
+
+    public var requiresVideoConversion: Bool {
+        switch self {
+        case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+            .convertAudioEAC3, .convertAudioFLAC:
+            true
+        default: false
+        }
+    }
+
+    public var isStandaloneAudioConversion: Bool {
+        isAudioConversion && !requiresVideoConversion
     }
 
     public func videoConversionApplies(to asset: MediaAsset) -> Bool {
@@ -110,6 +133,9 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             .convertAudioEAC3, .convertAudioFLAC:
             6
         case .convertVideoIfNotAV1OrHEVC: 7
+        case .transcodeAllAudioAAC, .transcodeAllAudioOpus, .transcodeAllAudioAC3,
+            .transcodeAllAudioEAC3, .transcodeAllAudioFLAC:
+            8
         default: 1
         }
     }
@@ -135,13 +161,19 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .convertAudioAC3: "With video conversion: Convert audio to AC-3"
         case .convertAudioEAC3: "With video conversion: Convert audio to E-AC-3"
         case .convertAudioFLAC: "With video conversion: Convert audio to FLAC"
+        case .transcodeAllAudioAAC: "Convert all audio to AAC (keep layouts)"
+        case .transcodeAllAudioOpus: "Convert all audio to Opus (keep layouts)"
+        case .transcodeAllAudioAC3: "Convert all audio to AC-3 (keep layouts)"
+        case .transcodeAllAudioEAC3: "Convert all audio to E-AC-3 (keep layouts)"
+        case .transcodeAllAudioFLAC: "Convert all audio to FLAC (keep layouts)"
         }
     }
 
     public var explanation: String {
         if let preset = audioTranscodePreset {
-            return
-                "During the same reviewed full-file video conversion, encode every retained audio track once as \(preset.displayName) while preserving each known channel layout."
+            return requiresVideoConversion
+                ? "During the same reviewed full-file video conversion, encode every retained audio track once as \(preset.displayName) while preserving each known channel layout."
+                : "Encode every retained audio track once as \(preset.displayName) while packet-copying video and subtitles. If video conversion is also selected, fuse both choices into one FFmpeg process."
         }
         return switch self {
         case .englishLibraryCleanup:
@@ -172,6 +204,9 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Encode video once as edit-friendly 10-bit ProRes when it passes its local check. This step is limited to SDR sources and packet-copies audio and subtitles unless an explicit audio card is added."
         case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
             .convertAudioEAC3, .convertAudioFLAC:
+            preconditionFailure("Audio actions return their shared explanation above")
+        case .transcodeAllAudioAAC, .transcodeAllAudioOpus, .transcodeAllAudioAC3,
+            .transcodeAllAudioEAC3, .transcodeAllAudioFLAC:
             preconditionFailure("Audio actions return their shared explanation above")
         }
     }
