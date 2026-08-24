@@ -73,9 +73,9 @@ or immediate execution. A conversion-only recipe skips the intermediate.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
-Workflow schema v8 still stores only portable action intent—never paths, local
+Workflow schema v9 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v7 workflow files migrate
+Original v1-v8 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
@@ -236,6 +236,14 @@ packet audits after reopening `— Remuxed.mkv`. MP4 timed text (TX3G) remains a
 explicit future conversion instead of being silently rewritten. Attachments,
 arbitrary data tracks, multiple video tracks, unknown codecs, and chaptered
 WebM fail closed until their exact preservation contracts are available.
+The same operation is available as the portable **If needed: Remux compatible
+media to MKV** workflow card. It can be paired with filename cleanup, compiles
+to a zero-encode lightweight plan for compatible non-MKV input, and is skipped
+as already satisfied for MKV input. A saved remux recipe is eligible for the
+automatic queue; reinspection must reproduce the exact reviewed track/chapter
+plan and source revision before execution. Other media-changing cards cannot be
+combined with an active common-media remux until their stream-to-Matroska-track
+mapping has an equally exact contract.
 
 Exact Trim keeps **Balanced** as the default but also offers plain-language
 **Smaller File** and **Higher Quality** choices. An optional disclosure reveals
@@ -314,7 +322,7 @@ admission coordinator. The coordinator combines the scheduler policy with an
 explicit workflow-capability check, unchanged input revisions, a writable
 destination, and an unused safe output before marking work **Running**.
 
-Automatic execution re-inspects the current MKV with the bundled tools and
+Automatic execution re-inspects the current media file with the bundled tools and
 recompiles the portable recipe. The semantic plan must retain the same impact,
 ordered mechanisms, and summaries as the reviewed plan; ephemeral stage IDs do
 not create false mismatches. The exact source revision is checked again after

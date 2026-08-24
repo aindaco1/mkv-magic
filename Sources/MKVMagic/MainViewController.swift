@@ -2157,6 +2157,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let isRemuxToMKV: Bool
         if case .remuxToMKV = pendingChange {
             isRemuxToMKV = true
+        } else if case .savedWorkflow(let prepared) = pendingChange,
+            prepared.compiled.mkvRemuxPlan != nil
+        {
+            isRemuxToMKV = true
         } else {
             isRemuxToMKV = false
         }
@@ -2169,7 +2173,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             panel.nameFieldStringValue = OutputNamingPolicy.savedWorkflowFilename(
                 for: asset.sourceURL,
                 suggestedFilename: suggestedFilename,
-                requiresMKV: isSubtitleMux
+                requiresMKV: isSubtitleMux || isRemuxToMKV
             )
         } else if isSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(

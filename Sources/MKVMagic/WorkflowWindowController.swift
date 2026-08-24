@@ -235,7 +235,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         useButton.toolTip =
             hasSelectedAsset
             ? "Compile against the selected file and show its impact before running."
-            : "Inspect and select a Matroska file before previewing this workflow."
+            : "Inspect and select a supported media file before previewing this workflow."
         useButton.setAccessibilityHelp(useButton.toolTip)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -489,7 +489,8 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
                     onUse(workflowToUse)
                     view.window?.orderOut(nil)
                 } else if thenUse {
-                    statusLabel.stringValue = "Saved. Inspect a Matroska file to preview it."
+                    statusLabel.stringValue =
+                        "Saved. Inspect a supported media file to preview it."
                 }
             } catch {
                 setEditingEnabled(true)
@@ -671,6 +672,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
 
 enum WorkflowEditorPolicy {
     static let actionCatalog: [SavedWorkflowAction] = [
+        .remuxToMKV,
         .removeNonEnglishSubtitles,
         .removeRedundantEnglishSDH,
         .removeSegmentTitle,
@@ -712,8 +714,15 @@ enum WorkflowEditorPolicy {
 
     static func availableActions(for workflow: SavedWorkflow) -> [SavedWorkflowAction] {
         let existing = Set(workflow.steps.map(\.action))
+        let enabledActions = workflow.steps.filter(\.isEnabled).map(\.action)
         return actionCatalog.filter { action in
             guard !existing.contains(action) else { return false }
+            if action == .remuxToMKV {
+                return enabledActions.allSatisfy(isCompatibleWithRemux)
+            }
+            if enabledActions.contains(.remuxToMKV), !isCompatibleWithRemux(action) {
+                return false
+            }
             if action.isVideoConversion,
                 workflow.steps.contains(where: { $0.action.isVideoConversion })
             {
@@ -762,6 +771,16 @@ enum WorkflowEditorPolicy {
     ) -> Bool {
         guard workflow.steps.indices.contains(index) else { return false }
         let action = workflow.steps[index].action
+        if isEnabled {
+            let otherEnabledActions = workflow.steps.enumerated().compactMap { stepIndex, step in
+                stepIndex != index && step.isEnabled ? step.action : nil
+            }
+            guard
+                action != .remuxToMKV
+                    ? !otherEnabledActions.contains(.remuxToMKV) || isCompatibleWithRemux(action)
+                    : otherEnabledActions.allSatisfy(isCompatibleWithRemux)
+            else { return false }
+        }
         workflow.steps[index].isEnabled = isEnabled
         if action == .addExternalSubtitle, !isEnabled {
             for cleanupIndex in workflow.steps.indices
@@ -785,6 +804,10 @@ enum WorkflowEditorPolicy {
             }
         }
         return true
+    }
+
+    private static func isCompatibleWithRemux(_ action: SavedWorkflowAction) -> Bool {
+        action == .remuxToMKV || action == .normalizeFilename
     }
 
     static func exportFilename(for workflow: SavedWorkflow) -> String {

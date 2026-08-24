@@ -2421,7 +2421,8 @@ final class AppPolicyTests: XCTestCase {
 
         XCTAssertFalse(preview.isEnabled)
         XCTAssertTrue(
-            preview.accessibilityHelp()?.contains("Inspect and select a Matroska file") == true
+            preview.accessibilityHelp()?.contains("Inspect and select a supported media file")
+                == true
         )
     }
 
@@ -2537,6 +2538,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(
             WorkflowEditorPolicy.availableActions(for: workflow),
             [
+                .remuxToMKV,
                 .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
@@ -2562,6 +2564,29 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(WorkflowEditorPolicy.removeStep(at: -1, from: &workflow))
         XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
         XCTAssertTrue(workflow.steps.isEmpty)
+    }
+
+    func testWorkflowEditorKeepsRemuxIntentMutuallyExclusiveWithMediaChanges() {
+        var workflow = SavedWorkflow(
+            name: "Portable MKV",
+            steps: [
+                SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
+                SavedWorkflowStep(action: .normalizeFilename),
+            ]
+        )
+
+        XCTAssertTrue(WorkflowEditorPolicy.add(.remuxToMKV, to: &workflow))
+        XCTAssertFalse(WorkflowEditorPolicy.setStepEnabled(true, at: 0, in: &workflow))
+        XCTAssertFalse(workflow.steps[0].isEnabled)
+        XCTAssertFalse(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(.convertVideoAV1)
+        )
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 2, in: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(true, at: 0, in: &workflow))
+        XCTAssertTrue(workflow.steps[0].isEnabled)
+        XCTAssertTrue(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(.convertVideoAV1)
+        )
     }
 
     func testWorkflowEditorOffersOnlyOneVideoConversionIntentAtATime() {
@@ -2708,6 +2733,38 @@ final class AppPolicyTests: XCTestCase {
         ], capturePath.hasPrefix("/") {
             try captureTrimWindow(window: window, content: content, at: capturePath)
         }
+    }
+
+    @MainActor
+    func testWorkflowPlanReviewExplainsPortableRemuxWithoutTranscoding() throws {
+        let workflow = SavedWorkflow(
+            name: "Make a Jellyfin MKV",
+            steps: [SavedWorkflowStep(action: .remuxToMKV)]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.mp4"),
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            duration: MediaTime(seconds: 60),
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "h264"),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", language: "en"),
+            ]
+        )
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let controller = WorkflowPlanReviewWindowController(
+            preview: preview,
+            sourceDisplayName: asset.sourceURL.lastPathComponent
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+
+        XCTAssertTrue(text.contains("No transcoding • one MKV remux"))
+        XCTAssertTrue(text.contains("If needed: Remux compatible media to MKV"))
+        XCTAssertTrue(text.contains("Packet-copy 2 media tracks into MKV"))
+        XCTAssertTrue(text.contains("create and verify one new MKV"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
     }
 
     @MainActor

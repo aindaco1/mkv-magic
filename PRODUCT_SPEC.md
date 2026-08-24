@@ -562,7 +562,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v8 preserves that boundary. v1-v7 workflows
+identifier—and current schema v9 preserves that boundary. v1-v8 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 
@@ -577,6 +577,20 @@ and independently fingerprints their encoded packets.
 If a video conversion is also applicable, both policies compile into the same
 single FFmpeg process. Imported schema-v6 **With video conversion** actions keep
 their historical dependency and are not emitted by the current editor.
+
+Schema v9 adds **If needed: Remux compatible media to MKV** as portable
+container intent. For compatible inspected MP4, M4V, MOV, or chapter-free WebM,
+the compiler resolves current stream indexes and any MP4 chapter carrier into a
+zero-encode `mkvmerge -> verify -> commit` plan; none of those file-specific
+facts enter the recipe JSON. For MKV input, the card is already satisfied and
+other existing Matroska cards may still apply. While remux is active on non-MKV
+input, only filename cleanup may accompany it: track, metadata, subtitle, and
+transcode cards fail closed until the compiler can map their semantics across
+container identities without guessing. The editor prevents those active
+combinations but retains disabled cards. The automatic queue re-inspects and
+recompiles schema-v9 intent, requires the same reviewed semantic plan and exact
+source revision, classifies it as lightweight work, and executes through the
+same packet and chapter verifier as the standalone action.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1235,8 +1249,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v8
-retains that boundary and strictly migrates v1-v7 without allowing an older
+only the naming intent, never a source or generated filename; current schema v9
+retains that boundary and strictly migrates v1-v8 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 
@@ -1280,8 +1294,8 @@ so opening or refreshing the window cannot reclassify current work as
 interrupted.
 
 The first production automatic-execution subset is connected. After the user
-reviews a saved workflow with one MKV input and no external-subtitle card, **Add
-to Queue** persists it in **Waiting** without forcing an immediate start. On app
+reviews a saved workflow with one supported input and no external-subtitle card,
+**Add to Queue** persists it in **Waiting** without forcing an immediate start. On app
 launch, queue resume, and queue authoring, a macOS system adapter reads the
 IOKit power-source state and `ProcessInfo` thermal state and invokes the
 admission coordinator. Unknown power or thermal facts fail conservatively. A
@@ -1305,6 +1319,11 @@ occupies an audio-heavy scheduler slot. When deterministic preparation precedes
 either video or audio conversion, one shared exact original-file revision guard
 continues across the private intermediate, final generation, pre-commit check,
 and committed reopen audit.
+
+Portable common-media remux uses that automatic boundary as lightweight work.
+The queued recipe persists only schema-v9 intent; each admission resolves fresh
+stream and chapter facts, requires the same reviewed zero-encode plan, binds the
+exact original revision, and invokes the verified MKV remux executor directly.
 
 Built-in quick-action queueing, external-subtitle workflow reconstruction,
 watched folders, scheduled wakes, a background helper/daemon, continuous

@@ -65,6 +65,11 @@ final class AppModel {
             case .trackRemoval:
                 return "Zero video encodes; mkvmerge copies the retained streams."
             case .saved(let workflow, _):
+                if let remuxPlan = workflow.mkvRemuxPlan {
+                    let noun = remuxPlan.copiedTrackCount == 1 ? "track" : "tracks"
+                    return
+                        "Zero encodes; packet-copy \(remuxPlan.copiedTrackCount) media \(noun) into one verified MKV."
+                }
                 if workflow.createsUnchangedCopy {
                     return "Zero encodes; create and verify one unchanged output copy."
                 }
@@ -101,7 +106,9 @@ final class AppModel {
             case .metadata: return "Editing a temporary clone."
             case .trackRemoval: return "Remuxing retained tracks to a temporary output."
             case .saved(let workflow, _):
-                if workflow.videoConversionChoice != nil {
+                if workflow.mkvRemuxPlan != nil {
+                    return "Packet-copying compatible streams into one temporary verified MKV."
+                } else if workflow.videoConversionChoice != nil {
                     let audioCount = workflow.plan.impact.audioEncodeCount
                     let audioNoun = audioCount == 1 ? "track" : "tracks"
                     let encoding =
@@ -1824,7 +1831,32 @@ final class AppModel {
                     }
                 )
             case .saved(let workflow, let externalSubtitlePayload):
-                if workflow.videoConversionChoice != nil {
+                if let remuxPlan = workflow.mkvRemuxPlan {
+                    let sourceRevision =
+                        try expectedSourceRevision
+                        ?? MediaFileRevisionReader().read(asset.sourceURL)
+                    let executor = MKVRemuxExecutor(
+                        mkvmergeURL: try catalog.url(for: .mkvmerge),
+                        ffmpegURL: try catalog.url(for: .ffmpeg),
+                        ffprobeURL: try catalog.url(for: .ffprobe),
+                        runner: runner,
+                        inspector: inspector
+                    )
+                    output = try await executor.execute(
+                        preview: MKVRemuxPreview(
+                            plan: remuxPlan,
+                            sourceRevision: sourceRevision
+                        ),
+                        destinationURL: destinationURL,
+                        onStage: { stage in
+                            try await Self.record(
+                                stage,
+                                jobID: execution.jobID,
+                                using: execution.recorder
+                            )
+                        }
+                    )
+                } else if workflow.videoConversionChoice != nil {
                     let executor = SavedWorkflowVideoConversionExecutor(
                         ffmpegURL: try catalog.url(for: .ffmpeg),
                         ffprobeURL: try catalog.url(for: .ffprobe),

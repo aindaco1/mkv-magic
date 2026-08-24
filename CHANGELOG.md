@@ -159,3 +159,9 @@ semantic versioning; public release tags are immutable and signed.
   validate duration, lane count/order, codec, canvas, display size, bit depth,
   BT.709 SDR signaling, AAC layout/rate, and absent chapters/attachments before
   commit and after reopen; and cancel safely at every shared pipeline boundary.
+- Add portable schema-v9 **Remux to MKV** workflow intent for compatible MP4,
+  M4V, MOV, and chapter-free WebM inputs. Compile only current inspected stream
+  and chapter facts, keep tool paths and media identity out of exported recipes,
+  permit filename cleanup without another media pass, skip files already in
+  MKV, and reject unsafe card combinations. Run the same exact packet/chapter
+  verifier through immediate execution or the lightweight automatic queue.

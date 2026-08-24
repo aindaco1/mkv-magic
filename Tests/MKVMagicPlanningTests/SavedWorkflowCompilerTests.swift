@@ -474,6 +474,96 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvPropEdit, .verify, .commit])
     }
 
+    func testRemuxIntentCompilesAgainstCompatibleInputWithoutEncoding() throws {
+        let workflow = SavedWorkflow(
+            name: "Portable MKV",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .normalizeFilename),
+            ]
+        )
+        let source = makeMP4Asset(path: "/private/media/Movie.2025.1080p.mp4")
+
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: source)
+        )
+        let compiled = try SavedWorkflowCompiler().compile(workflow, for: source)
+
+        XCTAssertEqual(compiled.mkvRemuxPlan?.source, source)
+        XCTAssertEqual(compiled.mkvRemuxPlan?.trackIDsInOutputOrder, [4, 9])
+        XCTAssertTrue(compiled.operations.isEmpty)
+        XCTAssertFalse(compiled.createsUnchangedCopy)
+        XCTAssertTrue(compiled.hasDeterministicMediaOperations)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Movie (2025).mp4")
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvMerge, .verify, .commit])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertTrue(compiled.plan.impact.copiesVideo)
+        XCTAssertEqual(compiled.stepOutcomes.map(\.disposition), [.applied, .applied])
+        XCTAssertTrue(compiled.stepOutcomes[0].detail.contains("Packet-copy 2 media tracks"))
+    }
+
+    func testRemuxIntentSkipsMKVAndLetsExistingMatroskaStepsRun() throws {
+        let remuxOnly = SavedWorkflow(
+            name: "Already MKV",
+            steps: [SavedWorkflowStep(action: .remuxToMKV)]
+        )
+        let preview = try SavedWorkflowCompiler().preview(remuxOnly, for: makeAsset())
+
+        XCTAssertNil(preview.compiledWorkflow)
+        XCTAssertEqual(preview.stepOutcomes.map(\.disposition), [.skipped])
+
+        let withTitleEdit = SavedWorkflow(
+            name: "Edit existing MKV",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            withTitleEdit,
+            for: makeAsset(title: "Movie")
+        )
+        XCTAssertNil(compiled.mkvRemuxPlan)
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertEqual(compiled.stepOutcomes.map(\.disposition), [.skipped, .applied])
+    }
+
+    func testActiveRemuxRejectsOtherMediaActionsAndSurfacesPlannerFailure() {
+        let conflicting = SavedWorkflow(
+            name: "Ambiguous pipeline",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(conflicting, for: makeMP4Asset())
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .remuxCannotCombineWithOtherActions
+            )
+        }
+
+        let timedText = makeMP4Asset(
+            tracks: [
+                MediaTrack(id: 4, kind: .video, codec: "h264"),
+                MediaTrack(id: 9, kind: .subtitle, codec: "mov_text"),
+            ]
+        )
+        let remuxOnly = SavedWorkflow(
+            name: "Unsupported subtitle",
+            steps: [SavedWorkflowStep(action: .remuxToMKV)]
+        )
+        XCTAssertThrowsError(try SavedWorkflowCompiler().compile(remuxOnly, for: timedText)) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unsupportedMKVRemux(.unsupportedTrack(trackID: 9, codec: "mov_text"))
+            )
+        }
+    }
+
     func testAlreadySimpleFilenameOnlyWorkflowHasNoApplicableOutput() throws {
         let workflow = SavedWorkflow(
             name: "Already named",
@@ -1008,6 +1098,23 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             globalTagCount: 0,
             trackTagCount: 0,
             segmentUID: "SOURCE"
+        )
+    }
+
+    private func makeMP4Asset(
+        path: String = "/private/media/Movie.mp4",
+        tracks: [MediaTrack]? = nil
+    ) -> MediaAsset {
+        MediaAsset(
+            sourceURL: URL(fileURLWithPath: path),
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            duration: MediaTime(seconds: 10),
+            fileSize: 1_000,
+            tracks: tracks ?? [
+                MediaTrack(id: 4, kind: .video, codec: "h264"),
+                MediaTrack(id: 9, kind: .audio, codec: "aac", language: "en"),
+            ],
+            chapterEntryCount: 0
         )
     }
 }

@@ -121,6 +121,42 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
     }
 
+    func testPortableFileStoresRemuxIntentWithoutResolvedStreamsOrToolDetails() throws {
+        let workflow = SavedWorkflow(
+            name: "Make an MKV",
+            steps: [SavedWorkflowStep(action: .remuxToMKV)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("remuxToMKV"))
+        XCTAssertFalse(json.contains("trackIDsInOutputOrder"))
+        XCTAssertFalse(json.contains("chapterCarrierTrackIDs"))
+        XCTAssertFalse(json.contains("mkvmerge"))
+        XCTAssertFalse(json.contains("ffmpeg"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionEightMigratesButCannotClaimVersionNineRemuxAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":8,"name":"Audio conversion","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"transcodeAllAudioFLAC"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":8,"name":"Invalid remux backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"remuxToMKV"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
     func testVersionFiveMigratesButCannotClaimVersionSixAudioAction() throws {
         let valid = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":5,"name":"Convert video","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"convertVideoAV1"}]}"#

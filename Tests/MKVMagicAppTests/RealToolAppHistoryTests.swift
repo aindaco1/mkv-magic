@@ -175,6 +175,163 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("The bundled H.264 fixture encoder is unavailable")
+        }
+
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-remux-workflow-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawVideo = fixtureRoot.appendingPathComponent("frames.yuv")
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let chapterMetadata = fixtureRoot.appendingPathComponent("chapters.ffmetadata")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.2025.1080p.mp4")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature (2025).mkv")
+        let width = 96
+        let height = 64
+        let frameCount = 20
+        try Data(repeating: 64, count: width * height * 3 / 2 * frameCount).write(
+            to: rawVideo
+        )
+        try Data(repeating: 0, count: 48_000 * 2 * 2 * 2).write(to: rawAudio)
+        try Data(
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Opening\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Second\n"
+                .utf8
+        ).write(to: chapterMetadata)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideo.path,
+                    "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", rawAudio.path,
+                    "-f", "ffmetadata", "-i", chapterMetadata.path,
+                    "-map", "0:v:0", "-map", "1:a:0", "-map_chapters", "2",
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-g", "10", "-bf", "0", "-b:v", "300000",
+                    "-pix_fmt", "yuv420p",
+                    "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-color_range", "tv",
+                    "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:a", "aac", "-b:a", "128000",
+                    "-metadata", "title=Portable Remux Fixture",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:a:0", "title=Main Audio",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let queueStore = try AppHistoryLocation.makeQueueStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(
+            historyRecorderFactory: { historyStore },
+            queueStoreFactory: { queueStore },
+            queueEnvironmentReader: FixedQueueEnvironmentReader(
+                environment: .init(isOnBattery: false, thermalPressure: .nominal)
+            )
+        )
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let reviewedRevision = try XCTUnwrap(model.reviewedSourceRevision(for: source))
+        let recipe = SavedWorkflow(
+            name: "Portable verified MKV",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .normalizeFilename),
+            ]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(recipe, for: source)
+        XCTAssertEqual(compiled.mkvRemuxPlan?.chapterCarrierTrackIDs.count, 1)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Feature (2025).mp4")
+        XCTAssertEqual(
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: sourceURL,
+                suggestedFilename: compiled.suggestedOutputFilename,
+                requiresMKV: compiled.mkvRemuxPlan != nil
+            ),
+            destinationURL.lastPathComponent
+        )
+        try await queueStore.save(MediaQueueSnapshot(isPaused: true, updatedAt: Date()))
+        let waiting = try await model.enqueueSavedWorkflow(
+            compiled,
+            recipe: recipe,
+            expectedSourceRevision: reviewedRevision,
+            in: source,
+            destinationURL: destinationURL
+        )
+        XCTAssertEqual(waiting.jobs.first?.resourceClass, .lightweight)
+        XCTAssertEqual(waiting.jobs.first?.workflow, .saved(recipe))
+        XCTAssertEqual(waiting.jobs.first?.reviewedPlan, compiled.plan)
+        _ = try await queueStore.setPaused(false, at: Date())
+
+        let completed = try await model.runAutomaticQueueCycle()
+        let output = try XCTUnwrap(model.assets.first { $0.sourceURL == destinationURL })
+
+        XCTAssertTrue(output.container.localizedCaseInsensitiveContains("matroska"))
+        XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])
+        XCTAssertEqual(output.chapters.map(\.title), ["Opening", "Second"])
+        XCTAssertEqual(output.metadata["title"], "Portable Remux Fixture")
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        XCTAssertEqual(completed.jobs.first?.events.map(\.state), [.waiting, .running, .succeeded])
+        XCTAssertEqual(completed.jobs.first?.attemptCount, 1)
+        let records = try await historyStore.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, recipe.id)
+        XCTAssertEqual(record.workflowName, recipe.name)
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertTrue(
+            record.events.contains {
+                $0.state == .planned && $0.message?.contains("packet-copy") == true
+            }
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testQueuedSavedWorkflowConversionRecompilesAndRecordsOneGeneration() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 8
+    public static let currentSchemaVersion = 9
 
     public let id: UUID
     public var schemaVersion: Int
@@ -47,6 +47,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
+    case remuxToMKV
     case convertVideoIfNotAV1OrHEVC
     case convertVideoRecommended
     case convertVideoAV1
@@ -136,6 +137,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .transcodeAllAudioAAC, .transcodeAllAudioOpus, .transcodeAllAudioAC3,
             .transcodeAllAudioEAC3, .transcodeAllAudioFLAC:
             8
+        case .remuxToMKV: 9
         default: 1
         }
     }
@@ -149,6 +151,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
+        case .remuxToMKV: "If needed: Remux compatible media to MKV"
         case .convertVideoIfNotAV1OrHEVC:
             "If needed: Convert video unless it is already AV1 or HEVC"
         case .convertVideoRecommended: "Convert video: Recommended for this Mac"
@@ -190,6 +193,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Ask for one SRT, ASS, or SSA file at preview time, confirm its track details, and add it last without encoding."
         case .cleanExternalSubtitleText:
             "Review deterministic ad, whitespace, and English OCR suggestions for the added subtitle, then feed only accepted edits into the same remux."
+        case .remuxToMKV:
+            "For compatible MP4, M4V, MOV, or WebM input, packet-copy every media track into MKV and verify the exact copied packets. Files already in MKV are left unchanged."
         case .convertVideoIfNotAV1OrHEVC:
             "Packet-copy video that is already AV1 or HEVC. Otherwise choose the first compatible locally verified encoder, preserve HDR10 when present, and encode video once."
         case .convertVideoRecommended:

@@ -9,6 +9,8 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case duplicateAction
     case noEnabledSteps
     case unsupportedContainer
+    case remuxCannotCombineWithOtherActions
+    case unsupportedMKVRemux(MKVRemuxPlanningError)
     case missingExternalSubtitleInput
     case invalidExternalSubtitleInput
     case externalSubtitleCleanupRequiresAddStep
@@ -35,6 +37,9 @@ extension SavedWorkflowCompilationError: LocalizedError {
         case .duplicateAction: "Each workflow action can appear only once."
         case .noEnabledSteps: "Enable at least one workflow step."
         case .unsupportedContainer: "Saved workflows currently require a Matroska file."
+        case .remuxCannotCombineWithOtherActions:
+            "Remux to MKV can currently be combined only with output filename cleanup. Disable the other media-changing steps."
+        case .unsupportedMKVRemux(let error): error.localizedDescription
         case .missingExternalSubtitleInput:
             "Choose and confirm an external subtitle before previewing this workflow."
         case .invalidExternalSubtitleInput:
@@ -156,6 +161,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let externalSubtitleCleanupChangeCount: Int?
     public let suggestedOutputFilename: String?
     public let videoConversionChoice: ExactTrimChoice?
+    public let mkvRemuxPlan: ResolvedMKVRemuxPlan?
 
     public init(
         workflowID: UUID,
@@ -166,7 +172,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         stepOutcomes: [SavedWorkflowStepOutcome] = [],
         externalSubtitleCleanupChangeCount: Int? = nil,
         suggestedOutputFilename: String? = nil,
-        videoConversionChoice: ExactTrimChoice? = nil
+        videoConversionChoice: ExactTrimChoice? = nil,
+        mkvRemuxPlan: ResolvedMKVRemuxPlan? = nil
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
@@ -177,6 +184,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         self.externalSubtitleCleanupChangeCount = externalSubtitleCleanupChangeCount
         self.suggestedOutputFilename = suggestedOutputFilename
         self.videoConversionChoice = videoConversionChoice
+        self.mkvRemuxPlan = mkvRemuxPlan
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -208,11 +216,12 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     }
 
     public var createsUnchangedCopy: Bool {
-        operations.isEmpty && suggestedOutputFilename != nil
+        operations.isEmpty && suggestedOutputFilename != nil && mkvRemuxPlan == nil
     }
 
     public var hasDeterministicMediaOperations: Bool {
         trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
+            || mkvRemuxPlan != nil
     }
 
     public var audioConversionPreset: AudioTranscodePreset? {
@@ -230,6 +239,11 @@ public struct SavedWorkflowCompiler: Sendable {
         for workflow: SavedWorkflow,
         asset: MediaAsset
     ) -> Bool {
+        if workflow.steps.contains(where: { $0.isEnabled && $0.action == .remuxToMKV }),
+            MKVRemuxPlanner().canOffer(for: asset)
+        {
+            return false
+        }
         let videoWillRun = workflow.steps.contains {
             $0.isEnabled && $0.action.videoConversionApplies(to: asset)
         }
@@ -288,10 +302,31 @@ public struct SavedWorkflowCompiler: Sendable {
         guard !enabledSteps.isEmpty else {
             throw SavedWorkflowCompilationError.noEnabledSteps
         }
-        guard MatroskaEditingPolicy.supports(asset) else {
-            throw SavedWorkflowCompilationError.unsupportedContainer
-        }
         let enabledActions = Set(enabledSteps.map(\.action))
+        let mkvRemuxPlan: ResolvedMKVRemuxPlan?
+        if enabledActions.contains(.remuxToMKV) {
+            do {
+                mkvRemuxPlan = try MKVRemuxPlanner().resolve(source: asset)
+            } catch MKVRemuxPlanningError.alreadyMatroskaMKV {
+                guard MatroskaEditingPolicy.supports(asset) else {
+                    throw SavedWorkflowCompilationError.unsupportedContainer
+                }
+                mkvRemuxPlan = nil
+            } catch let error as MKVRemuxPlanningError {
+                throw SavedWorkflowCompilationError.unsupportedMKVRemux(error)
+            }
+        } else {
+            guard MatroskaEditingPolicy.supports(asset) else {
+                throw SavedWorkflowCompilationError.unsupportedContainer
+            }
+            mkvRemuxPlan = nil
+        }
+        if mkvRemuxPlan != nil {
+            let compatibleActions: Set<SavedWorkflowAction> = [.remuxToMKV, .normalizeFilename]
+            guard enabledActions.isSubset(of: compatibleActions) else {
+                throw SavedWorkflowCompilationError.remuxCannotCombineWithOtherActions
+            }
+        }
         let enabledVideoConversions = enabledSteps.filter { $0.action.isVideoConversion }
         guard enabledVideoConversions.count <= 1 else {
             throw SavedWorkflowCompilationError.multipleVideoConversions
@@ -350,6 +385,30 @@ public struct SavedWorkflowCompiler: Sendable {
                 continue
             }
             switch step.action {
+            case .remuxToMKV:
+                if let mkvRemuxPlan {
+                    let trackNoun = mkvRemuxPlan.copiedTrackCount == 1 ? "track" : "tracks"
+                    let chapterDetail =
+                        mkvRemuxPlan.chapterCarrierTrackIDs.isEmpty
+                        ? "preserve the reviewed chapter table"
+                        : "translate the MP4 chapter carrier into nested Matroska chapters"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail:
+                                "Packet-copy \(mkvRemuxPlan.copiedTrackCount) media \(trackNoun) into MKV and \(chapterDetail)"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "The source is already an MKV; keep its container unchanged."
+                        )
+                    )
+                }
             case .englishLibraryCleanup, .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH:
                 let suggestions = cleanupSuggestions(for: step.action, asset: asset)
@@ -572,7 +631,7 @@ public struct SavedWorkflowCompiler: Sendable {
                 at: removalInsertionIndex ?? operations.endIndex
             )
         }
-        guard !operations.isEmpty || suggestedOutputFilename != nil else {
+        guard !operations.isEmpty || suggestedOutputFilename != nil || mkvRemuxPlan != nil else {
             return SavedWorkflowCompilationPreview(
                 workflowID: workflow.id,
                 workflowName: workflow.name,
@@ -582,7 +641,31 @@ public struct SavedWorkflowCompiler: Sendable {
         }
 
         let plan: ExecutionPlan
-        if operations.isEmpty {
+        if let mkvRemuxPlan {
+            let trackNoun = mkvRemuxPlan.copiedTrackCount == 1 ? "track" : "tracks"
+            plan = ExecutionPlan(
+                stages: [
+                    PlanStage(
+                        mechanism: .mkvMerge,
+                        summary:
+                            "Packet-copy \(mkvRemuxPlan.copiedTrackCount) compatible media \(trackNoun) into one MKV"
+                    ),
+                    PlanStage(
+                        mechanism: .verify,
+                        summary: "Verify copied packet payloads, tracks, and chapters"
+                    ),
+                    PlanStage(
+                        mechanism: .commit,
+                        summary: "Commit and reopen the verified MKV"
+                    ),
+                ],
+                impact: PlanImpact(
+                    videoEncodeCount: 0,
+                    audioEncodeCount: 0,
+                    copiesVideo: true
+                )
+            )
+        } else if operations.isEmpty {
             plan = ExecutionPlan(
                 stages: [
                     PlanStage(
@@ -625,7 +708,8 @@ public struct SavedWorkflowCompiler: Sendable {
                 .cleanExternalSubtitleText
             ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil,
             suggestedOutputFilename: suggestedOutputFilename,
-            videoConversionChoice: videoConversionChoice
+            videoConversionChoice: videoConversionChoice,
+            mkvRemuxPlan: mkvRemuxPlan
         )
         return SavedWorkflowCompilationPreview(
             workflowID: workflow.id,
@@ -681,6 +765,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Add one external subtitle"
         case .cleanExternalSubtitleText:
             "Clean the added subtitle text"
+        case .remuxToMKV:
+            "Remux compatible media to MKV"
         case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
             .convertVideoHEVC, .convertVideoH264, .convertVideoProRes:
             "Convert video once"
@@ -709,6 +795,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No external subtitle was selected."
         case .cleanExternalSubtitleText:
             "No subtitle text cleanup changes were selected."
+        case .remuxToMKV:
+            "The source is already an MKV."
         case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
             .convertVideoHEVC, .convertVideoH264, .convertVideoProRes:
             "No video conversion was selected."
