@@ -75,6 +75,9 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
           test "$(xcodebuild -version | head -1)" = "Xcode 26.3"
 
+      - name: Install runtime-build dependencies
+        run: brew install cmake meson ninja pkgconf
+
       - name: Build, package, and execute bundled tools
         env:
           MKV_MAGIC_TOOL_SOURCE_ROOT: ${{ runner.temp }}/mkv-magic-tools

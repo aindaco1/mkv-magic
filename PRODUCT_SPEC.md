@@ -860,9 +860,12 @@ lanes, one-generation video normalization, per-lane AAC conversion,
 largest-layout audio preservation, silent missing audio sections, text-subtitle
 normalization, and explicit format decisions. A bounded active FFmpeg probe now
 admits only encoders and required filters that work on the running Mac. The
-current bundled runtime verifies HEVC/H.264 VideoToolbox, ProRes, and AAC, but
-contains no AV1 encoder; the native review therefore recommends HEVC as its
-verified fallback and does not imply that AV1 is executable. It fails closed for
+current bundled runtime includes checksum-pinned, statically linked SVT-AV1
+4.1.0 and dav1d 1.5.4 in both architecture slices, actively verifies AV1 10-bit
+encoding, and requires software decode of the produced AV1 frame. This keeps AV1
+usable on Macs without AV1 decode hardware. The native review prefers AV1 only
+after its local encode succeeds and retains HEVC as the verified faster fallback.
+It fails closed for
 incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision
 transcodes, unsupported HDR, and image subtitle conversion. A revision-bound
 choice resolver and pure FFmpeg compiler now turn exact SDR video and AAC layout
@@ -947,6 +950,16 @@ Deliverables:
 - Standard and Strict transcode verification.
 
 Gate: multi-step video workflows use one encoded generation, and tested HDR outputs retain the required metadata or fail safely.
+
+Current implementation: the pinned Universal runtime now builds separate
+`arm64` and `x86_64` SVT-AV1 4.1.0 and dav1d 1.5.4 static libraries, links them
+into the network-disabled FFmpeg, bundles the required notices, publishes the
+matching source archives and SBOM components, and proves real 10-bit AV1 encode
+and software decode for both slices. Join and Exact Trim already route a
+verified AV1 choice through their shared single-generation compiler with an
+explicit balanced SVT preset.
+The first-run timed benchmark, user-facing advanced preset controls, HDR10
+transcode preservation, and physical Intel performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
 

@@ -13,10 +13,12 @@ Hardware encode availability varies by Mac model. MKV Magic reads the bundled
 FFmpeg capability tables and then runs bounded one-frame local smoke encodes;
 only paths that actively succeed on the running Mac are offered. The probe uses
 generated raw fixtures in a private temporary directory, never user media or a
-network request. The current runtime can expose VideoToolbox H.264/HEVC, ProRes,
-and AAC after verification. AV1 decoding is bundled. Software AV1 encoding
-remains a planned v1 runtime addition and is neither present nor claimed by the
-current build.
+network request. The current runtime can expose statically linked SVT-AV1
+10-bit software encoding, VideoToolbox H.264/HEVC, ProRes, and AAC after
+verification. Statically linked dav1d software decoding lets Macs without AV1
+decode hardware reopen AV1 inputs and MKV Magic outputs. If software AV1 cannot
+complete the local encode probe, it is not offered; a verified hardware HEVC
+path remains the preferred faster fallback on older Intel Macs.
 
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app

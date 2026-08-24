@@ -56,6 +56,8 @@ copy_verified_source() {
 sources="$tool_root/SOURCES.json"
 ffmpeg_version="$(jq -r '.ffmpeg.version' "$sources")"
 nasm_version="$(jq -r '.nasm.version' "$sources")"
+svtav1_version="$(jq -r '.svtav1.version' "$sources")"
+dav1d_version="$(jq -r '.dav1d.version' "$sources")"
 mkvtoolnix_version="$(jq -r '.mkvtoolnix.version' "$sources")"
 qt_version="$(jq -r '.qtbase.version' "$sources")"
 copy_verified_source \
@@ -64,6 +66,12 @@ copy_verified_source \
 copy_verified_source \
     "$cache_root/nasm-$nasm_version/nasm-$nasm_version.tar.xz" \
     "$(jq -r '.nasm.sha256' "$sources")"
+copy_verified_source \
+    "$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz" \
+    "$(jq -r '.svtav1.sha256' "$sources")"
+copy_verified_source \
+    "$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.bz2" \
+    "$(jq -r '.dav1d.sha256' "$sources")"
 copy_verified_source \
     "$cache_root/mkvtoolnix-$mkvtoolnix_version/mkvtoolnix-$mkvtoolnix_version.tar.xz" \
     "$(jq -r '.mkvtoolnix.sourceSha256' "$sources")"

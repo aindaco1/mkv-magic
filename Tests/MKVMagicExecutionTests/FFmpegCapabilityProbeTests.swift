@@ -107,12 +107,13 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
             runner: FoundationCommandRunner()
         ).probe()
 
-        XCTAssertEqual(capabilities.softwareAV1, .unavailable)
+        XCTAssertEqual(capabilities.softwareAV1, .verified)
+        XCTAssertEqual(capabilities.softwareAV1Encoder, "libsvtav1")
         XCTAssertEqual(capabilities.hevc10VideoToolbox, .verified)
         XCTAssertEqual(capabilities.h264VideoToolbox, .verified)
         XCTAssertEqual(capabilities.proRes, .verified)
         XCTAssertEqual(capabilities.aac, .verified)
-        XCTAssertEqual(capabilities.recommendedVideoPreset, .hevcCompatibility)
+        XCTAssertEqual(capabilities.recommendedVideoPreset, .av1Quality)
         XCTAssertTrue(capabilities.missingJoinFilters.isEmpty)
     }
 

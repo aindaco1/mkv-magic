@@ -256,6 +256,9 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
 
             XCTAssertEqual(command.arguments.filter { $0 == encoder }.count, 1, preset.rawValue)
             XCTAssertTrue(command.arguments.contains(expectedFlag), preset.rawValue)
+            if preset == .av1Quality {
+                XCTAssertEqual(value(after: "-preset:v:0", in: command.arguments), "8")
+            }
         }
     }
 

@@ -161,11 +161,15 @@ and repeats semantic and chapter audits after reopen. It currently fails closed
 for source tags, subtitle/data tracks, multiple video tracks, ordered editions,
 HDR/Dolby Vision, incomplete color/layout facts, unavailable encoders, and
 non-MKV inputs.
-The currently bundled FFmpeg proves HEVC and H.264 VideoToolbox, ProRes, AAC,
-and the required join filters on the running Mac. It has AV1 decoding but no AV1
-encoder, so AV1 is not presented as available: HEVC 10-bit is the current
-verified fallback. A pinned software AV1 sidecar remains planned before AV1
-encoding can be selected.
+The bundled FFmpeg includes checksum-pinned, statically linked SVT-AV1 4.1.0
+for native 10-bit software AV1 encoding and dav1d 1.5.4 for software AV1
+decoding on both Apple Silicon and Intel. This allows Macs without hardware AV1
+decoding to reopen the app's preferred outputs. MKV Magic still offers an
+encoder only after its one-frame local smoke probe succeeds on the running Mac:
+verified AV1 is the preferred quality/size choice, while verified HEVC 10-bit
+VideoToolbox remains the faster fallback for slow or unsupported Intel hardware.
+H.264 VideoToolbox, ProRes, AAC, and every required join filter are independently
+probed as well.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. History also offers an explicit privacy-safe JSON export for
@@ -197,6 +201,8 @@ Requirements:
 - macOS 13 or newer
 - Xcode 16 or newer with Swift 6
 - `rg`, `shellcheck`, and standard Apple command-line developer tools
+- `cmake`, `meson`, `ninja`, and `pkg-config` when rebuilding the bundled media
+  runtime from source
 
 Run the supported source gate:
 

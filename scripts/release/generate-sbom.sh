@@ -80,6 +80,46 @@ if [[ -d "$tool_root" ]]; then
                 }' "$manifest"
         )
     done
+    sources="$tool_root/SOURCES.json"
+    svt_component="$(
+        jq -c '
+          .svtav1 | {
+            type: "library",
+            name: "SVT-AV1",
+            version: .version,
+            purl: ("pkg:generic/SVT-AV1@" + .version),
+            hashes: [{alg: "SHA-256", content: .sha256}],
+            licenses: [{license: {id: .license}}],
+            externalReferences: [{type: "distribution", url: .url}],
+            properties: [
+              {name: "mkv-magic:linkage", value: "static-in-ffmpeg"},
+              {name: "mkv-magic:patent-license", value: .patentLicense}
+            ]
+          }
+        ' "$sources"
+    )"
+    jq --argjson component "$svt_component" \
+        '.components += [$component]' "$temporary" > "$temporary.next"
+    mv "$temporary.next" "$temporary"
+    dav1d_component="$(
+        jq -c '
+          .dav1d | {
+            type: "library",
+            name: "dav1d",
+            version: .version,
+            purl: ("pkg:generic/dav1d@" + .version),
+            hashes: [{alg: "SHA-256", content: .sha256}],
+            licenses: [{license: {id: .license}}],
+            externalReferences: [{type: "distribution", url: .url}],
+            properties: [
+              {name: "mkv-magic:linkage", value: "static-in-ffmpeg"}
+            ]
+          }
+        ' "$sources"
+    )"
+    jq --argjson component "$dav1d_component" \
+        '.components += [$component]' "$temporary" > "$temporary.next"
+    mv "$temporary.next" "$temporary"
 fi
 jq -S . "$temporary" > "$output"
 chmod 0644 "$output"

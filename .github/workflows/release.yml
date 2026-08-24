@@ -63,8 +63,8 @@ jobs:
             "$GITHUB_WORKSPACE/.github/allowed_signers"
           ./scripts/release/validate-tag.sh "$RELEASE_TAG"
 
-      - name: Install source-gate dependencies
-        run: brew install ripgrep shellcheck
+      - name: Install source and runtime-build dependencies
+        run: brew install cmake meson ninja pkgconf ripgrep shellcheck
 
       - name: Validate source
         run: ./scripts/ci/local-gate.sh

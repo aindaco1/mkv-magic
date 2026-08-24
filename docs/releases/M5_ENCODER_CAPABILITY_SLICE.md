@@ -75,3 +75,13 @@ real-library beta acceptance remain separate delivery gates.
 - Strict HDR10, audio layout, final MKV, chapter, and decode-boundary output
   verification.
 - Physical Intel capability and performance acceptance.
+
+## Subsequent update
+
+The M6 AV1 runtime slice supersedes the absence described above: the bundled
+FFmpeg now statically links checksum-pinned SVT-AV1 4.1.0 in separate ARM64 and
+x86_64 builds. Both slices must complete a real 10-bit AV1 encode during runtime
+assembly, and the normal app probe still verifies the encoder on the running
+machine before offering it. The same runtime now statically links dav1d 1.5.4
+and must decode its AV1 smoke output in both slices, including on Macs without
+hardware AV1 decoding. Physical Intel performance acceptance remains open.

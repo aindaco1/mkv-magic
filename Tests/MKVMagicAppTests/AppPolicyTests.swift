@@ -588,6 +588,41 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testLosslessJoinWindowPrefersActivelyVerifiedSoftwareAV1() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .verified,
+            softwareAV1Encoder: "libsvtav1",
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let controller = LosslessJoinWindowController(
+            options: [
+                losslessJoinVideoOption(part: 1, codec: "h264", width: 1_920, height: 1_080),
+                losslessJoinVideoOption(part: 2, codec: "hevc", width: 3_840, height: 2_160),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let review = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        ).string
+        XCTAssertTrue(review.contains("one AV1 10-bit generation"))
+        XCTAssertFalse(review.contains("verified fallback"))
+        XCTAssertTrue(
+            try XCTUnwrap(
+                buttons(in: content).first { $0.title == "Review Common Format…" }
+            ).isEnabled
+        )
+    }
+
     func testExternalSubtitleMetadataIsCanonicalAndBounded() throws {
         XCTAssertEqual(
             try ExternalSubtitleMuxPresentation.metadata(

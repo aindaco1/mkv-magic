@@ -27,6 +27,30 @@ MKV Magic builds FFmpeg from checksum-pinned source with network protocols and
 ambient dependency discovery disabled. The exact configure flags and source
 archive hash are recorded in each release's build metadata.
 
+## SVT-AV1 4.1.0
+
+- Project: https://gitlab.com/AOMediaCodec/SVT-AV1
+- License: BSD-3-Clause-Clear and Alliance for Open Media Patent License 1.0
+- Purpose: software AV1 10-bit encoding through the bundled FFmpeg
+- Distribution: architecture-specific static library linked into `ffmpeg`
+
+MKV Magic builds separate checksum-pinned ARM64 and x86_64 static libraries,
+with native-machine optimization disabled and runtime CPU dispatch retained.
+The software and patent license texts are included in every tool bundle, and
+the matching source archive is included in corresponding source releases.
+
+## dav1d 1.5.4
+
+- Project: https://code.videolan.org/videolan/dav1d
+- License: BSD-2-Clause
+- Purpose: software AV1 decoding through the bundled FFmpeg
+- Distribution: architecture-specific static library linked into `ffmpeg`
+
+MKV Magic builds separate checksum-pinned ARM64 and x86_64 static libraries so
+Macs without hardware AV1 decoding can reopen and process AV1 files, including
+files created by MKV Magic. The license is included in every tool bundle, and
+the matching source archive is included in corresponding source releases.
+
 ## MKVToolNix 100.0
 
 - Project: https://codeberg.org/mbunkus/mkvtoolnix

@@ -10,6 +10,75 @@ if [[ ! -d "$tool_root" || -L "$tool_root" ]]; then
     echo "missing or unsafe tool root" >&2
     exit 1
 fi
+sources="$tool_root/SOURCES.json"
+required_license_files=(
+    "$tool_root/Licenses/FFmpeg-GPLv3.txt"
+    "$tool_root/Licenses/MKVToolNix-GPL.txt"
+    "$tool_root/Licenses/SVT-AV1/LICENSE.md"
+    "$tool_root/Licenses/SVT-AV1/PATENTS.md"
+    "$tool_root/Licenses/dav1d/COPYING"
+    "$tool_root/Licenses/Qt/LICENSES/LGPL-3.0-only.txt"
+)
+if [[ ! -f "$sources" || -L "$sources" ]]; then
+    echo "missing or unsafe tool source manifest" >&2
+    exit 1
+fi
+for license_file in "${required_license_files[@]}"; do
+    if [[ ! -s "$license_file" || -L "$license_file" ]]; then
+        echo "missing or unsafe runtime license: $license_file" >&2
+        exit 1
+    fi
+done
+if ! jq -e '
+    (keys | sort) == ["dav1d", "ffmpeg", "minimumMacOS", "mkvtoolnix", "nasm", "qtbase", "schema", "svtav1"] and
+    .schema == "mkv-magic-tool-sources-v2" and
+    .minimumMacOS == "13.0" and
+    .ffmpeg.network == false and
+    .ffmpeg.license == "GPL-3.0-or-later" and
+    (.ffmpeg.url | startswith("https://ffmpeg.org/")) and
+    (.ffmpeg.sha256 | test("^[a-f0-9]{64}$")) and
+    (.ffmpeg.configuration | sort) == ([
+      "--disable-autodetect", "--disable-avdevice", "--disable-network",
+      "--disable-shared", "--enable-audiotoolbox", "--enable-gpl",
+      "--enable-libdav1d", "--enable-libsvtav1", "--enable-static", "--enable-version3",
+      "--enable-videotoolbox"
+    ] | sort) and
+    .nasm.buildOnly == true and
+    .nasm.license == "BSD-2-Clause" and
+    (.nasm.url | startswith("https://www.nasm.us/")) and
+    (.nasm.sha256 | test("^[a-f0-9]{64}$")) and
+    .svtav1.linkedStatically == true and
+    .svtav1.license == "BSD-3-Clause-Clear" and
+    .svtav1.patentLicense == "Alliance for Open Media Patent License 1.0" and
+    (.svtav1.url | startswith("https://gitlab.com/AOMediaCodec/SVT-AV1/")) and
+    (.svtav1.sha256 | test("^[a-f0-9]{64}$")) and
+    (.svtav1.build | sort) == ([
+      "BUILD_APPS=OFF", "BUILD_SHARED_LIBS=OFF", "BUILD_TESTING=OFF",
+      "EXCLUDE_HASH=ON", "NATIVE=OFF", "SVT_AV1_LTO=OFF"
+    ] | sort) and
+    .dav1d.linkedStatically == true and
+    .dav1d.license == "BSD-2-Clause" and
+    (.dav1d.url | startswith("https://code.videolan.org/videolan/dav1d/")) and
+    (.dav1d.sha256 | test("^[a-f0-9]{64}$")) and
+    (.dav1d.build | sort) == ([
+      "b_lto=false", "default_library=static", "enable_docs=false",
+      "enable_examples=false", "enable_tests=false", "enable_tools=false"
+    ] | sort) and
+    .mkvtoolnix.license == "GPL-2.0-or-later" and
+    (.mkvtoolnix.binaryURL | startswith("https://mkvtoolnix.download/")) and
+    (.mkvtoolnix.sourceURL | startswith("https://mkvtoolnix.download/")) and
+    (.mkvtoolnix.binarySha256 | test("^[a-f0-9]{64}$")) and
+    (.mkvtoolnix.sourceSha256 | test("^[a-f0-9]{64}$")) and
+    .qtbase.license == "LGPL-3.0-only" and
+    (.qtbase.url | startswith("https://download.qt.io/")) and
+    (.qtbase.sha256 | test("^[a-f0-9]{64}$")) and
+    ([.ffmpeg.version, .nasm.version, .svtav1.version, .dav1d.version,
+      .mkvtoolnix.version, .qtbase.version]
+      | all(type == "string" and length > 0))
+' "$sources" >/dev/null; then
+    echo "invalid tool source manifest" >&2
+    exit 1
+fi
 expected_tools=(ffmpeg ffprobe mkvmerge mkvpropedit mkvextract)
 for architecture in arm64 x86_64; do
     architecture_root="$tool_root/$architecture"

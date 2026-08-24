@@ -21,6 +21,11 @@ struct FFmpegSDRVideoEncoderArguments: Sendable {
             guard (0...63).contains(quality) else {
                 throw FFmpegSDRVideoEncoderArgumentError.invalidChoice
             }
+            // Pin SVT's balanced default so an upstream default change cannot
+            // silently alter the reviewed speed/quality impact of a workflow.
+            if encoder == "libsvtav1" {
+                arguments.append(contentsOf: ["-preset:v:\(outputIndex)", "8"])
+            }
             arguments.append(contentsOf: [
                 "-crf:v:\(outputIndex)", String(quality),
                 "-b:v:\(outputIndex)", "0",
