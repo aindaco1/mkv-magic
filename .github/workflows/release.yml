@@ -45,7 +45,6 @@ jobs:
         run: |
           {
             printf 'MKV_MAGIC_VERSION=%s\n' "${RELEASE_TAG#v}"
-            printf 'MKV_MAGIC_BUILD_NUMBER=%s\n' "$GITHUB_RUN_NUMBER"
             printf 'MKV_MAGIC_RELEASE_ROOT=%s\n' "$RUNNER_TEMP/mkv-magic-release"
             printf 'MKV_MAGIC_TOOL_SOURCE_ROOT=%s\n' "$RUNNER_TEMP/mkv-magic-tools"
             printf 'MKV_MAGIC_TOOL_CACHE=%s\n' "$RUNNER_TEMP/mkv-magic-tool-sources"
@@ -71,6 +70,12 @@ jobs:
             echo "release workflow source does not match the release tag commit" >&2
             exit 1
           fi
+          release_build_number="$(
+            ./scripts/release/derive-release-build-number.sh \
+              "$RELEASE_TAG" 20260825
+          )"
+          printf 'MKV_MAGIC_BUILD_NUMBER=%s\n' "$release_build_number" \
+            >> "$GITHUB_ENV"
 
       - name: Install source and runtime-build dependencies
         run: brew install actionlint cmake meson ninja pkgconf ripgrep shellcheck

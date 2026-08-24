@@ -740,7 +740,7 @@ Diagnostics remain local unless the user explicitly exports them. The current pr
 
 ### 10.2 Release pipeline
 
-1. Release only an immutable, signed, annotated `vMAJOR.MINOR.PATCH` tag that resolves to the reviewed `main` commit and validates against the repository's pinned allowed signers. Tag update and deletion are blocked.
+1. Release only an immutable, signed, annotated `vMAJOR.MINOR.PATCH` tag that resolves to the reviewed `main` commit and validates against the repository's pinned allowed signers. Derive the positive signed-32-bit `CFBundleVersion` from that signed tag's Unix tagger timestamp, require it to increase beyond the accepted prior build, and keep the result stable across workflow reruns. Tag update and deletion are blocked.
 2. Run the complete local gate on the exact commit, then rerun it in hosted CI with read-only default permissions, commit-pinned GitHub Actions, a pinned release Xcode, and locked Swift dependencies that must not change during resolution.
 3. Run formatting/lint, unit, planner-golden, integration, UI, fault, security, sanitizer, architecture, package, secret, license, and dependency gates. Build-script fixtures must test their own rejection paths.
 4. Build or fetch only provenance-verified, checksum-pinned FFmpeg and MKVToolNix inputs for both `arm64` and `x86_64`; verify source/build manifests before assembly.
@@ -1467,6 +1467,13 @@ final corresponding-source set, and was not exercised on physical Intel
 hardware, so none of the final publication gates are waived. The exact evidence
 and artifact digests are recorded in
 `docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md`.
+
+Release `CFBundleVersion` values come from the signed annotated tag's Unix
+tagger timestamp, not the GitHub workflow run counter. Derivation happens only
+after signed-tag and exact-source validation, is stable across reruns, is
+bounded to a positive signed 32-bit integer, and must be strictly newer than the
+accepted private rehearsal build `20260825`. Lightweight tags and invalid or
+non-increasing build values fail before source validation or credential use.
 
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 

@@ -9,11 +9,13 @@ cleanup() {
 trap cleanup EXIT
 release_root="$gate_root/artifacts"
 export MKV_MAGIC_BUNDLE_IDENTIFIER=com.dustwave.mkvmagic.package-gate
+private_rehearsal_build=20260825
+fixture_release_build=1787702400
 
 cd "$repo_root"
 MKV_MAGIC_RELEASE_ROOT="$release_root" \
 MKV_MAGIC_VERSION=0.0.0 \
-MKV_MAGIC_BUILD_NUMBER=2 \
+MKV_MAGIC_BUILD_NUMBER="$fixture_release_build" \
     ./scripts/release/build-app.sh >/dev/null
 app_path="$release_root/MKV Magic.app"
 
@@ -48,7 +50,7 @@ mkdir -p "$(dirname "$prior_app")"
 ditto --norsrc --noextattr "$app_path" "$prior_app"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString 0.0.0" \
     "$prior_app/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion 1" \
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $private_rehearsal_build" \
     "$prior_app/Contents/Info.plist"
 ./scripts/release/sign-app.sh "$prior_app" - none
 swift run -c release --disable-automatic-resolution MKVMagicAppBaselineProbe \

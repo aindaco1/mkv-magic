@@ -480,6 +480,13 @@ corresponding-source, downloaded-draft, clean-account, or physical-Intel gates.
 See
 [docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md](docs/releases/M9_PRIVATE_SPARKLE_REPLACEMENT_REHEARSAL.md).
 
+Release build numbers are derived from the signed annotated tag's Unix tagger
+timestamp, remain stable across workflow reruns, and must be newer than the
+accepted private build `20260825`. The disposable package gate exercises that
+10-digit build shape through app assembly, appcast generation, and real Sparkle
+replacement. See
+[docs/releases/M9_RELEASE_BUILD_NUMBER_SLICE.md](docs/releases/M9_RELEASE_BUILD_NUMBER_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

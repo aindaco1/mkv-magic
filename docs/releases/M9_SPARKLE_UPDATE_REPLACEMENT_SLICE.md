@@ -51,13 +51,15 @@ build number is lower.
 
 ## Regression evidence
 
-The disposable package gate now creates build 1 and build 2 of the development
-fixture with a one-time key. It proves that an appcast signed by a different key
-is rejected without changing build 1, then proves that the matching key replaces
-the disposable copy with the exact build-2 archive. The appcast archive signature
-is compared to the packaged feed before replacement. The complete package gate
-passed on Apple Silicon using the Universal Sparkle driver and left the shipped
-feed policy unchanged.
+The disposable package gate now creates a prior app at the private-rehearsal
+floor `20260825` and a candidate at signed-tag-shaped build `1787702400`, using
+a one-time key. It proves that an appcast signed by a different key is rejected
+without changing the prior app, then proves that the matching key replaces it
+with the exact candidate archive. This exercises the production build-number
+shape through app assembly, appcast generation, and Sparkle replacement. The
+appcast archive signature is compared to the packaged feed before replacement.
+The complete package gate passed on Apple Silicon using the Universal Sparkle
+driver and left the shipped feed policy unchanged.
 
 The final complete local gate passed 513 tests with 33 intentional source-only
 bundled-runtime skips and zero failures in ordinary, coverage,
