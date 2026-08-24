@@ -63,15 +63,22 @@ unsupported review returns **Needs Review** without creating an output.
   reconstructs the same work. Both outputs contain the reviewed English track,
   omit the advertisement, remove the segment title, preserve both input digests,
   and record **Waiting -> Running -> Succeeded**.
+- A table-driven real bundled-tool regression separately queues modern ASS and
+  legacy SSA. It proves the automatic run restores the user's retained OCR
+  event, applies the accepted advertisement and whitespace cleanup, preserves
+  each format's header, style, and override tags, emits the distinct
+  `S_TEXT/ASS` or `S_TEXT/SSA` codec, applies all reviewed track flags, removes
+  the segment title, records one zero-encode History job, and leaves both input
+  files byte-identical.
 - The same regression replaces the sidecar with different same-size content and
   restores its reviewed millisecond modification time. Although the path-free
   revision still matches, the SHA-256 boundary moves the automatic job to
   **Needs Review**, creates no output, and records no false History success.
 
-- The runtime-pinned 2026-08-24 complete local gate ran all 592 tests with zero
+- The runtime-pinned 2026-08-24 complete local gate ran all 593 tests with zero
   failures and zero skips under normal, AddressSanitizer, and ThreadSanitizer
-  configurations. Source coverage was 74.98% line, 78.27% function, 67.73%
-  region, and 88.67% non-UI line. The Universal arm64/x86_64 build, nested
+  configurations. Source coverage was 75.01% line, 78.32% function, 67.80%
+  region, and 88.72% non-UI line. The Universal arm64/x86_64 build, nested
   signature/layout verification, bundled-tool manifest checks, Sparkle update
   replacement, SBOM and checksum validation, and independent DMG verification
   all passed.
