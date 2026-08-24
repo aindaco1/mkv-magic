@@ -46,13 +46,17 @@ verified BT.709 SDR result. SDR-to-HDR conversion, HDR10+, HLG, and Dolby Vision
 transcoding remain unavailable.
 
 **Convert Video…** supports the same validated BT.709 SDR and static-HDR10
-one-generation contract for the complete duration of an eligible Matroska MKV.
-It currently requires one video track plus any audio and subtitle tracks,
-packet-copies audio and subtitles by default, preserves attachments and the
-unchanged nested chapter tree, and creates MKV. Copied audio and subtitle packet
-payloads are fingerprinted before commit and after reopen. Data tracks, multiple
-video tracks, source tags, non-MKV input/output, and unsupported HDR families are
-refused before encoding.
+one-generation contract for the complete duration of eligible MKV, MP4, M4V,
+MOV, and chapter-free WebM input and always creates MKV. Eligible MKV input may
+preserve supported audio and subtitle tracks, attachments, and the unchanged
+nested chapter tree. Common input requires one video, no subtitles or
+attachments, unambiguous data/chapter facts, and only reviewed title/track
+metadata plus known container provenance. MP4/MOV chapters become one default
+nested Matroska edition. Compatible audio and MKV subtitles are packet-copied
+and fingerprinted before commit and after reopen; other common audio must use an
+offered layout-preserving conversion. Ambiguous data, chaptered WebM, multiple
+video tracks, source tags on MKV, non-MKV output, incomplete color facts, and
+unsupported HDR families are refused before encoding.
 
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app

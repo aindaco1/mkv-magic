@@ -550,9 +550,12 @@ public struct ExactTrimOutputVerifier: Sendable {
             throw ExactTrimVerificationError.wrongDuration
         }
 
-        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let reviewedTrackIDs = Set(resolvedPlan.trackIDsInOutputOrder)
+        let originalTracks = original.tracks.filter { reviewedTrackIDs.contains($0.id) }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
-        guard outputTracks.count == originalTracks.count else {
+        guard originalTracks.map(\.id) == resolvedPlan.trackIDsInOutputOrder,
+            outputTracks.count == originalTracks.count
+        else {
             throw ExactTrimVerificationError.wrongTrackCount
         }
         guard outputTracks.map(\.kind) == originalTracks.map(\.kind) else {
@@ -582,7 +585,8 @@ public struct ExactTrimOutputVerifier: Sendable {
                     audioMatches(
                         outputTrack,
                         source: sourceTrack,
-                        policy: resolvedPlan.choice.audioPolicy
+                        policy: resolvedPlan.choice.audioPolicy,
+                        sourceKind: resolvedPlan.sourceKind
                     )
                 else {
                     throw ExactTrimVerificationError.audioMismatch(trackID: sourceTrack.id)
@@ -601,10 +605,15 @@ public struct ExactTrimOutputVerifier: Sendable {
             }
         }
         try verifyAttachments(original.attachments, output.attachments)
-        guard
-            output.metadata.removingRemuxProvenance
-                == original.metadata.removingRemuxProvenance,
-            output.globalTagCount == 0,
+        let metadataMatches =
+            if resolvedPlan.sourceKind.isMatroska {
+                output.metadata.removingRemuxProvenance
+                    == original.metadata.removingRemuxProvenance
+            } else {
+                output.metadata.titleValue == original.metadata.titleValue
+                    && output.metadata.removingRemuxProvenance.removingTitle.isEmpty
+            }
+        guard metadataMatches, output.globalTagCount == 0,
             output.trackTagCount == 0
         else {
             throw ExactTrimVerificationError.metadataChanged
@@ -664,10 +673,15 @@ public struct ExactTrimOutputVerifier: Sendable {
     private func audioMatches(
         _ actual: MediaTrack,
         source: MediaTrack,
-        policy: ExactTrimAudioPolicy
+        policy: ExactTrimAudioPolicy,
+        sourceKind: ExactVideoSourceKind
     ) -> Bool {
         switch policy {
         case .packetCopy:
+            if !sourceKind.isMatroska {
+                return ExactTrimCrossContainerCopiedAudioSnapshot(actual)
+                    == ExactTrimCrossContainerCopiedAudioSnapshot(source)
+            }
             return ExactTrimCopiedAudioSnapshot(actual)
                 == ExactTrimCopiedAudioSnapshot(source)
         case .aacPreserveLayout, .opusPreserveLayout, .ac3PreserveLayout,
@@ -1445,6 +1459,24 @@ private struct ExactTrimCopiedAudioSnapshot: Equatable {
         channelLayout = track.channelLayout?.lowercased()
         sampleRate = track.sampleRate
         bitDepth = track.bitDepth
+    }
+}
+
+private struct ExactTrimCrossContainerCopiedAudioSnapshot: Equatable {
+    let codecFamily: MediaCodecFamily
+    let profile: String?
+    let level: Int?
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+
+    init(_ track: MediaTrack) {
+        codecFamily = MediaCodecFamily(codec: track.codec, kind: track.kind)
+        profile = track.profile
+        level = track.level
+        channels = track.channels
+        channelLayout = track.channelLayout?.lowercased()
+        sampleRate = track.sampleRate
     }
 }
 

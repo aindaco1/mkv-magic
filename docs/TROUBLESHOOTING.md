@@ -38,9 +38,11 @@ control. The most common prerequisites are:
 - track edits need stable Matroska track UIDs;
 - track removal needs at least two stable tracks;
 - Trim needs one video track and a known duration;
-- Convert Video needs an MKV with one video track plus any audio and subtitle
-  tracks, complete reviewed color/layout facts, no data tracks, and no source
-  tags;
+- Convert Video needs one MKV, MP4, M4V, MOV, or chapter-free WebM video with
+  complete reviewed color/layout facts. MKV may preserve supported audio,
+  subtitles, and attachments but must have no data tracks or source tags.
+  Common input must have no subtitles or attachments, no ambiguous data or
+  chapters, and only metadata MKV Magic can deliberately preserve or normalize;
 - compatible Join needs at least two inspected Matroska files; and
 - text cleanup supports SRT and editable ASS/SSA text. PGS and VobSub can be
   preserved, extracted, removed, or muxed unchanged, but image-to-text OCR is
@@ -84,9 +86,11 @@ control. The most common prerequisites are:
   or another offered format instead of forcing an unverified conversion.
 - HDR10 preservation requires a validated static BT.2020/PQ signal. Dolby
   Vision, HDR10+, HLG, and SDR-to-HDR conversion are outside the v1 contract.
-- Convert Video always creates a new MKV in this beta. Embedded subtitles are
-  packet-copied and verified; MP4/MOV/WebM output and subtitle conversion are
-  not silently substituted.
+- Convert Video always creates a new MKV in this beta. Embedded subtitles from
+  MKV are packet-copied and verified. Common-container subtitle input, chaptered
+  WebM, MP4/MOV/WebM output, and subtitle conversion are not silently
+  substituted. If common audio cannot be copied into Matroska, choose an offered
+  audio conversion or leave the source unchanged.
 - A saved-workflow audio card converts every retained audio track to one chosen
   format. By itself it packet-copies video and text subtitles; with a video card
   both conversions share one FFmpeg process. Use the default packet-copy behavior

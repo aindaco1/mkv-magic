@@ -1,5 +1,10 @@
 # M6 verified standalone transcode slice
 
+Current-status note: this records the initial MKV-only slice. The later
+[common-input standalone transcode slice](M6_COMMON_INPUT_TRANSCODE_SLICE.md)
+extends the same verified action to bounded MP4, M4V, MOV, and chapter-free
+WebM input; the historical limits below describe this earlier checkpoint.
+
 This records engineering acceptance of the first native **Convert Video…**
 path. It is a bounded Matroska-to-Matroska capability, not a claim of arbitrary
 container conversion or full timeline editing.

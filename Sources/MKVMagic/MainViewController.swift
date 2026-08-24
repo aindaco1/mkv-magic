@@ -714,7 +714,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func prepareVideoProcessing(operation: ExactVideoOperation) {
         guard !isPreparingVideoProcessing, let asset = selectedAsset,
-            TrimPresentationPolicy.canOfferTrim(for: asset),
+            operation == .trim
+                ? TrimPresentationPolicy.canOfferTrim(for: asset)
+                : TrimPresentationPolicy.canOfferConversion(for: asset),
             let duration = asset.duration, let parentWindow = view.window
         else { return }
         let times =
@@ -2471,11 +2473,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         remuxButton.toolTip = remuxHelp
         remuxButton.setAccessibilityHelp(remuxHelp)
         convertButton.isEnabled =
-            !isPreparingVideoProcessing && TrimPresentationPolicy.canOfferTrim(for: asset)
+            !isPreparingVideoProcessing && TrimPresentationPolicy.canOfferConversion(for: asset)
         convertButton.toolTip =
             convertButton.isEnabled
-            ? "Convert the complete video once to AV1, HEVC, H.264, or ProRes while preserving audio and nested chapters by default."
-            : "Conversion currently requires an inspected MKV with exactly one video track and a known duration."
+            ? "Convert the complete MKV, MP4, M4V, MOV, or WebM video once to AV1, HEVC, H.264, or ProRes and create a verified MKV."
+            : "Conversion needs one supported video input whose tracks, metadata, and chapters can be preserved safely."
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {

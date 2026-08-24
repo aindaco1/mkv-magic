@@ -336,19 +336,26 @@ The trim UI uses thumbnails plus numeric in/out fields.
 Full transcoding is included in v1 but remains the last planning resort.
 
 Current implementation: **Convert Video…** provides a reviewed, full-file
-Matroska-to-Matroska transcode for eligible inspected MKVs with one video track
-plus any audio and subtitle tracks. It reuses the Exact Trim encoder compiler
-and verified-output transaction, so the selected video is encoded exactly once,
-audio and subtitles are copied by default, attachments and track metadata are
+transcode to MKV for eligible inspected MKV, MP4, M4V, MOV, and chapter-free
+WebM inputs. It reuses the Exact Trim encoder compiler and verified-output
+transaction, so the selected video is encoded exactly once. Compatible audio
+is packet-copied by default; an incompatible common-container audio codec must
+use one explicitly selected, locally verified layout-preserving conversion.
+For MKV input, subtitle tracks are copied, attachments and track metadata are
 preserved, and the original nested chapter document is reinstalled and
-canonically verified without trim-time retiming. Complete conversion emits no
+canonically verified without retiming. For MP4/M4V/MOV input, inspected chapter
+entries become one default nested Matroska edition and the single recognized
+QuickTime `bin_data` chapter carrier is not mapped as media. Common-container
+input must have one video, no subtitle or attachment tracks, a stable unique
+stream map, unambiguous chapter facts, only reviewed title/track metadata plus
+known container provenance, and complete supported color/HDR facts. Chaptered
+WebM and unknown or ambiguous data fail closed. Complete conversion emits no
 seek or duration cap and compares streaming ordered packet hashes for copied
-audio and subtitles before commit and after reopen. The compact native sheet
+audio and MKV subtitles before commit and after reopen. The compact native sheet
 defaults to the locally recommended verified AV1/HEVC/H.264/ProRes choice, keeps
 every compatible verified alternative, and uses a deterministic
-`— Converted.mkv` destination. Data tracks, multiple video tracks, source tags,
-unsupported or incomplete HDR/color facts, non-MKV inputs, and non-MKV outputs
-fail closed in this first standalone slice.
+`— Converted.mkv` destination. Multiple video tracks, source tags on MKV,
+unsupported or incomplete HDR/color facts, and non-MKV outputs fail closed.
 
 Saved workflows now expose the same complete-file conversion as portable intent:
 **Recommended for this Mac**, AV1, HEVC, H.264, or ProRes. Plan review resolves
@@ -1122,16 +1129,18 @@ chapters. Both routes use shared cancellable verified-output progress, add the
 reopened result to inspection, and persist a sanitized History lifecycle. The
 native **Convert Video…** route invokes the same exact planner for the complete
 duration under an explicit transcode operation. Unlike Trim, a zero-to-duration
-range is required; the executor preserves the original canonical nested chapter
-document rather than clipping or regenerating chapter identities. Audio and
-subtitle tracks are packet-copied by default. The complete-file command omits
+range is required. MKV input preserves the original canonical nested chapter
+document rather than clipping or regenerating chapter identities; inspected
+MP4/M4V/MOV chapters are promoted into one default nested Matroska edition.
+Compatible audio and MKV subtitle tracks are packet-copied by default. The complete-file command omits
 trim seeking and duration truncation, and the executor compares their streaming
 ordered packet hashes before commit and after reopen. The review, one FFmpeg
 video generation, optional per-track audio encodes, private temporary output,
 semantic/chapter verification, atomic commit, reopen audit, and sanitized History
 lifecycle remain shared rather than duplicated. Exact Trim continues to fail
-closed for subtitle timing, and standalone conversion continues to fail closed
-for data tracks.
+closed for subtitle timing. Common-container conversion fails closed for
+subtitle/attachment layouts, ambiguous data, chaptered WebM, and unpreserved
+metadata.
 native common-format Join route now enables only after the active capability
 probe and the same fail-closed source-metadata policy used by final assembly.
 It presents the exact resolved SDR or uniform static HDR10 video and AAC audio targets, packet-copy lanes,
@@ -1196,6 +1205,14 @@ and permits any actively verified codec compatible with the reviewed SDR or
 static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
+The standalone complete-file route also accepts bounded MP4, M4V, MOV, and
+chapter-free WebM inputs when their structure, metadata, and color facts can be
+translated to MKV without guessing. It uses the shared Matroska packet-copy
+codec policy for audio, explicitly restores reviewed language and track names,
+fingerprints every copied audio packet, promotes inspected QuickTime chapters
+into one default nested Matroska edition, and still performs only one video
+generation. This direct native route does not yet make common-container video
+conversion a portable saved-workflow input contract.
 Portable saved workflows now share the complete-file conversion path. Their
 schema-v8 cards choose the local recommendation, one explicit video preset, or
 the lossless-first AV1/HEVC condition, plus an optional AAC, Opus, AC-3, E-AC-3,

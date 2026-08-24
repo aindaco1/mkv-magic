@@ -173,6 +173,38 @@ public struct MatroskaChapterDocument: Codable, Equatable, Hashable, Sendable {
             editions: [MatroskaChapterEdition(isDefault: true, chapters: chapters)]
         ).validated(mediaDuration: duration)
     }
+
+    /// Promotes a container-neutral inspected hierarchy into one default
+    /// Matroska edition. Stable inspected identifiers produce stable chapter
+    /// UIDs, while missing language metadata remains explicitly undetermined.
+    public static func importingInspectedChapters(
+        _ chapters: [ChapterNode],
+        sourceID: UUID,
+        mediaDuration: MediaTime
+    ) throws -> Self {
+        guard !chapters.isEmpty else { return Self() }
+        let atoms = try chapters.map(Self.importedAtom)
+        return try Self(
+            editions: [
+                MatroskaChapterEdition(
+                    id: sourceID,
+                    isDefault: true,
+                    chapters: atoms
+                )
+            ]
+        ).validated(mediaDuration: mediaDuration)
+    }
+
+    private static func importedAtom(_ chapter: ChapterNode) throws -> MatroskaChapterAtom {
+        let language = try ChapterLanguage.canonical(chapter.language ?? "und")
+        return MatroskaChapterAtom(
+            id: chapter.id,
+            start: chapter.start,
+            end: chapter.end,
+            displays: [ChapterDisplay(title: chapter.title, language: language)],
+            children: try chapter.children.map(importedAtom)
+        )
+    }
 }
 
 public enum ChapterDocumentValidationError: Error, Equatable, Sendable {

@@ -51,6 +51,53 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         )
     }
 
+    func testBuildsCommonMP4TranscodeWithoutMappingItsChapterCarrier() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let sourceURL = fixture.root.appendingPathComponent("Source.mp4")
+        try Data([1]).write(to: sourceURL)
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            fileSize: 1,
+            tracks: [
+                videoTrack(),
+                audioTrack(codec: "aac"),
+                MediaTrack(id: 2, kind: .data, codec: "bin_data"),
+            ],
+            chapters: [ChapterNode(title: "Opening", start: .zero)],
+            metadata: ["title": "Feature", "major_brand": "isom"],
+            chapterEntryCount: 1
+        )
+        let plan = try ExactTrimPlanner().resolve(
+            source: source,
+            range: MediaTrimRange(start: .zero, end: try XCTUnwrap(source.duration)),
+            choice: ExactTrimChoice(
+                videoPreset: .h264Compatibility,
+                videoRateControl: .averageBitrate(1_000_000)
+            ),
+            operation: .transcode,
+            availableVideoPresets: [.h264Compatibility],
+            aacAvailable: true
+        )
+
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(),
+            outputURL: fixture.root.appendingPathComponent("Converted.mkv")
+        )
+
+        XCTAssertEqual(values(afterEach: "-map", in: command.arguments), ["0:0", "0:1"])
+        XCTAssertFalse(command.arguments.contains("0:2"))
+        XCTAssertEqual(
+            values(afterEach: "-metadata:s:a:0", in: command.arguments),
+            ["language=en", "title=Main Audio"]
+        )
+        XCTAssertEqual(command.encodedVideoTrackID, 0)
+        XCTAssertEqual(command.copiedAudioTrackIDs, [1])
+    }
+
     func testBuildsOneExactVideoGenerationAndPacketCopiesAudio() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

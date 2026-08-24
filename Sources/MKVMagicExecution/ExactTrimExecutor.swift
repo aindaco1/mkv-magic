@@ -140,7 +140,7 @@ public struct ExactTrimExecutor<
         guard source.fileSize == nil || source.fileSize == revision.fileSize else {
             throw ExactTrimExecutionError.staleSource
         }
-        let extracted = try await extractChapters(from: source.sourceURL)
+        let extracted = try await reviewedChapters(for: resolved)
         guard (try? MediaSourceRevision.read(source.sourceURL)) == revision,
             let duration = source.duration
         else {
@@ -262,12 +262,33 @@ public struct ExactTrimExecutor<
         guard (try? MediaSourceRevision.read(sourceURL)) == preview.sourceRevision else {
             throw ExactTrimExecutionError.staleSource
         }
+        guard preview.resolvedPlan.sourceKind.isMatroska else { return }
         let extracted = try await extractChapters(from: sourceURL)
         guard digest(extracted.canonicalData) == preview.sourceChapterSHA256,
             (try? MediaSourceRevision.read(sourceURL)) == preview.sourceRevision
         else {
             throw ExactTrimExecutionError.staleSource
         }
+    }
+
+    private func reviewedChapters(
+        for plan: ResolvedExactTrimPlan
+    ) async throws -> ExtractedMatroskaChapters {
+        if plan.sourceKind.isMatroska {
+            return try await extractChapters(from: plan.source.sourceURL)
+        }
+        guard let duration = plan.source.duration else {
+            throw ExactTrimExecutionError.chapterVerificationFailed
+        }
+        let document = try MatroskaChapterDocument.importingInspectedChapters(
+            plan.source.chapters,
+            sourceID: plan.source.id,
+            mediaDuration: duration
+        )
+        return ExtractedMatroskaChapters(
+            document: document,
+            canonicalData: try chapterCodec.serialize(document)
+        )
     }
 
     private func extractChapters(from fileURL: URL) async throws -> ExtractedMatroskaChapters {
@@ -363,7 +384,8 @@ public struct ExactTrimExecutor<
             preview.copiedAudioTrackIDs + preview.copiedSubtitleTrackIDs
         )
         guard !copiedTrackIDs.isEmpty else { return }
-        let sourceTracks = source.tracks.filter { $0.kind != .attachment }
+        let reviewedTrackIDs = Set(preview.resolvedPlan.trackIDsInOutputOrder)
+        let sourceTracks = source.tracks.filter { reviewedTrackIDs.contains($0.id) }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
         guard sourceTracks.count == outputTracks.count else {
             throw ExactTrimExecutionError.copiedTrackVerificationFailed(

@@ -6,6 +6,14 @@ public enum ExactVideoOperation: String, Codable, Hashable, Sendable {
     case transcode
 }
 
+public enum ExactVideoSourceKind: String, Codable, Hashable, Sendable {
+    case matroska
+    case quickTime
+    case webM
+
+    public var isMatroska: Bool { self == .matroska }
+}
+
 public enum ExactTrimAudioPolicy: String, Codable, Hashable, Sendable {
     case packetCopy
     case aacPreserveLayout
@@ -91,6 +99,9 @@ public enum ExactTrimPlanningError: Error, Equatable, Sendable {
     case invalidRange
     case noChange
     case unsupportedTracks
+    case unsupportedCommonMetadata
+    case unsupportedCommonChapters
+    case incompatiblePacketCopy(trackID: Int, codec: String)
     case unsupportedTags
     case unsupportedDynamicRange
     case incompleteVideoFacts
@@ -105,12 +116,18 @@ extension ExactTrimPlanningError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unsupportedSource:
-            "One-generation video processing currently accepts an inspected Matroska MKV."
+            "Exact trim requires MKV. Complete conversion accepts inspected MKV, MP4, M4V, MOV, or WebM input."
         case .invalidDuration: "Video processing needs a known positive source duration."
         case .invalidRange: "The reviewed range must be positive and inside the source."
         case .noChange: "The requested range keeps the complete source."
         case .unsupportedTracks:
-            "Complete-file conversion supports packet-copied subtitles; exact trimming of subtitles and data tracks needs a later timing-safe path."
+            "This video has a subtitle, data, attachment, unknown, or multiple-video layout that this conversion path cannot preserve safely."
+        case .unsupportedCommonMetadata:
+            "This non-MKV file contains metadata that cannot yet be proven across conversion to Matroska."
+        case .unsupportedCommonChapters:
+            "Chaptered WebM needs an exact nested-source hierarchy before conversion; MP4/MOV chapters are supported."
+        case .incompatiblePacketCopy(let trackID, let codec):
+            "Audio track \(trackID) uses \(codec), which cannot be copied safely to MKV. Choose a reviewed audio conversion format."
         case .unsupportedTags:
             "Video processing cannot yet prove preservation of this source's Matroska tags."
         case .unsupportedDynamicRange:
@@ -131,6 +148,7 @@ extension ExactTrimPlanningError: LocalizedError {
 
 public struct ResolvedExactTrimPlan: Hashable, Sendable {
     public let operation: ExactVideoOperation
+    public let sourceKind: ExactVideoSourceKind
     public let source: MediaAsset
     public let range: MediaTrimRange
     public let choice: ExactTrimChoice
@@ -145,6 +163,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
 
     fileprivate init(
         operation: ExactVideoOperation,
+        sourceKind: ExactVideoSourceKind,
         source: MediaAsset,
         range: MediaTrimRange,
         choice: ExactTrimChoice,
@@ -158,6 +177,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         trackIDsInOutputOrder: [Int]
     ) {
         self.operation = operation
+        self.sourceKind = sourceKind
         self.source = source
         self.range = range
         self.choice = choice
@@ -177,6 +197,14 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
 
 public struct ExactTrimPlanner: Sendable {
     public init() {}
+
+    public func canOfferTranscode(for source: MediaAsset) -> Bool {
+        guard source.duration?.nanoseconds ?? 0 > 0,
+            let sourceKind = try? sourceKind(for: source, operation: .transcode)
+        else { return false }
+        return (try? resolvedTracks(in: source, sourceKind: sourceKind, operation: .transcode))
+            != nil
+    }
 
     public func recommendedChoice(
         for source: MediaAsset,
@@ -221,12 +249,7 @@ public struct ExactTrimPlanner: Sendable {
         aacAvailable: Bool,
         availableAudioPresets: Set<AudioTranscodePreset> = []
     ) throws -> ResolvedExactTrimPlan {
-        guard source.sourceURL.pathExtension.lowercased() == "mkv",
-            source.container.localizedCaseInsensitiveContains("matroska")
-                || source.container.localizedCaseInsensitiveContains("webm")
-        else {
-            throw ExactTrimPlanningError.unsupportedSource
-        }
+        let sourceKind = try sourceKind(for: source, operation: operation)
         guard let duration = source.duration, duration > .zero else {
             throw ExactTrimPlanningError.invalidDuration
         }
@@ -239,18 +262,16 @@ public struct ExactTrimPlanner: Sendable {
         guard operation == .transcode || range.start != .zero || range.end != duration else {
             throw ExactTrimPlanningError.noChange
         }
-        let videos = source.tracks.filter { $0.kind == .video }
-        let audios = source.tracks.filter { $0.kind == .audio }
-        let subtitles = source.tracks.filter { $0.kind == .subtitle }
-        let supportedTrackCount = videos.count + audios.count + subtitles.count
-        guard videos.count == 1,
-            source.tracks.count == supportedTrackCount,
-            operation == .transcode || subtitles.isEmpty,
-            Set(source.tracks.map(\.id)).count == source.tracks.count
+        let resolvedTracks = try resolvedTracks(
+            in: source,
+            sourceKind: sourceKind,
+            operation: operation
+        )
+        let videos = resolvedTracks.videos
+        let audios = resolvedTracks.audios
+        let subtitles = resolvedTracks.subtitles
+        guard !sourceKind.isMatroska || (source.globalTagCount == 0 && source.trackTagCount == 0)
         else {
-            throw ExactTrimPlanningError.unsupportedTracks
-        }
-        guard source.globalTagCount == 0, source.trackTagCount == 0 else {
             throw ExactTrimPlanningError.unsupportedTags
         }
         let video = videos[0]
@@ -308,8 +329,20 @@ public struct ExactTrimPlanner: Sendable {
             encodedAudioTracks = []
         }
         let encodedAudioTrackIDs = Set(encodedAudioTracks.map(\.id))
+        if !sourceKind.isMatroska {
+            for audio in audios
+            where !encodedAudioTrackIDs.contains(audio.id)
+                && !MatroskaPacketCopyPolicy.supports(audio)
+            {
+                throw ExactTrimPlanningError.incompatiblePacketCopy(
+                    trackID: audio.id,
+                    codec: audio.codec
+                )
+            }
+        }
         return ResolvedExactTrimPlan(
             operation: operation,
+            sourceKind: sourceKind,
             source: source,
             range: range,
             choice: choice,
@@ -324,8 +357,139 @@ public struct ExactTrimPlanner: Sendable {
                 !encodedAudioTrackIDs.contains($0.id)
             }.map(\.id),
             subtitleTrackIDs: subtitles.map(\.id),
-            trackIDsInOutputOrder: source.tracks.map(\.id)
+            trackIDsInOutputOrder: resolvedTracks.mediaTracks.map(\.id)
         )
+    }
+
+    private struct ResolvedSourceTracks {
+        let mediaTracks: [MediaTrack]
+        let videos: [MediaTrack]
+        let audios: [MediaTrack]
+        let subtitles: [MediaTrack]
+    }
+
+    private func sourceKind(
+        for source: MediaAsset,
+        operation: ExactVideoOperation
+    ) throws -> ExactVideoSourceKind {
+        let sourceExtension = source.sourceURL.pathExtension.lowercased()
+        let container = source.container.lowercased()
+        if sourceExtension == "mkv", container.contains("matroska") || container.contains("webm") {
+            return .matroska
+        }
+        guard operation == .transcode else { throw ExactTrimPlanningError.unsupportedSource }
+        if ["mp4", "m4v", "mov"].contains(sourceExtension),
+            container.contains("mov") || container.contains("mp4")
+        {
+            return .quickTime
+        }
+        if sourceExtension == "webm",
+            container.contains("webm") || container.contains("matroska")
+        {
+            return .webM
+        }
+        throw ExactTrimPlanningError.unsupportedSource
+    }
+
+    private func resolvedTracks(
+        in source: MediaAsset,
+        sourceKind: ExactVideoSourceKind,
+        operation: ExactVideoOperation
+    ) throws -> ResolvedSourceTracks {
+        let mediaTracks = source.tracks.filter {
+            $0.kind == .video || $0.kind == .audio || $0.kind == .subtitle
+        }
+        let videos = mediaTracks.filter { $0.kind == .video }
+        let audios = mediaTracks.filter { $0.kind == .audio }
+        let subtitles = mediaTracks.filter { $0.kind == .subtitle }
+        guard videos.count == 1,
+            operation == .transcode || subtitles.isEmpty,
+            Set(source.tracks.map(\.id)).count == source.tracks.count
+        else {
+            throw ExactTrimPlanningError.unsupportedTracks
+        }
+        if sourceKind.isMatroska {
+            guard source.tracks.count == mediaTracks.count else {
+                throw ExactTrimPlanningError.unsupportedTracks
+            }
+        } else {
+            guard operation == .transcode, source.attachments.isEmpty, subtitles.isEmpty else {
+                throw ExactTrimPlanningError.unsupportedTracks
+            }
+            if sourceKind == .webM,
+                !source.chapters.isEmpty || (source.chapterEntryCount ?? 0) > 0
+            {
+                throw ExactTrimPlanningError.unsupportedCommonChapters
+            }
+            if sourceKind == .quickTime,
+                (source.chapterEntryCount ?? source.chapters.count) != source.chapters.count
+            {
+                throw ExactTrimPlanningError.unsupportedCommonChapters
+            }
+            if sourceKind == .quickTime {
+                guard let duration = source.duration else {
+                    throw ExactTrimPlanningError.unsupportedCommonChapters
+                }
+                do {
+                    _ = try MatroskaChapterDocument.importingInspectedChapters(
+                        source.chapters,
+                        sourceID: source.id,
+                        mediaDuration: duration
+                    )
+                } catch {
+                    throw ExactTrimPlanningError.unsupportedCommonChapters
+                }
+            }
+            let quickTimeChapterCarriers = source.tracks.filter {
+                $0.kind == .data
+                    && $0.codec.trimmingCharacters(in: .whitespacesAndNewlines)
+                        .lowercased() == "bin_data"
+            }
+            guard sourceKind != .quickTime || quickTimeChapterCarriers.count <= 1 else {
+                throw ExactTrimPlanningError.unsupportedTracks
+            }
+            let chapterCarrierIDs = Set(
+                sourceKind == .quickTime && !source.chapters.isEmpty
+                    ? quickTimeChapterCarriers.map(\.id)
+                    : []
+            )
+            guard
+                source.tracks.allSatisfy({ track in
+                    mediaTracks.contains(where: { $0.id == track.id })
+                        || chapterCarrierIDs.contains(track.id)
+                })
+            else {
+                throw ExactTrimPlanningError.unsupportedTracks
+            }
+            guard commonMetadataIsSupported(source) else {
+                throw ExactTrimPlanningError.unsupportedCommonMetadata
+            }
+        }
+        return ResolvedSourceTracks(
+            mediaTracks: mediaTracks,
+            videos: videos,
+            audios: audios,
+            subtitles: subtitles
+        )
+    }
+
+    private func commonMetadataIsSupported(_ source: MediaAsset) -> Bool {
+        let formatKeys = Set([
+            "title", "major_brand", "minor_version", "compatible_brands", "encoder",
+            "creation_time",
+        ])
+        let trackKeys = Set([
+            "language", "title", "name", "handler_name", "vendor_id", "encoder",
+            "creation_time", "bps", "duration", "number_of_frames", "number_of_bytes",
+        ])
+        return source.metadata.keys.allSatisfy { formatKeys.contains($0.lowercased()) }
+            && source.tracks.allSatisfy { track in
+                track.tags.keys.allSatisfy {
+                    let normalized = $0.lowercased()
+                    return trackKeys.contains(normalized)
+                        || normalized.hasPrefix("_statistics_")
+                }
+            }
     }
 
     private func validate(_ choice: ExactTrimChoice) throws {

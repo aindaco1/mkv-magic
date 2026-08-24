@@ -1075,6 +1075,7 @@ final class AppModel {
         do {
             let planningMessage: String
             let runningMessage: String
+            let inspectionMessage: String
             let workflowID: UUID
             let privacySafePlan: MediaJobPlanFacts
             switch preview {
@@ -1090,6 +1091,8 @@ final class AppModel {
                     + ChapterTimestamp.format(fast.plan.adjusted.end, digits: 3) + "."
                 runningMessage =
                     "Splitting one temporary MKV at reviewed keyframes and replacing chapters."
+                inspectionMessage =
+                    "Used the completed inspection plus exact extracted nested chapters."
             case .exact(let exact):
                 workflowID =
                     exact.resolvedPlan.operation == .transcode
@@ -1108,14 +1111,20 @@ final class AppModel {
                 if exact.resolvedPlan.operation == .transcode {
                     planningMessage =
                         "One video encode using \(video); \(audio); preserve the complete "
-                        + "duration and exact nested chapters."
+                        + "duration and reviewed chapters."
                     runningMessage =
-                        "Encoding the complete video once to one temporary MKV and preserving chapters."
+                        "Encoding the complete video once to one temporary MKV and installing reviewed chapters."
+                    inspectionMessage =
+                        exact.resolvedPlan.sourceKind.isMatroska
+                        ? "Used the completed inspection plus exact extracted nested chapters."
+                        : "Used the completed inspection plus deterministic translated chapters."
                 } else {
                     planningMessage =
                         "One video encode using \(video); \(audio); preserve the exact reviewed range."
                     runningMessage =
                         "Encoding video once to one temporary MKV and replacing exact chapters."
+                    inspectionMessage =
+                        "Used the completed inspection plus exact extracted nested chapters."
                 }
             }
             let execution = try await beginHistory(
@@ -1124,8 +1133,7 @@ final class AppModel {
                 workflowID: workflowID,
                 workflowName: preview.workflowName,
                 privacySafePlan: privacySafePlan,
-                inspectionMessage:
-                    "Used the completed inspection plus exact extracted nested chapters.",
+                inspectionMessage: inspectionMessage,
                 planningMessage: planningMessage,
                 runningMessage: runningMessage
             )
@@ -1186,7 +1194,7 @@ final class AppModel {
                 destinationURL: destinationURL,
                 successMessage:
                     preview.operation == .transcode
-                    ? "Verified converted video, complete duration, streams, metadata, attachments, and unchanged nested chapters; committed and reopened output."
+                    ? "Verified converted video, complete duration, streams, metadata, attachments, and reviewed chapters; committed and reopened output."
                     : "Verified trimmed range, streams, metadata, attachments, and exact nested chapters; committed and reopened output."
             )
             return output
@@ -1251,7 +1259,7 @@ final class AppModel {
         }
         state = .executing(
             request.operation == .transcode
-                ? "Binding the complete file, encoder, streams, and nested chapters…"
+                ? "Binding the complete file, encoder, streams, and reviewed chapters…"
                 : request.mode == .fast
                     ? "Reading exact keyframes and nested chapters…"
                     : "Binding the exact range, encoder, streams, and nested chapters…"

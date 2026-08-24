@@ -265,6 +265,60 @@ final class MatroskaChapterTests: XCTestCase {
         XCTAssertEqual(chapters.first?.displays.first?.language, "en")
     }
 
+    func testImportsContainerNeutralHierarchyIntoOneStableMatroskaEdition() throws {
+        let sourceID = UUID(uuidString: "10000000-0000-0000-0000-000000000001")!
+        let parentID = UUID(uuidString: "20000000-0000-0000-0000-000000000002")!
+        let childID = UUID(uuidString: "30000000-0000-0000-0000-000000000003")!
+        let inspected = [
+            ChapterNode(
+                id: parentID,
+                title: "Part One",
+                start: .zero,
+                end: MediaTime(nanoseconds: 10_000_000_000),
+                language: nil,
+                children: [
+                    ChapterNode(
+                        id: childID,
+                        title: "Opening",
+                        start: MediaTime(nanoseconds: 1_000_000_000),
+                        end: MediaTime(nanoseconds: 3_000_000_000),
+                        language: "ENG"
+                    )
+                ]
+            )
+        ]
+
+        let first = try MatroskaChapterDocument.importingInspectedChapters(
+            inspected,
+            sourceID: sourceID,
+            mediaDuration: MediaTime(nanoseconds: 10_000_000_000)
+        )
+        let second = try MatroskaChapterDocument.importingInspectedChapters(
+            inspected,
+            sourceID: sourceID,
+            mediaDuration: MediaTime(nanoseconds: 10_000_000_000)
+        )
+        let edition = try XCTUnwrap(first.editions.first)
+        let parent = try XCTUnwrap(edition.chapters.first)
+        let child = try XCTUnwrap(parent.children.first)
+
+        XCTAssertEqual(first, second)
+        XCTAssertEqual(first.chapterCount, 2)
+        XCTAssertEqual(edition.id, sourceID)
+        XCTAssertEqual(parent.id, parentID)
+        XCTAssertEqual(child.id, childID)
+        XCTAssertEqual(parent.displays.first?.language, "und")
+        XCTAssertEqual(child.displays.first?.language, "en")
+        XCTAssertEqual(
+            try MatroskaChapterDocument.importingInspectedChapters(
+                [],
+                sourceID: sourceID,
+                mediaDuration: MediaTime(nanoseconds: 10_000_000_000)
+            ),
+            MatroskaChapterDocument()
+        )
+    }
+
     func testJellyfinFlattenKeepsOnlyLeavesSortsAndRegeneratesUIDs() throws {
         let first = MatroskaChapterAtom(
             uid: 11,

@@ -64,15 +64,6 @@ public struct ResolvedMKVRemuxPlan: Hashable, Sendable {
 
 public struct MKVRemuxPlanner: Sendable {
     private static let supportedInputExtensions = Set(["mp4", "m4v", "mov", "webm"])
-    private static let supportedVideoCodecs = Set<MediaCodecFamily>([
-        .av1, .h264, .hevc, .proRes, .vp8, .vp9, .mpegVideo,
-    ])
-    private static let supportedAudioCodecs = Set<MediaCodecFamily>([
-        .aac, .ac3, .eac3, .opus, .vorbis, .flac, .alac, .pcm, .mp3, .dts, .trueHD,
-    ])
-    private static let supportedSubtitleCodecs = Set<MediaCodecFamily>([
-        .subRip, .ass, .ssa, .pgs, .vobSub, .webVTT,
-    ])
 
     public init() {}
 
@@ -127,15 +118,7 @@ public struct MKVRemuxPlanner: Sendable {
             throw MKVRemuxPlanningError.unstableTrackIdentity
         }
         for track in mediaTracks {
-            let family = MediaCodecFamily(codec: track.codec, kind: track.kind)
-            let supported =
-                switch track.kind {
-                case .video: Self.supportedVideoCodecs.contains(family)
-                case .audio: Self.supportedAudioCodecs.contains(family)
-                case .subtitle: Self.supportedSubtitleCodecs.contains(family)
-                default: false
-                }
-            guard supported else {
+            guard MatroskaPacketCopyPolicy.supports(track) else {
                 throw MKVRemuxPlanningError.unsupportedTrack(
                     trackID: track.id,
                     codec: track.codec

@@ -524,6 +524,16 @@ final class AppPolicyTests: XCTestCase {
                 )
             )
         )
+        XCTAssertTrue(
+            TrimPresentationPolicy.canOfferConversion(
+                for: MediaAsset(
+                    sourceURL: URL(fileURLWithPath: "/Media/Movie.mp4"),
+                    container: "mov,mp4,m4a,3gp,3g2,mj2",
+                    duration: duration,
+                    tracks: source.tracks
+                )
+            )
+        )
         let times = TrimPresentationPolicy.thumbnailTimes(duration: duration)
         XCTAssertEqual(times.count, 5)
         XCTAssertEqual(times.first, .zero)

@@ -206,26 +206,31 @@ immutable review, use the same cancellable verified-output progress surface,
 disable cancellation during commit, save to a new deterministic MKV name, and
 record a sanitized eight-state History lifecycle.
 
-For an eligible inspected MKV, **Convert Video…** reuses that same reviewed
-one-generation engine for the complete file. It starts with the locally
+For an eligible inspected MKV, MP4, M4V, MOV, or chapter-free WebM,
+**Convert Video…** reuses that same reviewed one-generation engine for the
+complete file. It starts with the locally
 recommended verified video format—AV1 for quality/size unless a completed
 Encoding Test recommends the faster HEVC path—while keeping every verified
 AV1, HEVC, H.264, or ProRes alternative selectable. Audio is packet-copied by
-default; only layout-safe, locally verified audio conversions appear. Embedded
-subtitle tracks are packet-copied. The review binds the complete duration, one
-video generation, audio and subtitle decisions, track metadata, attachments,
-and the unchanged canonical nested chapter tree.
+default when its codec is valid in Matroska; only layout-safe, locally verified
+audio conversions appear. Embedded subtitle tracks are packet-copied for MKV
+input. The review binds the complete duration, one video generation, audio and
+subtitle decisions, track metadata, attachments, and chapters.
 Execution creates `— Converted.mkv` through the same private temporary-output,
 semantic verification, atomic commit, and reopen audit used by Exact Trim.
 Complete conversion omits trim seeking and duration truncation, then compares
 streaming ordered packet hashes for copied audio and subtitles before commit and
-after reopen. It intentionally fails closed for data tracks, multiple video
-tracks, source tags, unsupported HDR, incomplete facts, and non-MKV inputs or
-outputs.
+after reopen. MKV input retains its exact canonical nested chapter document.
+MP4/M4V/MOV chapter entries are promoted into one default nested Matroska
+edition, and one known QuickTime chapter carrier is excluded from the media map.
+Common-container input requires one video, no subtitles or attachments,
+unambiguous chapter facts, only known container-internal metadata, and complete
+color facts. Chaptered WebM, ambiguous data, multiple video tracks, source tags
+on MKV, unsupported HDR, incomplete facts, and non-MKV output fail closed.
 
 For a compatible inspected MP4, M4V, MOV, or chapter-free WebM,
-**Remux to MKV…** now provides the lossless container-change path that
-**Convert Video…** deliberately does not. It copies the reviewed video, audio,
+**Remux to MKV…** remains the preferred lossless container-change path when the
+video does not need conversion. It copies the reviewed video, audio,
 and supported subtitle streams in their original order with zero encodes. MP4
 and MOV chapter carriers become ordinary Matroska chapters; the segment title,
 track names, languages, technical facts, HDR facts, and playback/accessibility

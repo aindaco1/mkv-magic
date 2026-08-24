@@ -16,7 +16,8 @@ extension ExactTrimCommandError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .inconsistentPlan: "The video command no longer matches its reviewed plan."
-        case .invalidPath: "Video processing needs safe absolute MKV source and output paths."
+        case .invalidPath:
+            "Video processing needs a safe supported source path and an absolute MKV output path."
         case .existingOutput: "Video processing refuses to overwrite an existing output."
         case .unavailableEncoder(let preset):
             "The selected \(preset.rawValue) encoder did not pass the active local probe."
@@ -66,7 +67,6 @@ public struct ExactTrimCommandBuilder: Sendable {
         let sourceURL = source.sourceURL.standardizedFileURL
         guard safeAbsolutePath(sourceURL), safeAbsolutePath(outputURL),
             sourceURL != outputURL,
-            sourceURL.pathExtension.lowercased() == "mkv",
             outputURL.pathExtension.lowercased() == "mkv"
         else {
             throw ExactTrimCommandError.invalidPath
@@ -214,6 +214,13 @@ public struct ExactTrimCommandBuilder: Sendable {
         } else {
             throw ExactTrimCommandError.inconsistentPlan
         }
+        if !resolvedPlan.sourceKind.isMatroska {
+            appendReviewedCommonTrackMetadata(
+                from: source,
+                trackIDsInOutputOrder: resolvedPlan.trackIDsInOutputOrder,
+                to: &arguments
+            )
+        }
         arguments.append(contentsOf: ["-map_metadata", "0", "-map_chapters", "-1"])
         if resolvedPlan.operation == .trim {
             arguments.append(
@@ -246,6 +253,41 @@ public struct ExactTrimCommandBuilder: Sendable {
         let whole = time.nanoseconds / 1_000_000_000
         let fraction = time.nanoseconds % 1_000_000_000
         return "\(whole).\(String(format: "%09lld", fraction))"
+    }
+
+    private func appendReviewedCommonTrackMetadata(
+        from source: MediaAsset,
+        trackIDsInOutputOrder: [Int],
+        to arguments: inout [String]
+    ) {
+        var outputIndexes: [MediaTrackKind: Int] = [:]
+        for trackID in trackIDsInOutputOrder {
+            guard let track = source.tracks.first(where: { $0.id == trackID }),
+                let streamKind = streamKind(for: track.kind)
+            else { continue }
+            let outputIndex = outputIndexes[track.kind, default: 0]
+            outputIndexes[track.kind] = outputIndex + 1
+            let specifier = "-metadata:s:\(streamKind):\(outputIndex)"
+            if let language = track.language?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !language.isEmpty
+            {
+                arguments.append(contentsOf: [specifier, "language=\(language)"])
+            }
+            if let title = track.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+                !title.isEmpty
+            {
+                arguments.append(contentsOf: [specifier, "title=\(title)"])
+            }
+        }
+    }
+
+    private func streamKind(for kind: MediaTrackKind) -> String? {
+        switch kind {
+        case .video: "v"
+        case .audio: "a"
+        case .subtitle: "s"
+        case .data, .attachment, .unknown: nil
+        }
     }
 
     private func safeAbsolutePath(_ url: URL) -> Bool {

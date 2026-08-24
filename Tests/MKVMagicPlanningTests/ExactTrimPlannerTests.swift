@@ -49,6 +49,148 @@ final class ExactTrimPlannerTests: XCTestCase {
         ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .invalidRange) }
     }
 
+    func testCommonVideoInputsResolveOnlyAsBoundedFullFileMKVTranscodes() throws {
+        let chapters = [
+            ChapterNode(
+                title: "Opening",
+                start: .zero,
+                end: MediaTime(nanoseconds: 5_000_000_000),
+                language: "en"
+            ),
+            ChapterNode(
+                title: "Second Act",
+                start: MediaTime(nanoseconds: 5_000_000_000),
+                end: MediaTime(nanoseconds: 10_000_000_000),
+                language: "en"
+            ),
+        ]
+        let source = makeCommonSource(
+            extension: "mp4",
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            chapters: chapters,
+            extraTrack: MediaTrack(id: 2, kind: .data, codec: "bin_data")
+        )
+        let choice = ExactTrimChoice(
+            videoPreset: .h264Compatibility,
+            videoRateControl: .averageBitrate(1_000_000)
+        )
+        let fullRange = MediaTrimRange(start: .zero, end: try XCTUnwrap(source.duration))
+        let plan = try ExactTrimPlanner().resolve(
+            source: source,
+            range: fullRange,
+            choice: choice,
+            operation: .transcode,
+            availableVideoPresets: [.h264Compatibility],
+            aacAvailable: true
+        )
+
+        XCTAssertEqual(plan.sourceKind, .quickTime)
+        XCTAssertEqual(plan.trackIDsInOutputOrder, [0, 1])
+        XCTAssertEqual(plan.copiedAudioTrackIDs, [1])
+        XCTAssertEqual(plan.subtitleTrackIDs, [])
+        XCTAssertEqual(plan.videoEncodeCount, 1)
+        XCTAssertTrue(ExactTrimPlanner().canOfferTranscode(for: source))
+        XCTAssertThrowsError(
+            try ExactTrimPlanner().resolve(
+                source: source,
+                range: range(1, 9),
+                choice: choice,
+                availableVideoPresets: [.h264Compatibility],
+                aacAvailable: true
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedSource) }
+
+        let webM = makeCommonSource(
+            extension: "webm",
+            container: "matroska,webm",
+            audioCodec: "opus"
+        )
+        let webMPlan = try ExactTrimPlanner().resolve(
+            source: webM,
+            range: MediaTrimRange(start: .zero, end: try XCTUnwrap(webM.duration)),
+            choice: choice,
+            operation: .transcode,
+            availableVideoPresets: [.h264Compatibility],
+            aacAvailable: true
+        )
+        XCTAssertEqual(webMPlan.sourceKind, .webM)
+    }
+
+    func testCommonInputConversionFailsClosedForUnpreservedStructureMetadataAndAudio() throws {
+        let planner = ExactTrimPlanner()
+        let choice = ExactTrimChoice(
+            videoPreset: .h264Compatibility,
+            videoRateControl: .averageBitrate(1_000_000)
+        )
+        func resolve(
+            _ source: MediaAsset,
+            choice selectedChoice: ExactTrimChoice? = nil
+        ) throws -> ResolvedExactTrimPlan {
+            try planner.resolve(
+                source: source,
+                range: MediaTrimRange(start: .zero, end: try XCTUnwrap(source.duration)),
+                choice: selectedChoice ?? choice,
+                operation: .transcode,
+                availableVideoPresets: [.h264Compatibility],
+                aacAvailable: true,
+                availableAudioPresets: [.aacCompatibility]
+            )
+        }
+
+        XCTAssertThrowsError(
+            try resolve(
+                makeCommonSource(
+                    extraTrack: MediaTrack(id: 2, kind: .subtitle, codec: "mov_text")
+                )
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedTracks) }
+        XCTAssertThrowsError(
+            try resolve(makeCommonSource(metadata: ["title": "Feature", "artist": "Author"]))
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedCommonMetadata) }
+        XCTAssertThrowsError(
+            try resolve(
+                makeCommonSource(
+                    extension: "webm",
+                    container: "matroska,webm",
+                    chapters: [ChapterNode(title: "Opening", start: .zero)]
+                )
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedCommonChapters) }
+        XCTAssertThrowsError(
+            try resolve(
+                makeCommonSource(
+                    chapters: [ChapterNode(title: " ", start: .zero)]
+                )
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedCommonChapters) }
+        XCTAssertThrowsError(
+            try resolve(
+                makeCommonSource(
+                    chapters: [ChapterNode(title: "Opening", start: .zero)],
+                    reportedChapterCount: 2
+                )
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedCommonChapters) }
+
+        let incompatible = makeCommonSource(audioCodec: "wmav2")
+        XCTAssertThrowsError(try resolve(incompatible)) { error in
+            XCTAssertEqual(
+                error as? ExactTrimPlanningError,
+                .incompatiblePacketCopy(trackID: 1, codec: "wmav2")
+            )
+        }
+        let converted = try resolve(
+            incompatible,
+            choice: ExactTrimChoice(
+                videoPreset: .h264Compatibility,
+                videoRateControl: .averageBitrate(1_000_000),
+                audioPolicy: .aacPreserveLayout
+            )
+        )
+        XCTAssertEqual(converted.encodedAudioTrackIDs, [1])
+        XCTAssertEqual(converted.copiedAudioTrackIDs, [])
+    }
+
     func testCompleteFileTranscodePacketCopiesSubtitlesButDataStillFailsClosed() throws {
         let subtitle = MediaTrack(
             id: 2,
@@ -557,6 +699,60 @@ final class ExactTrimPlannerTests: XCTestCase {
             globalTagCount: globalTagCount,
             trackTagCount: 0,
             segmentUID: "SOURCE"
+        )
+    }
+
+    private func makeCommonSource(
+        extension sourceExtension: String = "mp4",
+        container: String = "mov,mp4,m4a,3gp,3g2,mj2",
+        chapters: [ChapterNode] = [],
+        audioCodec: String = "aac",
+        metadata: [String: String] = ["title": "Feature", "major_brand": "isom"],
+        reportedChapterCount: Int? = nil,
+        extraTrack: MediaTrack? = nil
+    ) -> MediaAsset {
+        var tracks = [
+            MediaTrack(
+                id: 0,
+                kind: .video,
+                codec: sourceExtension == "webm" ? "vp9" : "h264",
+                dimensions: MediaDimensions(width: 160, height: 90),
+                pixelFormat: "yuv420p",
+                bitDepth: 8,
+                frameRate: "24/1",
+                colorInfo: MediaColorInfo(
+                    range: "tv",
+                    primaries: "bt709",
+                    transfer: "bt709",
+                    matrix: "bt709"
+                )
+            ),
+            MediaTrack(
+                id: 1,
+                kind: .audio,
+                codec: audioCodec,
+                language: "en",
+                title: "Main Audio",
+                isDefault: true,
+                channels: 2,
+                channelLayout: "stereo",
+                sampleRate: 48_000,
+                tags: [
+                    "handler_name": "SoundHandler",
+                    "DURATION": "00:00:10.000000000",
+                ]
+            ),
+        ]
+        if let extraTrack { tracks.append(extraTrack) }
+        return MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Feature.\(sourceExtension)"),
+            container: container,
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            fileSize: 1_000,
+            tracks: tracks,
+            chapters: chapters,
+            metadata: metadata,
+            chapterEntryCount: reportedChapterCount ?? chapters.count
         )
     }
 

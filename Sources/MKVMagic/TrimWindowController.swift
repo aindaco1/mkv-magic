@@ -83,6 +83,10 @@ enum TrimPresentationPolicy {
             && source.duration?.nanoseconds ?? 0 > 0
     }
 
+    static func canOfferConversion(for source: MediaAsset) -> Bool {
+        ExactTrimPlanner().canOfferTranscode(for: source)
+    }
+
     static func thumbnailTimes(duration: MediaTime) -> [MediaTime] {
         guard duration > .zero else { return [] }
         let last = max(0, duration.nanoseconds - 1)
@@ -124,9 +128,17 @@ enum TrimPresentationPolicy {
                 ? "no subtitle tracks"
                 : "\(exact.copiedSubtitleTrackIDs.count) subtitle track(s) packet-copied"
             if exact.resolvedPlan.operation == .transcode {
+                let chapters =
+                    if exact.resolvedPlan.sourceKind.isMatroska {
+                        "original nested chapters preserved"
+                    } else if exact.resolvedPlan.source.chapters.isEmpty {
+                        "no source chapters"
+                    } else {
+                        "reviewed chapters converted to nested Matroska chapters"
+                    }
                 return "CONVERT • 1 video encode • \(presetName(choice.videoPreset)) • "
                     + "\(encodingSummary(choice))\n"
-                    + "Complete file • original nested chapters preserved • \(audio) • \(subtitles)"
+                    + "Complete file • \(chapters) • \(audio) • \(subtitles)"
             }
             return "EXACT • 1 video encode • \(presetName(choice.videoPreset)) • "
                 + "\(encodingSummary(choice))\nSaved range: \(output) • \(audio)"
@@ -320,7 +332,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         let explanation = NSTextField(
             wrappingLabelWithString:
                 operation == .transcode
-                ? "Convert the complete video once into a new MKV. Audio is preserved exactly unless you choose a conversion; subtitle tracks and nested chapters are preserved, and the original file stays unchanged."
+                ? conversionExplanation
                 : "Set exact numeric in and out points. Fast Trim may move them forward to keyframes; Exact Trim keeps them and encodes video once. The original is never replaced."
         )
         explanation.textColor = .secondaryLabelColor
@@ -643,7 +655,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.stringValue =
             request.operation == .transcode
-            ? "Binding the selected encoders, complete file, tracks, and exact nested chapters…"
+            ? "Binding the selected encoders, complete file, tracks, and reviewed chapters…"
             : request.mode == .fast
                 ? "Reading keyframes and exact nested chapters locally…"
                 : "Binding the selected encoder, range, tracks, and exact nested chapters…"
@@ -755,7 +767,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             inputMessage.textColor = .secondaryLabelColor
             inputMessage.stringValue =
                 operation == .transcode
-                ? "Video will be encoded once; audio, subtitle tracks, and nested chapters follow the reviewed choices."
+                ? conversionInputMessage
                 : request.mode == .fast
                     ? "Fast Trim copies every stream; review will disclose keyframe adjustments."
                     : "Exact Trim encodes video once; audio is preserved according to your choice."
@@ -789,6 +801,21 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             exactChoice: choice,
             operation: operation
         )
+    }
+
+    private var conversionExplanation: String {
+        if source.sourceURL.pathExtension.lowercased() == "mkv" {
+            return
+                "Convert the complete video once into a new MKV. Audio is preserved exactly unless you choose a conversion; subtitle tracks and nested chapters are preserved, and the original file stays unchanged."
+        }
+        return
+            "Convert the complete MP4, M4V, MOV, or WebM video once into a new MKV. Compatible audio is preserved exactly unless you choose a conversion; reviewed MP4/MOV chapters become nested Matroska chapters, and the original file stays unchanged."
+    }
+
+    private var conversionInputMessage: String {
+        source.sourceURL.pathExtension.lowercased() == "mkv"
+            ? "Video will be encoded once; audio, subtitle tracks, and nested chapters follow the reviewed choices."
+            : "Video will be encoded once; compatible audio and reviewed MP4/MOV chapters follow the reviewed choices."
     }
 
     private func exactChoice(for preset: VideoPreset) -> ExactTrimChoice? {
