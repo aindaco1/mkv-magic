@@ -1388,6 +1388,15 @@ target remains in the all-source floors and retains focused policy,
 accessibility, launch, and manual UX acceptance rather than being excluded from
 coverage reporting.
 
+The first-beta release-notes continuation prepares `0.1.0` as a candidate
+version without creating a tag. Signed-tag automation requires bounded regular
+notes whose heading matches the exact semantic version; whose sections disclose
+highlights, encoding/compatibility, safety/privacy, limitations, and
+requirements; and whose text covers the Universal macOS floor, local
+processing, original preservation, and image-subtitle OCR limitation. Fixture,
+placeholder, linked, missing, mismatched, and unbounded notes fail before
+runtime building or credential use.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

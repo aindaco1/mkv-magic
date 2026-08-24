@@ -500,6 +500,13 @@ Administration-read-only release-environment token rather than a broad personal
 credential; that narrow token is not provisioned yet. See
 [docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md](docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md).
 
+Candidate notes for a possible 0.1.0 beta now describe only currently executable
+capabilities and disclose the important roadmap gaps. The release workflow
+rejects fixture, placeholder, unbounded, linked, missing, or version-mismatched
+notes before runtime building or credential use. This preparation does not
+create or commit to a release tag. See
+[docs/releases/M9_RELEASE_NOTES_GATE_SLICE.md](docs/releases/M9_RELEASE_NOTES_GATE_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

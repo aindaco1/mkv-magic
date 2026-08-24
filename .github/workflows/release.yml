@@ -76,6 +76,8 @@ jobs:
           )"
           printf 'MKV_MAGIC_BUILD_NUMBER=%s\n' "$release_build_number" \
             >> "$GITHUB_ENV"
+          ./scripts/release/validate-release-notes.sh \
+            "${RELEASE_TAG#v}"
 
       - name: Verify public repository release controls
         env:
