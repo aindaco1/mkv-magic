@@ -9,9 +9,22 @@ enum TrimMode: Int, Equatable, Sendable {
 }
 
 struct TrimReviewRequest: Equatable, Sendable {
+    let operation: ExactVideoOperation
     let mode: TrimMode
     let range: MediaTrimRange
     let exactChoice: ExactTrimChoice?
+
+    init(
+        mode: TrimMode,
+        range: MediaTrimRange,
+        exactChoice: ExactTrimChoice?,
+        operation: ExactVideoOperation = .trim
+    ) {
+        self.operation = operation
+        self.mode = mode
+        self.range = range
+        self.exactChoice = exactChoice
+    }
 }
 
 enum TrimExecutionPreview: Equatable, Sendable {
@@ -46,10 +59,18 @@ enum TrimExecutionPreview: Equatable, Sendable {
         }
     }
 
+    var operation: ExactVideoOperation {
+        switch self {
+        case .fast: .trim
+        case .exact(let preview): preview.resolvedPlan.operation
+        }
+    }
+
     var workflowName: String {
         switch self {
         case .fast: "Fast Trim"
-        case .exact: "Exact Trim"
+        case .exact(let preview):
+            preview.resolvedPlan.operation == .transcode ? "Convert Video" : "Exact Trim"
         }
     }
 }
@@ -98,9 +119,13 @@ enum TrimPresentationPolicy {
                 choice.audioPolicy.transcodePreset.map {
                     "\(exact.encodedAudioTrackIDs.count) audio track(s) encoded once to \($0.displayName)"
                 } ?? "all audio packet-copied"
+            if exact.resolvedPlan.operation == .transcode {
+                return "CONVERT • 1 video encode • \(presetName(choice.videoPreset)) • "
+                    + "\(encodingSummary(choice))\n"
+                    + "Complete file • original nested chapters preserved • \(audio)"
+            }
             return "EXACT • 1 video encode • \(presetName(choice.videoPreset)) • "
-                + "\(encodingSummary(choice))\n"
-                + "Saved range: \(output) • \(audio)"
+                + "\(encodingSummary(choice))\nSaved range: \(output) • \(audio)"
         }
     }
 
@@ -134,19 +159,26 @@ final class TrimWindowController: NSWindowController {
         source: MediaAsset,
         thumbnails: [ChapterThumbnail],
         capabilities: FFmpegEncodingCapabilities,
+        operation: ExactVideoOperation = .trim,
         reviewProvider: @escaping ReviewProvider
     ) {
         trimViewController = TrimViewController(
             source: source,
             thumbnails: thumbnails,
             capabilities: capabilities,
+            operation: operation,
             reviewProvider: reviewProvider
         )
         let window = NSPanel(contentViewController: trimViewController)
-        window.title = "Trim MKV"
+        window.title = operation == .transcode ? "Convert Video" : "Trim MKV"
         window.styleMask = [.titled, .resizable]
-        window.setContentSize(NSSize(width: 840, height: 650))
-        window.minSize = NSSize(width: 700, height: 570)
+        window.setContentSize(
+            operation == .transcode
+                ? NSSize(width: 760, height: 400) : NSSize(width: 840, height: 650)
+        )
+        window.minSize =
+            operation == .transcode
+            ? NSSize(width: 660, height: 360) : NSSize(width: 700, height: 570)
         window.configureMKVMagicKeyboardNavigation(
             startingAt: trimViewController.preferredInitialFirstResponder
         )
@@ -190,6 +222,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     var onContinue: ((TrimExecutionPreview) -> Void)?
 
     private let source: MediaAsset
+    private let operation: ExactVideoOperation
     private let thumbnails: [(ChapterThumbnail, NSImage)]
     private let capabilities: FFmpegEncodingCapabilities
     private let reviewProvider: TrimWindowController.ReviewProvider
@@ -225,7 +258,9 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     private var reviewedPreview: TrimExecutionPreview?
     private var reviewErrorMessage: String?
 
-    var preferredInitialFirstResponder: NSView { inField }
+    var preferredInitialFirstResponder: NSView {
+        operation == .transcode ? presetPopup : inField
+    }
     private var presets: [VideoPreset] {
         guard let video = source.tracks.first(where: { $0.kind == .video }),
             MediaHDR10Signal(track: video) != nil
@@ -253,9 +288,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         source: MediaAsset,
         thumbnails: [ChapterThumbnail],
         capabilities: FFmpegEncodingCapabilities,
+        operation: ExactVideoOperation,
         reviewProvider: @escaping TrimWindowController.ReviewProvider
     ) {
         self.source = source
+        self.operation = operation
         self.capabilities = capabilities
         self.reviewProvider = reviewProvider
         self.thumbnails = thumbnails.compactMap { thumbnail in
@@ -271,11 +308,16 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
 
     override func loadView() {
         let root = NSView()
-        let heading = NSTextField(labelWithString: "Choose what to keep")
+        let heading = NSTextField(
+            labelWithString: operation == .transcode
+                ? "Choose a video format" : "Choose what to keep"
+        )
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let explanation = NSTextField(
             wrappingLabelWithString:
-                "Set exact numeric in and out points. Fast Trim may move them forward to keyframes; Exact Trim keeps them and encodes video once. The original is never replaced."
+                operation == .transcode
+                ? "Convert the complete video once into a new MKV. Audio is preserved exactly unless you choose a conversion; nested chapters and the original file stay unchanged."
+                : "Set exact numeric in and out points. Fast Trim may move them forward to keyframes; Exact Trim keeps them and encodes video once. The original is never replaced."
         )
         explanation.textColor = .secondaryLabelColor
 
@@ -313,13 +355,16 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         rangeRow.distribution = .fillEqually
         rangeRow.spacing = 12
 
-        modeControl.selectedSegment = 0
+        modeControl.selectedSegment =
+            operation == .transcode ? TrimMode.exact.rawValue : TrimMode.fast.rawValue
         modeControl.target = self
         modeControl.action = #selector(modeChanged)
         modeControl.setAccessibilityLabel("Trim mode")
 
         presetPopup.addItems(withTitles: presets.map(TrimPresentationPolicy.presetName))
-        presetPopup.setAccessibilityLabel("Exact video format")
+        presetPopup.setAccessibilityLabel(
+            operation == .transcode ? "Video format" : "Exact video format"
+        )
         presetPopup.target = self
         presetPopup.action = #selector(presetChanged)
         audioPopup.addItem(withTitle: "Preserve Audio Exactly (Packet Copy)")
@@ -335,7 +380,9 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         qualityPopup.target = self
         qualityPopup.action = #selector(qualityChanged)
         qualityPopup.setAccessibilityLabel("Exact video quality and file size")
-        let presetLabel = NSTextField(labelWithString: "Exact video format")
+        let presetLabel = NSTextField(
+            labelWithString: operation == .transcode ? "Video format" : "Exact video format"
+        )
         let qualityLabel = NSTextField(labelWithString: "Quality / file size")
         let audioLabel = NSTextField(labelWithString: "Audio")
         let presetStack = NSStackView(views: [presetLabel, presetPopup])
@@ -388,7 +435,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         exactOptions.orientation = .vertical
         exactOptions.alignment = .leading
         exactOptions.spacing = 8
-        exactOptions.isHidden = true
+        exactOptions.isHidden = operation == .trim
         exactChoiceRow.translatesAutoresizingMaskIntoConstraints = false
         qualityStack.translatesAutoresizingMaskIntoConstraints = false
         advancedControls.translatesAutoresizingMaskIntoConstraints = false
@@ -403,26 +450,39 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
 
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.font = .systemFont(ofSize: 12)
-        inputMessage.setAccessibilityLabel("Trim input status")
+        inputMessage.setAccessibilityLabel(
+            operation == .transcode ? "Conversion input status" : "Trim input status"
+        )
         reviewText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         reviewText.textColor = .secondaryLabelColor
-        reviewText.setAccessibilityLabel("Trim review summary")
+        reviewText.setAccessibilityLabel(
+            operation == .transcode ? "Conversion review summary" : "Trim review summary"
+        )
 
+        reviewButton.title = operation == .transcode ? "Review Conversion" : "Review Trim"
         reviewButton.target = self
         reviewButton.action = #selector(reviewTrim)
         reviewButton.setAccessibilityHelp(
-            "Validate these times and inspect the exact copy or encoding boundary plan."
+            operation == .transcode
+                ? "Bind the selected encoders and review the one-generation conversion plan."
+                : "Validate these times and inspect the exact copy or encoding boundary plan."
         )
         continueButton.target = self
         continueButton.action = #selector(continueToSave)
         continueButton.keyEquivalent = "\r"
         continueButton.isEnabled = false
         continueButton.setAccessibilityHelp(
-            "Continue with the exact reviewed trim and create one verified MKV output."
+            operation == .transcode
+                ? "Continue with the reviewed conversion and create one verified MKV output."
+                : "Continue with the exact reviewed trim and create one verified MKV output."
         )
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
-        cancelButton.setAccessibilityHelp("Close without trimming or changing the source file.")
+        cancelButton.setAccessibilityHelp(
+            operation == .transcode
+                ? "Close without converting or changing the source file."
+                : "Close without trimming or changing the source file."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let footer = NSStackView(views: [spacer, cancelButton, reviewButton, continueButton])
@@ -434,6 +494,9 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             heading, explanation, thumbnailRow, rangeRow, modeControl, exactOptions,
             inputMessage, reviewText, footer,
         ])
+        thumbnailRow.isHidden = operation == .transcode
+        rangeRow.isHidden = operation == .transcode
+        modeControl.isHidden = operation == .transcode
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -520,7 +583,8 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     }
 
     @objc private func modeChanged() {
-        exactOptions.isHidden = modeControl.selectedSegment != TrimMode.exact.rawValue
+        exactOptions.isHidden =
+            operation == .trim && modeControl.selectedSegment != TrimMode.exact.rawValue
         inputChanged()
     }
 
@@ -574,9 +638,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         av1SpeedField.isEnabled = false
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.stringValue =
-            request.mode == .fast
-            ? "Reading keyframes and exact nested chapters locally…"
-            : "Binding the selected encoder, range, tracks, and exact nested chapters…"
+            request.operation == .transcode
+            ? "Binding the selected encoders, complete file, tracks, and exact nested chapters…"
+            : request.mode == .fast
+                ? "Reading keyframes and exact nested chapters locally…"
+                : "Binding the selected encoder, range, tracks, and exact nested chapters…"
         reviewTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -599,8 +665,13 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
                 guard reviewedRequest == request else { return }
                 reviewedRequest = nil
                 reviewErrorMessage = UserFacingErrorPresentation.message(
-                    failure: "Could not confirm this trim.",
-                    recovery: "No output was created; review the boundaries and try again.",
+                    failure:
+                        operation == .transcode
+                        ? "Could not confirm this conversion." : "Could not confirm this trim.",
+                    recovery:
+                        operation == .transcode
+                        ? "No output was created; review the formats and try again."
+                        : "No output was created; review the boundaries and try again.",
                     error: error
                 )
             }
@@ -664,12 +735,13 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             return
         }
         let isWholeFile = request.range.start == .zero && request.range.end == duration
+        let wholeFileIsInvalid = operation == .trim && isWholeFile
         let exactUnavailable = request.mode == .exact && request.exactChoice == nil
-        reviewButton.isEnabled = !isWholeFile && !exactUnavailable
+        reviewButton.isEnabled = !wholeFileIsInvalid && !exactUnavailable
         if let reviewErrorMessage {
             inputMessage.textColor = .systemRed
             inputMessage.stringValue = reviewErrorMessage
-        } else if isWholeFile {
+        } else if wholeFileIsInvalid {
             inputMessage.textColor = .secondaryLabelColor
             inputMessage.stringValue = "Move the in point or out point to remove part of the file."
         } else if exactUnavailable {
@@ -678,19 +750,28 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         } else if reviewedPreview == nil {
             inputMessage.textColor = .secondaryLabelColor
             inputMessage.stringValue =
-                request.mode == .fast
-                ? "Fast Trim copies every stream; review will disclose keyframe adjustments."
-                : "Exact Trim encodes video once; audio is preserved according to your choice."
+                operation == .transcode
+                ? "Video will be encoded once; audio and nested chapters follow the reviewed choices."
+                : request.mode == .fast
+                    ? "Fast Trim copies every stream; review will disclose keyframe adjustments."
+                    : "Exact Trim encodes video once; audio is preserved according to your choice."
         }
     }
 
     private func request() -> TrimReviewRequest? {
-        guard let duration = source.duration,
-            let start = try? ChapterTimestamp.parse(inField.stringValue),
-            let end = try? ChapterTimestamp.parse(outField.stringValue),
+        guard let duration = source.duration else { return nil }
+        let start =
+            operation == .transcode
+            ? MediaTime.zero : (try? ChapterTimestamp.parse(inField.stringValue))
+        let end =
+            operation == .transcode
+            ? duration : (try? ChapterTimestamp.parse(outField.stringValue))
+        guard let start, let end,
             start >= .zero, end > start, end <= duration
         else { return nil }
-        let mode = TrimMode(rawValue: modeControl.selectedSegment) ?? .fast
+        let mode =
+            operation == .transcode
+            ? TrimMode.exact : (TrimMode(rawValue: modeControl.selectedSegment) ?? .fast)
         let choice: ExactTrimChoice?
         if mode == .exact, presets.indices.contains(presetPopup.indexOfSelectedItem) {
             let preset = presets[presetPopup.indexOfSelectedItem]
@@ -701,7 +782,8 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         return TrimReviewRequest(
             mode: mode,
             range: MediaTrimRange(start: start, end: end),
-            exactChoice: choice
+            exactChoice: choice,
+            operation: operation
         )
     }
 

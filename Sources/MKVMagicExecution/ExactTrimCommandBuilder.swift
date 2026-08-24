@@ -15,15 +15,15 @@ public enum ExactTrimCommandError: Error, Equatable, Sendable {
 extension ExactTrimCommandError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .inconsistentPlan: "The Exact Trim command no longer matches its reviewed plan."
-        case .invalidPath: "Exact Trim needs safe absolute MKV source and output paths."
-        case .existingOutput: "Exact Trim refuses to overwrite an existing output."
+        case .inconsistentPlan: "The video command no longer matches its reviewed plan."
+        case .invalidPath: "Video processing needs safe absolute MKV source and output paths."
+        case .existingOutput: "Video processing refuses to overwrite an existing output."
         case .unavailableEncoder(let preset):
             "The selected \(preset.rawValue) encoder did not pass the active local probe."
         case .unavailableAAC: "The bundled AAC encoder did not pass the active local probe."
         case .unavailableAudioPreset(let preset):
             "The bundled \(preset.displayName) encoder did not pass the active local probe."
-        case .commandTooLarge: "The bounded Exact Trim command is too large."
+        case .commandTooLarge: "The bounded video command is too large."
         }
     }
 }
@@ -94,6 +94,7 @@ public struct ExactTrimCommandBuilder: Sendable {
                 source: source,
                 range: resolvedPlan.range,
                 choice: resolvedPlan.choice,
+                operation: resolvedPlan.operation,
                 availableVideoPresets: Set(capabilities.availableVideoPresets),
                 aacAvailable: capabilities.aac == .verified,
                 availableAudioPresets: Set(capabilities.availableAudioPresets)

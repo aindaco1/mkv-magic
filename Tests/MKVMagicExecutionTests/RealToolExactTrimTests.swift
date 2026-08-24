@@ -137,6 +137,47 @@ final class RealToolExactTrimTests: XCTestCase {
                 )
             )
             XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+
+            let convertedURL = root.appendingPathComponent("Converted Complete.mkv")
+            let sourceDuration = try XCTUnwrap(source.duration)
+            let conversionPreview = try await executor.preview(
+                source: source,
+                range: MediaTrimRange(start: .zero, end: sourceDuration),
+                choice: choice,
+                operation: .transcode,
+                capabilities: capabilities
+            )
+            XCTAssertEqual(conversionPreview.resolvedPlan.operation, .transcode)
+            XCTAssertEqual(
+                try codec.serialize(conversionPreview.trimmedChapters),
+                try codec.serialize(conversionPreview.originalChapters)
+            )
+            let converted = try await executor.execute(
+                preview: conversionPreview,
+                destinationURL: convertedURL
+            )
+            XCTAssertEqual(converted.tracks[0].codec, expectedCodec(choice.videoPreset))
+            XCTAssertEqual(converted.tracks[1].codec, source.tracks[1].codec)
+            XCTAssertEqual(converted.attachments.count, source.attachments.count)
+            XCTAssertEqual(converted.attachments[0].filename, source.attachments[0].filename)
+            XCTAssertEqual(converted.attachments[0].mimeType, source.attachments[0].mimeType)
+            XCTAssertEqual(converted.attachments[0].size, source.attachments[0].size)
+            XCTAssertEqual(converted.attachments[0].description, source.attachments[0].description)
+            XCTAssertEqual(converted.chapterEntryCount, source.chapterEntryCount)
+            let convertedChapters = try await ChapterEditExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            ).preview(source: converted)
+            XCTAssertEqual(
+                try codec.serialize(convertedChapters.original),
+                try codec.serialize(conversionPreview.originalChapters)
+            )
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
         }
     }
 

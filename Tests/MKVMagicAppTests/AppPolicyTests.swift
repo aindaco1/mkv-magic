@@ -489,6 +489,14 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testConvertedOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.convertedFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.WEBM")),
+            "Movie — Converted.mkv"
+        )
+    }
+
     func testTrimPresentationRequiresOneMKVVideoAndCreatesBoundedOverviewTimes() {
         let duration = MediaTime(nanoseconds: 60_000_000_000)
         let source = MediaAsset(
@@ -3400,6 +3408,84 @@ final class AppPolicyTests: XCTestCase {
         ], capturePath.hasPrefix("/") {
             try captureTrimWindow(window: window, content: content, at: capturePath)
         }
+    }
+
+    @MainActor
+    func testConvertVideoUsesACompactFullFileOneGenerationReview() throws {
+        let duration = MediaTime(nanoseconds: 60_000_000_000)
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska,webm",
+            duration: duration,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "h264",
+                    dimensions: MediaDimensions(width: 1_920, height: 1_080),
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                )
+            ]
+        )
+        var reviewedRequest: TrimReviewRequest?
+        let controller = TrimWindowController(
+            source: source,
+            thumbnails: [],
+            capabilities: FFmpegEncodingCapabilities(
+                softwareAV1: .verified,
+                softwareAV1Encoder: "libsvtav1",
+                hevc10VideoToolbox: .verified,
+                h264VideoToolbox: .verified,
+                proRes: .unavailable,
+                proResEncoder: nil,
+                aac: .verified,
+                aacEncoder: "aac_at",
+                availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+            ),
+            operation: .transcode,
+            reviewProvider: { request in
+                reviewedRequest = request
+                throw NSError(domain: "ConversionReviewFixture", code: 1)
+            }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Convert Video")
+        XCTAssertEqual(window.minSize, NSSize(width: 660, height: 360))
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Video format"
+        )
+        let visibleButtons = buttons(in: content).filter { !$0.isHiddenOrHasHiddenAncestor }
+        XCTAssertFalse(visibleButtons.contains { $0.title == "Set In" || $0.title == "Set Out" })
+        let review = try XCTUnwrap(
+            visibleButtons.first { $0.title == "Review Conversion" }
+        )
+        XCTAssertTrue(review.isEnabled)
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_CONVERSION_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
+        review.performClick(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        XCTAssertEqual(reviewedRequest?.operation, .transcode)
+        XCTAssertEqual(reviewedRequest?.mode, .exact)
+        XCTAssertEqual(
+            reviewedRequest?.range,
+            MediaTrimRange(start: .zero, end: duration)
+        )
+        XCTAssertEqual(reviewedRequest?.exactChoice?.videoPreset, .av1Quality)
+        XCTAssertEqual(reviewedRequest?.exactChoice?.audioPolicy, .packetCopy)
     }
 
     @MainActor

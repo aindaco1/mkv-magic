@@ -335,6 +335,18 @@ The trim UI uses thumbnails plus numeric in/out fields.
 
 Full transcoding is included in v1 but remains the last planning resort.
 
+Current implementation: **Convert Video…** provides a reviewed, full-file
+Matroska-to-Matroska transcode for eligible inspected MKVs with one video track
+plus audio. It reuses the Exact Trim encoder compiler and verified-output
+transaction, so the selected video is encoded exactly once, audio is copied by
+default, attachments and track metadata are preserved, and the original nested
+chapter document is reinstalled and canonically verified without trim-time
+retiming. The compact native sheet defaults to the locally recommended verified
+AV1/HEVC/H.264/ProRes choice, keeps every compatible verified alternative, and
+uses a deterministic `— Converted.mkv` destination. Subtitle/data tracks,
+multiple video tracks, source tags, unsupported or incomplete HDR/color facts,
+non-MKV inputs, and non-MKV outputs fail closed in this first standalone slice.
+
 #### Video presets
 
 | User-facing choice | Preferred implementation | Intent |
@@ -1031,6 +1043,13 @@ active local capability probe. Save remains disabled until an immutable review
 has resolved the actual output range, encoder, audio policy, and clipped nested
 chapters. Both routes use shared cancellable verified-output progress, add the
 reopened result to inspection, and persist a sanitized History lifecycle. The
+native **Convert Video…** route invokes the same exact planner for the complete
+duration under an explicit transcode operation. Unlike Trim, a zero-to-duration
+range is valid; the executor preserves the original canonical nested chapter
+document rather than clipping or regenerating chapter identities. The review,
+one FFmpeg video generation, optional per-track audio encodes, private temporary
+output, semantic/chapter verification, atomic commit, reopen audit, and sanitized
+History lifecycle remain shared rather than duplicated.
 native common-format Join route now enables only after the active capability
 probe and the same fail-closed source-metadata policy used by final assembly.
 It presents the exact resolved SDR or uniform static HDR10 video and AAC audio targets, packet-copy lanes,

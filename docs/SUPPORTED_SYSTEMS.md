@@ -45,6 +45,13 @@ BT.709 SDR and validated static HDR10 by tone-mapping only the HDR10 Parts to a
 verified BT.709 SDR result. SDR-to-HDR conversion, HDR10+, HLG, and Dolby Vision
 transcoding remain unavailable.
 
+**Convert Video…** supports the same validated BT.709 SDR and static-HDR10
+one-generation contract for the complete duration of an eligible Matroska MKV.
+It currently requires one video track plus audio, preserves audio by default,
+preserves attachments and the unchanged nested chapter tree, and creates MKV.
+Subtitle/data tracks, multiple video tracks, source tags, non-MKV input/output,
+and unsupported HDR families are refused before encoding.
+
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app
 must also be installed and exercised on physical Intel and Apple Silicon Macs.

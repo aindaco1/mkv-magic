@@ -499,21 +499,21 @@ public enum ExactTrimVerificationError: Error, Equatable, Sendable {
 extension ExactTrimVerificationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .emptyOutput: "The exact-trimmed MKV is empty."
-        case .wrongContainer: "Exact Trim did not create a Matroska MKV."
-        case .wrongDuration: "The exact-trimmed duration does not match the requested range."
-        case .wrongTrackCount: "Exact Trim added or removed a media track."
-        case .wrongTrackOrder: "Exact Trim changed the reviewed media-track order."
-        case .videoMismatch: "The exact-trimmed video does not match its encoding choice."
+        case .emptyOutput: "The processed MKV is empty."
+        case .wrongContainer: "Video processing did not create a Matroska MKV."
+        case .wrongDuration: "The processed duration does not match the reviewed range."
+        case .wrongTrackCount: "Video processing added or removed a media track."
+        case .wrongTrackOrder: "Video processing changed the reviewed media-track order."
+        case .videoMismatch: "The processed video does not match its encoding choice."
         case .audioMismatch(let trackID):
-            "The exact-trimmed audio for source track \(trackID) changed unexpectedly."
+            "The processed audio for source track \(trackID) changed unexpectedly."
         case .trackMetadataMismatch(let trackID):
             "Track \(trackID) lost reviewed language, name, or disposition metadata."
-        case .attachmentsChanged: "Exact Trim did not preserve every attachment."
-        case .metadataChanged: "Exact Trim changed unreviewed metadata or tags."
-        case .chaptersChanged: "The exact-trimmed chapter count does not match the review."
+        case .attachmentsChanged: "Video processing did not preserve every attachment."
+        case .metadataChanged: "Video processing changed unreviewed metadata or tags."
+        case .chaptersChanged: "The processed chapter count does not match the review."
         case .segmentIdentityChanged:
-            "The exact-trimmed MKV did not receive a new segment identity."
+            "The processed MKV did not receive a new segment identity."
         }
     }
 }

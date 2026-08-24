@@ -100,6 +100,17 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         )
     }
 
+    static func videoTranscode() -> VerifiedOutputProgressWindowController {
+        VerifiedOutputProgressWindowController(
+            title: "Converting Video",
+            initialMessage: "Encoding the complete video once into a temporary MKV…",
+            verifyingMessage:
+                "Reopening the temporary MKV and verifying its format, tracks, and chapters…",
+            committingMessage: "Verification passed. Saving and auditing the final MKV…",
+            cancellingMessage: "Cancelling and removing the temporary output…"
+        )
+    }
+
     static func commonFormatJoin() -> VerifiedOutputProgressWindowController {
         VerifiedOutputProgressWindowController(
             title: "Joining MKV Files",

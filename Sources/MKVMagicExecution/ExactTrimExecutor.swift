@@ -19,17 +19,17 @@ public enum ExactTrimExecutionError: Error, Equatable, Sendable {
 extension ExactTrimExecutionError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .unsupportedDestination: "Exact Trim currently creates one Matroska MKV output."
-        case .unsafeSource: "Exact Trim needs a safe regular source file."
-        case .staleSource: "The source or its chapters changed after Exact Trim review."
+        case .unsupportedDestination: "Video processing currently creates one Matroska MKV output."
+        case .unsafeSource: "Video processing needs a safe regular source file."
+        case .staleSource: "The source or its chapters changed after review."
         case .inconsistentCommand:
-            "The Exact Trim command no longer matches its reviewed encode/copy plan."
+            "The video command no longer matches its reviewed encode/copy plan."
         case .unsafeChapterOutput:
             "mkvextract did not create a safe, bounded chapter document."
         case .chapterVerificationFailed:
-            "The exact-trimmed nested chapters do not match the reviewed tree."
+            "The output nested chapters do not match the reviewed tree."
         case .toolFailed(let tool, let exitCode, let message):
-            "\(tool) could not complete Exact Trim (code \(exitCode)): \(message)"
+            "\(tool) could not complete video processing (code \(exitCode)): \(message)"
         case .committedOutputAuditFailed(let outputURL, let reason):
             "The verified MKV was saved as \(outputURL.lastPathComponent), but its final reopen "
                 + "audit failed: \(reason)"
@@ -107,12 +107,14 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
         source: MediaAsset,
         range: MediaTrimRange,
         choice: ExactTrimChoice,
+        operation: ExactVideoOperation = .trim,
         capabilities: FFmpegEncodingCapabilities
     ) async throws -> ExactTrimPreview {
         let resolved = try ExactTrimPlanner().resolve(
             source: source,
             range: range,
             choice: choice,
+            operation: operation,
             availableVideoPresets: Set(capabilities.availableVideoPresets),
             aacAvailable: capabilities.aac == .verified,
             availableAudioPresets: Set(capabilities.availableAudioPresets)
@@ -132,11 +134,17 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
         else {
             throw ExactTrimExecutionError.staleSource
         }
-        let trimmed = try MatroskaChapterTrimmer().trim(
-            extracted.document,
-            sourceDuration: duration,
-            retainedRange: range
-        )
+        let outputChapters: MatroskaChapterDocument
+        switch operation {
+        case .trim:
+            outputChapters = try MatroskaChapterTrimmer().trim(
+                extracted.document,
+                sourceDuration: duration,
+                retainedRange: range
+            )
+        case .transcode:
+            outputChapters = extracted.document
+        }
         let command = try await PrivateTemporaryDirectory.withDirectory(
             prefix: "mkv-magic-exact-trim-preview"
         ) { directory in
@@ -150,7 +158,7 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
             resolvedPlan: resolved,
             capabilities: capabilities,
             originalChapters: extracted.document,
-            trimmedChapters: trimmed,
+            trimmedChapters: outputChapters,
             sourceRevision: revision,
             sourceChapterSHA256: digest(extracted.canonicalData),
             encodedVideoTrackID: command.encodedVideoTrackID,

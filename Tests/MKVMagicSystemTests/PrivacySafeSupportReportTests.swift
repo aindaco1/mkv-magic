@@ -8,6 +8,13 @@ final class PrivacySafeSupportReportTests: XCTestCase {
     private var rootURL: URL!
     private var toolRootURL: URL!
 
+    func testStandaloneTranscodeHistoryUsesItsOwnPrivacySafeWorkflowKind() {
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.videoTranscode),
+            .videoTranscode
+        )
+    }
+
     override func setUpWithError() throws {
         rootURL = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-support-report-\(UUID().uuidString)",

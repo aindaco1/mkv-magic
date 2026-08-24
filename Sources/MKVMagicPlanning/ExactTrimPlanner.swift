@@ -1,6 +1,11 @@
 import Foundation
 import MKVMagicCore
 
+public enum ExactVideoOperation: String, Codable, Hashable, Sendable {
+    case trim
+    case transcode
+}
+
 public enum ExactTrimAudioPolicy: String, Codable, Hashable, Sendable {
     case packetCopy
     case aacPreserveLayout
@@ -99,18 +104,19 @@ public enum ExactTrimPlanningError: Error, Equatable, Sendable {
 extension ExactTrimPlanningError: LocalizedError {
     public var errorDescription: String? {
         switch self {
-        case .unsupportedSource: "Exact Trim currently accepts an inspected Matroska MKV."
-        case .invalidDuration: "Exact Trim needs a known positive source duration."
-        case .invalidRange: "The exact in/out range must be positive and inside the source."
+        case .unsupportedSource:
+            "One-generation video processing currently accepts an inspected Matroska MKV."
+        case .invalidDuration: "Video processing needs a known positive source duration."
+        case .invalidRange: "The reviewed range must be positive and inside the source."
         case .noChange: "The requested range keeps the complete source."
         case .unsupportedTracks:
-            "Exact Trim currently supports one video plus audio; subtitle and data tracks need a later timing-safe path."
+            "One-generation video processing currently supports one video plus audio; subtitle and data tracks need a later timing-safe path."
         case .unsupportedTags:
-            "Exact Trim cannot yet prove preservation of this source's Matroska tags."
+            "Video processing cannot yet prove preservation of this source's Matroska tags."
         case .unsupportedDynamicRange:
-            "Exact Trim requires reviewed BT.709 SDR or static HDR10 video; other HDR formats fail closed."
+            "Video processing requires reviewed BT.709 SDR or static HDR10 video; other HDR formats fail closed."
         case .incompleteVideoFacts:
-            "Exact Trim needs complete even video dimensions and color facts."
+            "Video processing needs complete even video dimensions and color facts."
         case .incompleteAudioFacts(let trackID):
             "Audio track \(trackID) needs a layout and sample rate the selected audio format can preserve safely."
         case .unavailableVideoPreset(let preset):
@@ -118,12 +124,13 @@ extension ExactTrimPlanningError: LocalizedError {
         case .unavailableAAC: "The bundled AAC encoder did not pass the active local probe."
         case .unavailableAudioPreset(let preset):
             "The bundled \(preset.displayName) encoder did not pass the active local probe."
-        case .invalidChoice: "The Exact Trim encoding choice is outside its safe bounds."
+        case .invalidChoice: "The video encoding choice is outside its safe bounds."
         }
     }
 }
 
 public struct ResolvedExactTrimPlan: Hashable, Sendable {
+    public let operation: ExactVideoOperation
     public let source: MediaAsset
     public let range: MediaTrimRange
     public let choice: ExactTrimChoice
@@ -134,6 +141,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
     public let trackIDsInOutputOrder: [Int]
 
     fileprivate init(
+        operation: ExactVideoOperation,
         source: MediaAsset,
         range: MediaTrimRange,
         choice: ExactTrimChoice,
@@ -143,6 +151,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         audioTrackIDs: [Int],
         trackIDsInOutputOrder: [Int]
     ) {
+        self.operation = operation
         self.source = source
         self.range = range
         self.choice = choice
@@ -200,6 +209,7 @@ public struct ExactTrimPlanner: Sendable {
         source: MediaAsset,
         range: MediaTrimRange,
         choice: ExactTrimChoice,
+        operation: ExactVideoOperation = .trim,
         availableVideoPresets: Set<VideoPreset>,
         aacAvailable: Bool,
         availableAudioPresets: Set<AudioTranscodePreset> = []
@@ -216,7 +226,7 @@ public struct ExactTrimPlanner: Sendable {
         guard range.start >= .zero, range.end > range.start, range.end <= duration else {
             throw ExactTrimPlanningError.invalidRange
         }
-        guard range.start != .zero || range.end != duration else {
+        guard operation == .transcode || range.start != .zero || range.end != duration else {
             throw ExactTrimPlanningError.noChange
         }
         let videos = source.tracks.filter { $0.kind == .video }
@@ -279,6 +289,7 @@ public struct ExactTrimPlanner: Sendable {
             }
         }
         return ResolvedExactTrimPlan(
+            operation: operation,
             source: source,
             range: range,
             choice: choice,

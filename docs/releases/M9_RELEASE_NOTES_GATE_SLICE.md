@@ -8,11 +8,12 @@ It does not create a tag, draft, public release, or final version commitment.
 The prepared notes are derived from executable UI and verifier paths in the
 current source tree. They cover inspection, metadata and track editing,
 deterministic text-subtitle cleanup and muxing, nested chapters, lossless and
-common-format joins, fast and exact trims, portable workflows, queue/history,
+common-format joins, fast and exact trims, reviewed full-file conversion,
+portable workflows, queue/history,
 AV1/HEVC policy, original preservation, and local-only privacy.
 
 The limitations section distinguishes this beta from the broader v1 roadmap:
-image-subtitle OCR, general-purpose standalone transcoding, non-MKV output,
+image-subtitle OCR, unsupported standalone-transcode layouts, non-MKV output,
 unsupported HDR families, background folder watching, and unsupported complex
 layouts are not presented as delivered.
 

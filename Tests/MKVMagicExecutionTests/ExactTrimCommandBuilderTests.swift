@@ -5,6 +5,36 @@ import MKVMagicPlanning
 import XCTest
 
 final class ExactTrimCommandBuilderTests: XCTestCase {
+    func testBuildsReviewedWholeFileTranscodeWithOneGeneration() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try ExactTrimPlanner().resolve(
+            source: fixture.source,
+            range: MediaTrimRange(
+                start: .zero,
+                end: try XCTUnwrap(fixture.source.duration)
+            ),
+            choice: ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000)
+            ),
+            operation: .transcode,
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(),
+            outputURL: fixture.root.appendingPathComponent("Converted.mkv")
+        )
+
+        XCTAssertEqual(value(after: "-ss", in: command.arguments), "0.000000000")
+        XCTAssertEqual(value(after: "-t", in: command.arguments), "10.000000000")
+        XCTAssertEqual(command.encodedVideoTrackID, 0)
+        XCTAssertEqual(command.copiedAudioTrackIDs, [1])
+    }
+
     func testBuildsOneExactVideoGenerationAndPacketCopiesAudio() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

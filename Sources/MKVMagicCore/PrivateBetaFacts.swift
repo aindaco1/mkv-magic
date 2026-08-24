@@ -266,6 +266,7 @@ public enum BuiltInWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case commonFormatJoin
     case fastTrim
     case exactTrim
+    case videoTranscode
 }
 
 public enum BuiltInWorkflowCatalog {
@@ -292,6 +293,9 @@ public enum BuiltInWorkflowCatalog {
     )!
     public static let fastTrim = UUID(uuidString: "7E551E9E-039C-46DB-A14D-E43E338A5E2A")!
     public static let exactTrim = UUID(uuidString: "CA62AB88-34D1-44E0-B410-FB9DAA2FE3ED")!
+    public static let videoTranscode = UUID(
+        uuidString: "64FBC4F1-5764-4F44-89A4-E6B6A4A68940"
+    )!
 
     public static func kind(for id: UUID) -> BuiltInWorkflowKind? {
         switch id {
@@ -307,6 +311,7 @@ public enum BuiltInWorkflowCatalog {
         case commonFormatJoin: .commonFormatJoin
         case fastTrim: .fastTrim
         case exactTrim: .exactTrim
+        case videoTranscode: .videoTranscode
         default: nil
         }
     }

@@ -183,6 +183,20 @@ immutable review, use the same cancellable verified-output progress surface,
 disable cancellation during commit, save to a new deterministic MKV name, and
 record a sanitized eight-state History lifecycle.
 
+For an eligible inspected MKV, **Convert Video…** reuses that same reviewed
+one-generation engine for the complete file. It starts with the locally
+recommended verified video format—AV1 for quality/size unless a completed
+Encoding Test recommends the faster HEVC path—while keeping every verified
+AV1, HEVC, H.264, or ProRes alternative selectable. Audio is packet-copied by
+default; only layout-safe, locally verified audio conversions appear. The
+review binds the complete duration, one video generation, audio decisions,
+track metadata, attachments, and the unchanged canonical nested chapter tree.
+Execution creates `— Converted.mkv` through the same private temporary-output,
+semantic verification, atomic commit, and reopen audit used by Exact Trim. This
+first standalone slice intentionally fails closed for subtitle/data tracks,
+multiple video tracks, source tags, unsupported HDR, incomplete facts, and
+non-MKV inputs or outputs.
+
 Exact Trim keeps **Balanced** as the default but also offers plain-language
 **Smaller File** and **Higher Quality** choices. An optional disclosure reveals
 the exact bounded control: AV1 RF 0–63 plus SVT speed preset 0–13, or HEVC/H.264

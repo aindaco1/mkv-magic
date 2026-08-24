@@ -101,6 +101,7 @@ private actor ExactTrimToolRunner: CommandRunning {
 private actor ExactTrimInspector: MediaInspecting {
     enum Behavior: Equatable, Sendable {
         case valid
+        case fullDuration
         case wrongDuration
         case wrongVideo
         case wrongCommittedVideo
@@ -125,7 +126,9 @@ private actor ExactTrimInspector: MediaInspecting {
             sourceURL: inputURL,
             container: "matroska,webm",
             duration: MediaTime(
-                nanoseconds: behavior == .wrongDuration ? 4_000_000_000 : 5_500_000_000
+                nanoseconds:
+                    behavior == .wrongDuration
+                    ? 4_000_000_000 : (behavior == .fullDuration ? 10_000_000_000 : 5_500_000_000)
             ),
             fileSize: Int64(
                 (try inputURL.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
@@ -181,6 +184,45 @@ private actor ExactTrimStageRecorder {
 }
 
 final class ExactTrimExecutorTests: XCTestCase {
+    func testWholeFileTranscodePreservesNestedChapterDocumentAndEncodesVideoOnce() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runner = ExactTrimToolRunner(
+            sourceURL: fixture.source.sourceURL,
+            sourceChapters: fixture.chapterData
+        )
+        let executor = makeExecutor(
+            runner: runner,
+            inspector: ExactTrimInspector(source: fixture.source, behavior: .fullDuration)
+        )
+        let preview = try await executor.preview(
+            source: fixture.source,
+            range: MediaTrimRange(
+                start: .zero,
+                end: try XCTUnwrap(fixture.source.duration)
+            ),
+            choice: choice(),
+            operation: .transcode,
+            capabilities: capabilities()
+        )
+
+        XCTAssertEqual(preview.resolvedPlan.operation, .transcode)
+        XCTAssertEqual(preview.trimmedChapters, preview.originalChapters)
+        let destination = fixture.root.appendingPathComponent("Converted.mkv")
+        _ = try await executor.execute(preview: preview, destinationURL: destination)
+
+        let requests = await runner.capturedRequests()
+        let ffmpeg = try XCTUnwrap(
+            requests.first { $0.executableURL.lastPathComponent == "ffmpeg" }
+        )
+        XCTAssertEqual(value(after: "-ss", in: ffmpeg.arguments), "0.000000000")
+        XCTAssertEqual(value(after: "-t", in: ffmpeg.arguments), "10.000000000")
+        XCTAssertEqual(
+            requests.filter { $0.executableURL.lastPathComponent == "ffmpeg" }.count,
+            1
+        )
+    }
+
     func testExecutesOneVideoGenerationCopiesAudioAndAuditsExactChaptersTwice() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }

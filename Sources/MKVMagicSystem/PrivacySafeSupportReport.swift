@@ -46,6 +46,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case commonFormatJoin
     case fastTrim
     case exactTrim
+    case videoTranscode
     case savedOrUnknown
 
     init(workflowID: UUID) {
@@ -66,6 +67,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
         case .commonFormatJoin: self = .commonFormatJoin
         case .fastTrim: self = .fastTrim
         case .exactTrim: self = .exactTrim
+        case .videoTranscode: self = .videoTranscode
         }
     }
 }

@@ -900,9 +900,11 @@ final class AppModel {
         }
 
         state = .executing(
-            preview.videoEncodeCount == 0
-                ? "Fast trimming without encoding…"
-                : "Exact trimming with one video encode…"
+            preview.operation == .transcode
+                ? "Converting the complete video with one video encode…"
+                : preview.videoEncodeCount == 0
+                    ? "Fast trimming without encoding…"
+                    : "Exact trimming with one video encode…"
         )
         didChange?()
         var historyExecution: HistoryExecution?
@@ -925,7 +927,9 @@ final class AppModel {
                 runningMessage =
                     "Splitting one temporary MKV at reviewed keyframes and replacing chapters."
             case .exact(let exact):
-                workflowID = BuiltInWorkflowCatalog.exactTrim
+                workflowID =
+                    exact.resolvedPlan.operation == .transcode
+                    ? BuiltInWorkflowCatalog.videoTranscode : BuiltInWorkflowCatalog.exactTrim
                 privacySafePlan = MediaJobPlanFacts(
                     videoEncodeGenerations: UInt(max(0, preview.videoEncodeCount)),
                     audioTracksEncoded: UInt(exact.encodedAudioTrackIDs.count)
@@ -934,14 +938,21 @@ final class AppModel {
                     exact.resolvedPlan.choice.audioPolicy.transcodePreset.map {
                         "encode \(exact.encodedAudioTrackIDs.count) audio track(s) once to \($0.displayName)"
                     } ?? "packet-copy every audio track"
-                planningMessage =
-                    "One video encode using "
-                    + TrimPresentationPolicy.presetName(
-                        exact.resolvedPlan.choice.videoPreset
-                    )
-                    + "; \(audio); preserve the exact reviewed range."
-                runningMessage =
-                    "Encoding video once to one temporary MKV and replacing exact chapters."
+                let video = TrimPresentationPolicy.presetName(
+                    exact.resolvedPlan.choice.videoPreset
+                )
+                if exact.resolvedPlan.operation == .transcode {
+                    planningMessage =
+                        "One video encode using \(video); \(audio); preserve the complete "
+                        + "duration and exact nested chapters."
+                    runningMessage =
+                        "Encoding the complete video once to one temporary MKV and preserving chapters."
+                } else {
+                    planningMessage =
+                        "One video encode using \(video); \(audio); preserve the exact reviewed range."
+                    runningMessage =
+                        "Encoding video once to one temporary MKV and replacing exact chapters."
+                }
             }
             let execution = try await beginHistory(
                 inputs: [Self.historyInput(source)],
@@ -1013,7 +1024,9 @@ final class AppModel {
                 execution,
                 destinationURL: destinationURL,
                 successMessage:
-                    "Verified trimmed range, streams, metadata, attachments, and exact nested chapters; committed and reopened output."
+                    preview.operation == .transcode
+                    ? "Verified converted video, complete duration, streams, metadata, attachments, and unchanged nested chapters; committed and reopened output."
+                    : "Verified trimmed range, streams, metadata, attachments, and exact nested chapters; committed and reopened output."
             )
             return output
         } catch {
@@ -1076,9 +1089,11 @@ final class AppModel {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
         state = .executing(
-            request.mode == .fast
-                ? "Reading exact keyframes and nested chapters…"
-                : "Binding the exact range, encoder, streams, and nested chapters…"
+            request.operation == .transcode
+                ? "Binding the complete file, encoder, streams, and nested chapters…"
+                : request.mode == .fast
+                    ? "Reading exact keyframes and nested chapters…"
+                    : "Binding the exact range, encoder, streams, and nested chapters…"
         )
         didChange?()
         do {
@@ -1092,6 +1107,9 @@ final class AppModel {
             let preview: TrimExecutionPreview
             switch request.mode {
             case .fast:
+                guard request.operation == .trim else {
+                    throw ExactTrimPlanningError.invalidChoice
+                }
                 preview = .fast(
                     try await FastTrimExecutor(
                         ffprobeURL: try catalog.url(for: .ffprobe),
@@ -1120,6 +1138,7 @@ final class AppModel {
                         source: source,
                         range: request.range,
                         choice: choice,
+                        operation: request.operation,
                         capabilities: capabilities
                     )
                 )
@@ -1130,9 +1149,14 @@ final class AppModel {
         } catch {
             state = .failed(
                 UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the trim review.",
+                    failure:
+                        request.operation == .transcode
+                        ? "Could not prepare the conversion review."
+                        : "Could not prepare the trim review.",
                     recovery:
-                        "No output was created; reopen Trim and review the source and boundaries.",
+                        request.operation == .transcode
+                        ? "No output was created; reopen Convert Video and review the source and formats."
+                        : "No output was created; reopen Trim and review the source and boundaries.",
                     error: error
                 )
             )

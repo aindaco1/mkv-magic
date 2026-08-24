@@ -4,6 +4,41 @@ import MKVMagicPlanning
 import XCTest
 
 final class ExactTrimPlannerTests: XCTestCase {
+    func testWholeFileIsRejectedAsATrimButResolvedAsOneTranscodeGeneration() throws {
+        let source = makeSource()
+        let fullRange = MediaTrimRange(
+            start: .zero,
+            end: try XCTUnwrap(source.duration)
+        )
+        let choice = ExactTrimChoice(
+            videoPreset: .hevcCompatibility,
+            videoRateControl: .averageBitrate(2_000_000)
+        )
+        XCTAssertThrowsError(
+            try ExactTrimPlanner().resolve(
+                source: source,
+                range: fullRange,
+                choice: choice,
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .noChange) }
+
+        let transcode = try ExactTrimPlanner().resolve(
+            source: source,
+            range: fullRange,
+            choice: choice,
+            operation: .transcode,
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+
+        XCTAssertEqual(transcode.operation, .transcode)
+        XCTAssertEqual(transcode.range, fullRange)
+        XCTAssertEqual(transcode.videoEncodeCount, 1)
+        XCTAssertEqual(transcode.audioEncodeCount, 0)
+    }
+
     func testResolvesOneVideoGenerationWithExplicitCopiedOrAACAudio() throws {
         let source = makeSource()
         let choice = ExactTrimChoice(
