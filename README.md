@@ -437,6 +437,11 @@ Release verification now goes beyond tool version output: the mounted signed
 app creates, inspects, safely edits, verifies, preserves, and extracts a fixed
 Matroska fixture under both ARM64 and x86_64 sandbox inheritance. See
 [docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md](docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md).
+A private `0.0.0` production rehearsal from exact source commit `113526c`
+subsequently passed Developer ID signing, independent app and DMG notarization,
+stapling, Gatekeeper, and both architecture fixture paths. It was not published
+and does not replace final-tag, clean-account, physical-Intel, or updater
+acceptance.
 
 ## Design promises
 

@@ -1421,7 +1421,11 @@ Mounted release verification runs a fixed private Matroska fixture from both
 the ARM64 and x86_64 app slices, exercising FFmpeg, FFprobe, `mkvmerge`,
 `mkvpropedit`, and `mkvextract` while proving verified-copy output and original
 preservation. Unsandboxed direct-helper tests cannot substitute for this
-signed-parent execution path.
+signed-parent execution path. A private `0.0.0` production rehearsal from exact
+source commit `113526c` passed Developer ID signing, separate app and DMG Apple
+notarization, stapling, Gatekeeper, and both architecture fixture paths. It was
+not published and does not satisfy final-tag, clean-account, physical-Intel, or
+prior-version update acceptance.
 
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 

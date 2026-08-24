@@ -48,9 +48,31 @@ the app's real sandbox inheritance chain.
 An isolated Universal real-runtime DMG was assembled and signed ad hoc after the
 change. Both architecture selections completed the fixture with one AAC track,
 a 1,104-byte preserved source, a 1,104-byte verified edited output, and a
-543-byte extracted track. This is deterministic local engineering evidence;
-production signing and Apple notarization must be repeated on the eventual
-release commit.
+543-byte extracted track. This established deterministic local engineering
+behavior before production credential use.
+
+## Private production rehearsal
+
+A second private `0.0.0` rehearsal was built from exact source commit
+`113526c9ab4e50b34896681340fed9b3415fb9db` with a clean worktree and the exact
+pinned Universal runtime. Its app and DMG were signed with Developer ID,
+independently returned `Accepted` from Apple notarization, stapled successfully,
+and passed Gatekeeper assessment.
+
+The finished DMG was mounted read-only and passed the strict app layout,
+signature, reviewed-entitlement, bundled-tool inventory, version-launch,
+checksum, and evidence checks. Its installed app-context fixture completed
+under both explicit ARM64 and Rosetta x86_64 selection with the same one-track,
+1,104-byte source, 1,104-byte edited output, 543-byte extraction, and preserved
+original result. Eleven private evidence assets passed size and checksum
+consistency checks. Credential names, values, identities, and private paths are
+not recorded in the repository.
+
+This is private production-pipeline evidence for that exact commit, not a public
+release or user acceptance. It does not establish installation from a public
+download, a clean macOS account, a physical Intel Mac, or update replacement
+from an older public version. The final signed release tag must repeat the
+entire production chain and downloaded-artifact verification.
 
 The final complete local gate passed 512 tests with 33 intentional source-only
 bundled-runtime skips and zero failures in ordinary, coverage,
