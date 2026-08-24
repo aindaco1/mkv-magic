@@ -1109,6 +1109,21 @@ same remux. The review is ephemeral and both the temporary and committed MKV
 must pass extracted SRT or ASS/SSA payload comparison. Broader conditions, queue
 execution, and filename cleanup remain open.
 
+The production-queue persistence and scheduling foundation is implemented as a
+separate contract from sanitized History. A private versioned document stores
+only reviewed workflow intent, plan impact, ordered state events, bounded opaque
+security-scoped bookmarks, display names, destination policy, and attempt count.
+It rejects unsafe paths, symlinks, missing or oversized bookmarks, duplicate
+identities, forged state histories, stale timestamps, and resource-class claims
+that disagree with the reviewed plan. Relaunch recovery moves running or
+cancelling jobs to **Needs Review** rather than restarting them. The pure
+scheduler preserves queue order, admits at most one video-heavy job, separately
+bounds audio-heavy and zero-encode lightweight work, starts only one lightweight
+job on battery, and starts nothing
+under serious thermal pressure or while paused. AppKit controls, bookmark
+resolution, executor admission/cancellation, and retry re-planning remain open;
+this foundation alone is not a user-operable production queue.
+
 Deliverables:
 
 - Plain-language conditional workflow cards.

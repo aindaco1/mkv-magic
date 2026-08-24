@@ -237,6 +237,17 @@ it remains local until the user chooses a destination. See
 for the beta loop. No public release is available yet. The canonical product and
 delivery plan is [PRODUCT_SPEC.md](PRODUCT_SPEC.md).
 
+The separate M7 production-queue foundation now has a versioned, atomic private
+store for bookmark-backed source and destination authority, reviewed workflow
+intent and plan impact, retry attempts, and ordered state events. Interrupted
+running or cancelling work becomes **Needs Review** after relaunch and is never
+silently restarted. Its pure scheduler starts at most one video-heavy job,
+bounds audio-heavy and zero-encode lightweight work separately, stops new starts
+under serious thermal pressure, and reduces battery operation to one lightweight
+job. This foundation is not yet
+connected to the app's Verify & Run flow or a queue window, so it is not claimed
+as user-operable production queue execution.
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

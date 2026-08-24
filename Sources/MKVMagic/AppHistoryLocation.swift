@@ -30,6 +30,18 @@ enum AppHistoryLocation {
             fileURL: appDirectory.appendingPathComponent("workflows.json"))
     }
 
+    static func makeQueueStore(
+        fileManager: FileManager = .default,
+        applicationSupportURL explicitApplicationSupportURL: URL? = nil
+    ) throws -> JSONJobQueueStore {
+        let appDirectory = try makeAppDirectory(
+            fileManager: fileManager,
+            applicationSupportURL: explicitApplicationSupportURL
+        )
+        return try JSONJobQueueStore(
+            fileURL: appDirectory.appendingPathComponent("job-queue.json"))
+    }
+
     static func makeEncodingBenchmarkStore(
         fileManager: FileManager = .default,
         applicationSupportURL explicitApplicationSupportURL: URL? = nil

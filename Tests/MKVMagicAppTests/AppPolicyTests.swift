@@ -1190,6 +1190,27 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testQueueLocationSharesPrivateAppSupportDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-queue-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try AppHistoryLocation.makeQueueStore(applicationSupportURL: root)
+        try await store.save(MediaQueueSnapshot(updatedAt: Date(timeIntervalSince1970: 0)))
+
+        let appDirectory = root.appendingPathComponent("com.dustwave.mkvmagic")
+        let attributes = try FileManager.default.attributesOfItem(atPath: appDirectory.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o700)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: appDirectory.appendingPathComponent("job-queue.json").path
+            )
+        )
+    }
+
     func testEncodingBenchmarkLocationSharesPrivateAppSupportDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-encoding-test-\(UUID().uuidString)",
