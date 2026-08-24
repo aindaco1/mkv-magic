@@ -677,6 +677,7 @@ enum WorkflowEditorPolicy {
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,
+        .convertVideoIfNotAV1OrHEVC,
         .convertVideoRecommended,
         .convertVideoAV1,
         .convertVideoHEVC,

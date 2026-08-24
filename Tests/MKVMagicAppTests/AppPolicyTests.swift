@@ -2534,6 +2534,7 @@ final class AppPolicyTests: XCTestCase {
                 .removeSegmentTitle,
                 .normalizeFilename,
                 .addExternalSubtitle,
+                .convertVideoIfNotAV1OrHEVC,
                 .convertVideoRecommended,
                 .convertVideoAV1,
                 .convertVideoHEVC,

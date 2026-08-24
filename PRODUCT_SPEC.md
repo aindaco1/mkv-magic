@@ -353,7 +353,10 @@ fail closed in this first standalone slice.
 Saved workflows now expose the same complete-file conversion as portable intent:
 **Recommended for this Mac**, AV1, HEVC, H.264, or ProRes. Plan review resolves
 and names the exact locally verified preset; the portable JSON retains only the
-intent. At most one conversion card may be present. A conversion-only workflow
+intent. The separate lossless-first conditional converts with the same local
+recommendation only when the inspected video is not already AV1 or HEVC; a
+modern source skips that card, its dependent audio card, and the capability
+probe. At most one conversion card may be present. A conversion-only workflow
 encodes directly to the final verified output. When deterministic track,
 subtitle, or title steps also apply, MKV Magic first creates a private
 verified packet-copy/metadata intermediate and then performs exactly one final
@@ -537,7 +540,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v6 preserves that boundary. v1-v5 workflows
+identifier—and current schema v7 preserves that boundary. v1-v6 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 
@@ -1140,8 +1143,9 @@ static-HDR10 target. Each change invalidates approval, resolves a fresh immutabl
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
 Portable saved workflows now share the complete-file conversion path. Their
-schema-v6 cards choose the local recommendation or one explicit video preset,
-plus an optional dependent AAC, Opus, AC-3, E-AC-3, or FLAC audio policy. Plan
+schema-v7 cards choose the local recommendation, one explicit video preset, or
+the lossless-first AV1/HEVC condition, plus an optional dependent AAC, Opus,
+AC-3, E-AC-3, or FLAC audio policy. Plan
 review binds both locally verified choices and composes deterministic cleanup
 into a private verified intermediate followed by one final FFmpeg process. A
 pinned-runtime integration proves the edit precedes that only invocation, each
@@ -1195,8 +1199,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v6
-retains that boundary and strictly migrates v1-v5 without allowing an older
+only the naming intent, never a source or generated filename; current schema v7
+retains that boundary and strictly migrates v1-v6 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 

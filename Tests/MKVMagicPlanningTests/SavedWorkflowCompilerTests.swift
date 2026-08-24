@@ -55,6 +55,70 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.videoConversionChoice?.videoPreset, .hevcCompatibility)
     }
 
+    func testConditionalConversionKeepsModernVideoAndDependentAudioUnchanged() throws {
+        let workflow = SavedWorkflow(
+            name: "Modern video guard",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoIfNotAV1OrHEVC),
+                SavedWorkflowStep(action: .convertAudioFLAC),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let asset = makeConvertibleAsset(title: "Remove", hdr10: true)
+
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset)
+        )
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertNil(compiled.videoConversionChoice)
+        XCTAssertNil(compiled.audioConversionPreset)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.disposition),
+            [.skipped, .skipped, .applied]
+        )
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvPropEdit, .verify, .commit])
+
+        let conversionOnly = SavedWorkflow(
+            name: "Already modern",
+            steps: [SavedWorkflowStep(action: .convertVideoIfNotAV1OrHEVC)]
+        )
+        XCTAssertNil(
+            try SavedWorkflowCompiler().preview(conversionOnly, for: asset).compiledWorkflow
+        )
+    }
+
+    func testConditionalConversionResolvesOneGenerationForLegacyVideo() throws {
+        let workflow = SavedWorkflow(
+            name: "Legacy video guard",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoIfNotAV1OrHEVC),
+                SavedWorkflowStep(action: .convertAudioOpus),
+            ]
+        )
+        let asset = makeConvertibleAsset()
+
+        XCTAssertTrue(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset)
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: asset,
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.hevcCompatibility],
+                availableAudioPresets: [.opusQuality]
+            )
+        )
+
+        XCTAssertEqual(compiled.videoConversionChoice?.videoPreset, .hevcCompatibility)
+        XCTAssertEqual(compiled.audioConversionPreset, .opusQuality)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+    }
+
     func testFixedConversionRequiresItsLocallyVerifiedEncoder() {
         let workflow = SavedWorkflow(
             name: "AV1 conversion",

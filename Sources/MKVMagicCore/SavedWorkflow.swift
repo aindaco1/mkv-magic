@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 6
+    public static let currentSchemaVersion = 7
 
     public let id: UUID
     public var schemaVersion: Int
@@ -47,6 +47,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
+    case convertVideoIfNotAV1OrHEVC
     case convertVideoRecommended
     case convertVideoAV1
     case convertVideoHEVC
@@ -60,7 +61,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
 
     public var isVideoConversion: Bool {
         switch self {
-        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
+        case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
+            .convertVideoHEVC,
             .convertVideoH264, .convertVideoProRes:
             true
         default:
@@ -83,6 +85,19 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         }
     }
 
+    public func videoConversionApplies(to asset: MediaAsset) -> Bool {
+        guard isVideoConversion else { return false }
+        guard self == .convertVideoIfNotAV1OrHEVC else { return true }
+        let videoTracks = asset.tracks.filter { $0.kind == .video }
+        guard videoTracks.count == 1, let codec = videoTracks.first?.codec else {
+            return true
+        }
+        switch codec.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "av1", "hevc", "h265", "h.265": return false
+        default: return true
+        }
+    }
+
     public var minimumSchemaVersion: Int {
         switch self {
         case .addExternalSubtitle: 2
@@ -94,6 +109,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
             .convertAudioEAC3, .convertAudioFLAC:
             6
+        case .convertVideoIfNotAV1OrHEVC: 7
         default: 1
         }
     }
@@ -107,6 +123,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
+        case .convertVideoIfNotAV1OrHEVC:
+            "If needed: Convert video unless it is already AV1 or HEVC"
         case .convertVideoRecommended: "Convert video: Recommended for this Mac"
         case .convertVideoAV1: "Convert video: AV1 10-bit"
         case .convertVideoHEVC: "Convert video: HEVC 10-bit"
@@ -140,6 +158,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Ask for one SRT, ASS, or SSA file at preview time, confirm its track details, and add it last without encoding."
         case .cleanExternalSubtitleText:
             "Review deterministic ad, whitespace, and English OCR suggestions for the added subtitle, then feed only accepted edits into the same remux."
+        case .convertVideoIfNotAV1OrHEVC:
+            "Packet-copy video that is already AV1 or HEVC. Otherwise choose the first compatible locally verified encoder, preserve HDR10 when present, and encode video once."
         case .convertVideoRecommended:
             "Choose the first compatible encoder recommended by this Mac's verified capability check and optional Encoding Test. Encode video once, preserve HDR10 when present, and packet-copy audio and subtitles unless an explicit audio card is added."
         case .convertVideoAV1:

@@ -2179,7 +2179,7 @@ final class AppModel {
         let asset = try await inspector.inspect(sourceURL)
         let availableVideoPresets: [VideoPreset]
         let availableAudioPresets: [AudioTranscodePreset]
-        if workflow.steps.contains(where: { $0.isEnabled && $0.action.isVideoConversion }) {
+        if SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset) {
             let capabilities = await probeEncodingCapabilities()
             availableVideoPresets = capabilities.availableVideoPresets
             availableAudioPresets = capabilities.availableAudioPresets

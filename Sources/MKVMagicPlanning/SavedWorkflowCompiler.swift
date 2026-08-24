@@ -223,6 +223,15 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
 public struct SavedWorkflowCompiler: Sendable {
     public init() {}
 
+    public func needsEncodingCapabilities(
+        for workflow: SavedWorkflow,
+        asset: MediaAsset
+    ) -> Bool {
+        workflow.steps.contains {
+            $0.isEnabled && $0.action.videoConversionApplies(to: asset)
+        }
+    }
+
     public func compile(
         _ workflow: SavedWorkflow,
         for asset: MediaAsset,
@@ -282,9 +291,12 @@ public struct SavedWorkflowCompiler: Sendable {
         guard enabledAudioConversions.isEmpty || enabledVideoConversions.count == 1 else {
             throw SavedWorkflowCompilationError.audioConversionRequiresVideoConversion
         }
+        let videoConversionWillRun =
+            enabledVideoConversions.first?.action
+            .videoConversionApplies(to: asset) ?? false
         let audioTrackCount = asset.tracks.count { $0.kind == .audio }
         var audioPolicy = ExactTrimAudioPolicy.packetCopy
-        if audioTrackCount > 0,
+        if videoConversionWillRun, audioTrackCount > 0,
             let preset = enabledAudioConversions.first?.action.audioTranscodePreset
         {
             guard inputs.availableAudioPresets.contains(preset) else {
@@ -431,8 +443,18 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 }
-            case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
-                .convertVideoH264, .convertVideoProRes:
+            case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
+                .convertVideoHEVC, .convertVideoH264, .convertVideoProRes:
+                guard step.action.videoConversionApplies(to: asset) else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "The video is already AV1 or HEVC; keep it unchanged."
+                        )
+                    )
+                    continue
+                }
                 let choice = try resolveVideoConversionChoice(
                     for: step.action,
                     asset: asset,
@@ -454,7 +476,16 @@ public struct SavedWorkflowCompiler: Sendable {
                 guard let preset = step.action.audioTranscodePreset else {
                     preconditionFailure("A non-audio action reached audio conversion review")
                 }
-                if audioTrackCount == 0 {
+                if !videoConversionWillRun {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail:
+                                "Video conversion is not needed; keep every audio track unchanged."
+                        )
+                    )
+                } else if audioTrackCount == 0 {
                     stepOutcomes.append(
                         outcome(
                             for: step,
@@ -601,8 +632,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Add one external subtitle"
         case .cleanExternalSubtitleText:
             "Clean the added subtitle text"
-        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
-            .convertVideoH264, .convertVideoProRes:
+        case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
+            .convertVideoHEVC, .convertVideoH264, .convertVideoProRes:
             "Convert video once"
         case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
             .convertAudioEAC3, .convertAudioFLAC:
@@ -626,8 +657,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No external subtitle was selected."
         case .cleanExternalSubtitleText:
             "No subtitle text cleanup changes were selected."
-        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
-            .convertVideoH264, .convertVideoProRes:
+        case .convertVideoIfNotAV1OrHEVC, .convertVideoRecommended, .convertVideoAV1,
+            .convertVideoHEVC, .convertVideoH264, .convertVideoProRes:
             "No video conversion was selected."
         case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
             .convertAudioEAC3, .convertAudioFLAC:
@@ -650,6 +681,8 @@ public struct SavedWorkflowCompiler: Sendable {
         }
         let candidatePresets: [VideoPreset]
         switch action {
+        case .convertVideoIfNotAV1OrHEVC:
+            candidatePresets = orderedPresets
         case .convertVideoRecommended:
             candidatePresets = orderedPresets
         case .convertVideoAV1:
@@ -663,7 +696,7 @@ public struct SavedWorkflowCompiler: Sendable {
         default:
             preconditionFailure("A non-conversion action reached conversion resolution")
         }
-        if action != .convertVideoRecommended,
+        if action != .convertVideoRecommended, action != .convertVideoIfNotAV1OrHEVC,
             let requestedPreset = candidatePresets.first,
             !orderedPresets.contains(requestedPreset)
         {

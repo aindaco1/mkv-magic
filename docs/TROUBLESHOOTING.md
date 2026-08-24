@@ -91,6 +91,10 @@ control. The most common prerequisites are:
   card. It converts every retained audio track in that same FFmpeg process; use
   the default packet-copy behavior when any track's exact layout or sample rate
   is not accepted by the chosen audio format.
+- **If needed: Convert video unless it is already AV1 or HEVC** intentionally
+  skips both video and its dependent audio card for modern sources. Other
+  applicable metadata, subtitle, or naming cards can still run without a video
+  encode.
 
 ## Subtitle, chapter, trim, or join results are refused
 
