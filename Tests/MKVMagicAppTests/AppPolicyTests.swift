@@ -757,6 +757,29 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testEncodingBenchmarkLocationSharesPrivateAppSupportDirectory() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-encoding-test-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let store = try AppHistoryLocation.makeEncodingBenchmarkStore(
+            applicationSupportURL: root
+        )
+        try await store.save(makeEncodingBenchmarkReport())
+
+        let appDirectory = root.appendingPathComponent("com.dustwave.mkvmagic")
+        let attributes = try FileManager.default.attributesOfItem(atPath: appDirectory.path)
+        XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o700)
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: appDirectory.appendingPathComponent("encoding-benchmark.json").path
+            )
+        )
+    }
+
     func testHistoryLocationRejectsSymlinkedAppDirectory() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-history-\(UUID().uuidString)",
@@ -1405,6 +1428,47 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(splitView.arrangedSubviews.count, 3)
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
         XCTAssertTrue(buttons(in: controller.view).contains { $0.title == "Trim…" })
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { $0.title == "Encoding Test…" }
+        )
+    }
+
+    @MainActor
+    func testEncodingBenchmarkWindowRequiresExplicitConsentAndFitsMinimumSize() throws {
+        let report = makeEncodingBenchmarkReport()
+        let controller = EncodingBenchmarkWindowController(report: report, onRun: { report })
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "MKV Magic Encoding Test")
+        XCTAssertEqual(window.minSize, NSSize(width: 540, height: 440))
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains { $0.contains("never reads your media") })
+        let controls = buttons(in: content)
+        XCTAssertTrue(controls.contains { $0.title == "Run Again" && $0.isEnabled })
+        XCTAssertTrue(controls.contains { $0.title == "Close" && $0.isEnabled })
+        XCTAssertTrue(controls.contains { $0.title == "Cancel" && $0.isHidden })
+        let results = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        ).string
+        XCTAssertTrue(results.contains("Recommended: AV1 10-bit"))
+        XCTAssertTrue(results.contains("Estimated 1080p speed"))
+        XCTAssertTrue(results.contains("Every verified encoder remains available"))
+        XCTAssertFalse(results.contains("/private/"))
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_ENCODING_TEST_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
     }
 
     @MainActor
@@ -1884,6 +1948,38 @@ final class AppPolicyTests: XCTestCase {
             diagnostics: parsed.diagnostics,
             cleanup: AdvancedSubStationAlphaCleanupPolicy().preview(parsed.document),
             normalizationNeeded: false
+        )
+    }
+
+    private func makeEncodingBenchmarkReport() -> EncodingBenchmarkReport {
+        EncodingBenchmarkReport(
+            environment: EncodingBenchmarkEnvironment(
+                ffmpegSHA256: String(repeating: "a", count: 64),
+                architecture: "arm64",
+                activeProcessorCount: 8
+            ),
+            completedAt: Date(timeIntervalSince1970: 1_700_000_000),
+            sourceWidth: 640,
+            sourceHeight: 360,
+            sourceFrameRate: 24,
+            sourceFrameCount: 72,
+            attempts: [
+                EncodingBenchmarkAttempt(
+                    preset: .av1Quality,
+                    encoder: "libsvtav1",
+                    outcome: .completed,
+                    metrics: EncodingBenchmarkMetrics(
+                        elapsedSeconds: 1,
+                        framesPerSecond: 72,
+                        sourceRealtimeFactor: 3,
+                        estimated1080pRealtimeFactor: 0.75,
+                        outputBytes: 250_000,
+                        outputBitrate: 666_667,
+                        averagePSNR: 41.5
+                    )
+                )
+            ],
+            recommendedPreset: .av1Quality
         )
     }
 

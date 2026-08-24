@@ -36,6 +36,8 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertEqual(result.exitCode, 0)
         XCTAssertEqual(result.standardOutput.text, "hello")
         XCTAssertEqual(result.standardError.text, "")
+        XCTAssertTrue(result.duration.isFinite)
+        XCTAssertGreaterThan(result.duration, 0)
     }
 
     func testRetainsBoundedTailAndReportsTruncation() async throws {

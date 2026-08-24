@@ -51,6 +51,7 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
     public let aac: FFmpegCapabilityStatus
     public let aacEncoder: String?
     public let availableFilters: Set<String>
+    public let preferredVideoPreset: VideoPreset?
 
     public init(
         softwareAV1: FFmpegCapabilityStatus,
@@ -61,7 +62,8 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         proResEncoder: String?,
         aac: FFmpegCapabilityStatus,
         aacEncoder: String?,
-        availableFilters: Set<String>
+        availableFilters: Set<String>,
+        preferredVideoPreset: VideoPreset? = nil
     ) {
         self.softwareAV1 = softwareAV1
         self.softwareAV1Encoder = softwareAV1Encoder
@@ -72,6 +74,7 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         self.aac = aac
         self.aacEncoder = aacEncoder
         self.availableFilters = availableFilters
+        self.preferredVideoPreset = preferredVideoPreset
     }
 
     public var missingJoinFilters: [String] {
@@ -84,6 +87,12 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         if hevc10VideoToolbox == .verified { presets.append(.hevcCompatibility) }
         if h264VideoToolbox == .verified { presets.append(.h264Compatibility) }
         if proRes == .verified { presets.append(.proRes) }
+        if let preferredVideoPreset,
+            let index = presets.firstIndex(of: preferredVideoPreset), index != presets.startIndex
+        {
+            presets.remove(at: index)
+            presets.insert(preferredVideoPreset, at: presets.startIndex)
+        }
         return presets
     }
 
@@ -102,6 +111,24 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         case .proRes:
             proRes == .verified ? proResEncoder : nil
         }
+    }
+
+    public func preferring(_ preset: VideoPreset?) -> FFmpegEncodingCapabilities {
+        let usablePreference = preset.flatMap { candidate in
+            verifiedEncoder(for: candidate) == nil ? nil : candidate
+        }
+        return FFmpegEncodingCapabilities(
+            softwareAV1: softwareAV1,
+            softwareAV1Encoder: softwareAV1Encoder,
+            hevc10VideoToolbox: hevc10VideoToolbox,
+            h264VideoToolbox: h264VideoToolbox,
+            proRes: proRes,
+            proResEncoder: proResEncoder,
+            aac: aac,
+            aacEncoder: aacEncoder,
+            availableFilters: availableFilters,
+            preferredVideoPreset: usablePreference
+        )
     }
 }
 

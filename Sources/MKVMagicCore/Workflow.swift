@@ -26,6 +26,15 @@ public enum VideoPreset: String, Codable, CaseIterable, Hashable, Sendable {
     case hevcCompatibility
     case h264Compatibility
     case proRes
+
+    public var displayName: String {
+        switch self {
+        case .av1Quality: "AV1 10-bit"
+        case .hevcCompatibility: "HEVC 10-bit VideoToolbox"
+        case .h264Compatibility: "H.264 8-bit"
+        case .proRes: "ProRes 10-bit"
+        }
+    }
 }
 
 public enum WorkflowOperation: Codable, Hashable, Sendable {

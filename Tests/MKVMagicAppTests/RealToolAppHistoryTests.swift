@@ -10,6 +10,65 @@ import XCTest
 
 final class RealToolAppHistoryTests: XCTestCase {
     @MainActor
+    func testMatchingPersistedBenchmarkReordersDefaultsWithoutRemovingAV1() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let ffmpeg = try XCTUnwrap(
+            catalog.manifest.tools.first(where: { $0.name == .ffmpeg })
+        )
+        let metrics = EncodingBenchmarkMetrics(
+            elapsedSeconds: 4,
+            framesPerSecond: 18,
+            sourceRealtimeFactor: 0.75,
+            estimated1080pRealtimeFactor: 0.08,
+            outputBytes: 250_000,
+            outputBitrate: 666_667,
+            averagePSNR: 40
+        )
+        let report = EncodingBenchmarkReport(
+            environment: EncodingBenchmarkEnvironment(
+                ffmpegSHA256: ffmpeg.sha256,
+                architecture: catalog.architecture.rawValue,
+                activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
+            ),
+            completedAt: Date(),
+            sourceWidth: 640,
+            sourceHeight: 360,
+            sourceFrameRate: 24,
+            sourceFrameCount: 72,
+            attempts: [
+                EncodingBenchmarkAttempt(
+                    preset: .av1Quality,
+                    encoder: "libsvtav1",
+                    outcome: .completed,
+                    metrics: metrics
+                ),
+                EncodingBenchmarkAttempt(
+                    preset: .hevcCompatibility,
+                    encoder: "hevc_videotoolbox",
+                    outcome: .completed,
+                    metrics: metrics
+                ),
+            ],
+            recommendedPreset: .hevcCompatibility
+        )
+        let store = BenchmarkMemoryStore(report: report)
+        let model = AppModel(encodingBenchmarkStoreFactory: { store })
+
+        let capabilities = await model.probeEncodingCapabilities()
+
+        XCTAssertEqual(capabilities.recommendedVideoPreset, .hevcCompatibility)
+        XCTAssertEqual(capabilities.availableVideoPresets.first, .hevcCompatibility)
+        XCTAssertTrue(capabilities.availableVideoPresets.contains(.av1Quality))
+        let loadedReport = try await model.loadEncodingBenchmarkReport()
+        XCTAssertEqual(loadedReport, report)
+    }
+
+    @MainActor
     func testRealEditPersistsSanitizedVerifiedLifecycle() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
@@ -838,6 +897,20 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertTrue(serialized.contains("Zero encodes"))
         XCTAssertTrue(serialized.contains("00:00:04.000–00:00:08.000"))
         XCTAssertFalse(serialized.contains(fixtureRoot.path))
+    }
+}
+
+private actor BenchmarkMemoryStore: EncodingBenchmarkPersisting {
+    private var report: EncodingBenchmarkReport?
+
+    init(report: EncodingBenchmarkReport?) {
+        self.report = report
+    }
+
+    func load() async throws -> EncodingBenchmarkReport? { report }
+
+    func save(_ report: EncodingBenchmarkReport) async throws {
+        self.report = report
     }
 }
 

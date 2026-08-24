@@ -34,6 +34,17 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(capabilities.recommendedVideoPreset, .av1Quality)
         XCTAssertTrue(capabilities.missingJoinFilters.isEmpty)
 
+        let benchmarkAdjusted = capabilities.preferring(.hevcCompatibility)
+        XCTAssertEqual(benchmarkAdjusted.recommendedVideoPreset, .hevcCompatibility)
+        XCTAssertEqual(
+            benchmarkAdjusted.availableVideoPresets,
+            [.hevcCompatibility, .av1Quality, .h264Compatibility, .proRes]
+        )
+        XCTAssertEqual(
+            capabilities.preferring(.proRes).recommendedVideoPreset,
+            .proRes
+        )
+
         let requests = await runner.requests()
         let inputPaths = requests.compactMap { request -> String? in
             guard let inputIndex = request.arguments.firstIndex(of: "-i"),

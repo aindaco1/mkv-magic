@@ -93,6 +93,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
     private var historyWindowController: HistoryWindowController?
+    private var encodingBenchmarkWindowController: EncodingBenchmarkWindowController?
     private var trackEditorWindowController: TrackEditorWindowController?
     private var trackRemovalWindowController: TrackRemovalWindowController?
     private var workflowWindowController: WorkflowWindowController?
@@ -182,6 +183,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 action: #selector(showWorkflows)
             ),
             joinButton,
+            sidebarLabel("Tools", symbol: "wrench.and.screwdriver"),
+            sidebarButton(
+                "Encoding Test…",
+                symbol: "speedometer",
+                action: #selector(showEncodingBenchmark)
+            ),
             sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
             sidebarButton(
                 "History",
@@ -410,6 +417,31 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue = records.isEmpty ? "No history yet" : "History loaded"
             } catch {
                 statusLabel.stringValue = "Could not load history: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    @objc private func showEncodingBenchmark() {
+        statusLabel.stringValue = "Loading the saved local encoding recommendation…"
+        Task {
+            do {
+                let report = try await model.loadEncodingBenchmarkReport()
+                let controller = EncodingBenchmarkWindowController(
+                    report: report,
+                    onRun: { [model] in
+                        try await model.runEncodingBenchmark()
+                    }
+                )
+                encodingBenchmarkWindowController = controller
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                statusLabel.stringValue =
+                    report == nil
+                    ? "Encoding test ready; it will not run without your approval."
+                    : "Saved encoding recommendation loaded."
+            } catch {
+                statusLabel.stringValue =
+                    "Could not open Encoding Test: \(error.localizedDescription)"
             }
         }
     }

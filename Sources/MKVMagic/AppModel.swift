@@ -114,6 +114,8 @@ final class AppModel {
     private var cachedEncodingCapabilities: FFmpegEncodingCapabilities?
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
+    private let encodingBenchmarkStoreFactory:
+        @Sendable () throws -> any EncodingBenchmarkPersisting
 
     init(
         historyRecorderFactory: @escaping @Sendable () throws -> any JobHistoryRecording = {
@@ -121,10 +123,71 @@ final class AppModel {
         },
         workflowStoreFactory: @escaping @Sendable () throws -> any SavedWorkflowPersisting = {
             try AppHistoryLocation.makeWorkflowStore()
-        }
+        },
+        encodingBenchmarkStoreFactory:
+            @escaping @Sendable () throws -> any EncodingBenchmarkPersisting = {
+                try AppHistoryLocation.makeEncodingBenchmarkStore()
+            }
     ) {
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
+        self.encodingBenchmarkStoreFactory = encodingBenchmarkStoreFactory
+    }
+
+    func loadEncodingBenchmarkReport() async throws -> EncodingBenchmarkReport? {
+        let catalog = try makeToolCatalog()
+        let environment = try encodingBenchmarkEnvironment(catalog: catalog)
+        let report: EncodingBenchmarkReport?
+        do {
+            report = try await encodingBenchmarkStoreFactory().load()
+        } catch {
+            // A stale or damaged optional recommendation must not block the user
+            // from opening Encoding Test and replacing it with a valid report.
+            return nil
+        }
+        guard let report,
+            report.matches(environment)
+        else {
+            return nil
+        }
+        return report
+    }
+
+    func runEncodingBenchmark() async throws -> EncodingBenchmarkReport {
+        let capabilities = await probeEncodingCapabilities()
+        state = .executing(
+            "Testing bundled AV1 and HEVC with a private synthetic clip…"
+        )
+        didChange?()
+        do {
+            let catalog = try makeToolCatalog()
+            let report = try await FFmpegEncodingBenchmark(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                runner: FoundationCommandRunner()
+            ).run(
+                capabilities: capabilities,
+                environment: try encodingBenchmarkEnvironment(catalog: catalog)
+            )
+            try await encodingBenchmarkStoreFactory().save(report)
+            cachedEncodingCapabilities = capabilities.preferring(report.recommendedPreset)
+            state = .completed(
+                "Encoding test complete; \(report.recommendedPreset.displayName) is recommended."
+            )
+            didChange?()
+            return report
+        } catch let error as CommandRunnerError where error == .cancelled {
+            state = .ready
+            didChange?()
+            throw error
+        } catch is CancellationError {
+            state = .ready
+            didChange?()
+            throw CancellationError()
+        } catch {
+            state = .failed("Encoding test failed: \(error.localizedDescription)")
+            didChange?()
+            throw error
+        }
     }
 
     func loadHistory() async throws -> [MediaJobRecord] {
@@ -285,10 +348,15 @@ final class AppModel {
         didChange?()
         do {
             let catalog = try makeToolCatalog()
-            let capabilities = try await FFmpegCapabilityProbe(
+            var capabilities = try await FFmpegCapabilityProbe(
                 ffmpegURL: try catalog.url(for: .ffmpeg),
                 runner: FoundationCommandRunner()
             ).probe()
+            if let report = try? await encodingBenchmarkStoreFactory().load(),
+                report.matches(try encodingBenchmarkEnvironment(catalog: catalog))
+            {
+                capabilities = capabilities.preferring(report.recommendedPreset)
+            }
             cachedEncodingCapabilities = capabilities
             state = .ready
             didChange?()
@@ -1638,6 +1706,19 @@ final class AppModel {
 
     private func makeToolCatalog() throws -> ToolCatalog {
         try ToolCatalog(rootURL: resolveToolRootURL())
+    }
+
+    private func encodingBenchmarkEnvironment(
+        catalog: ToolCatalog
+    ) throws -> EncodingBenchmarkEnvironment {
+        guard let ffmpeg = catalog.manifest.tools.first(where: { $0.name == .ffmpeg }) else {
+            throw ToolCatalogError.incompleteManifest
+        }
+        return EncodingBenchmarkEnvironment(
+            ffmpegSHA256: ffmpeg.sha256,
+            architecture: catalog.architecture.rawValue,
+            activeProcessorCount: ProcessInfo.processInfo.activeProcessorCount
+        )
     }
 
     private func resolveToolRootURL() throws -> URL {

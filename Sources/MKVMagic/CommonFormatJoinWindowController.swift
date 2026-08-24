@@ -207,12 +207,7 @@ enum CommonFormatJoinChoicePolicy {
     }
 
     private static func presetName(_ preset: VideoPreset) -> String {
-        switch preset {
-        case .av1Quality: "AV1 10-bit"
-        case .hevcCompatibility: "HEVC 10-bit VideoToolbox"
-        case .h264Compatibility: "H.264 8-bit"
-        case .proRes: "ProRes 10-bit"
-        }
+        preset.displayName
     }
 
     private static func rateControlName(_ rateControl: JoinVideoRateControl) -> String {

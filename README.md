@@ -170,6 +170,13 @@ verified AV1 is the preferred quality/size choice, while verified HEVC 10-bit
 VideoToolbox remains the faster fallback for slow or unsupported Intel hardware.
 H.264 VideoToolbox, ProRes, AAC, and every required join filter are independently
 probed as well.
+The sidebar's explicit **Encoding Test…** action can refine that initial choice
+without touching user media. It encodes one private three-second synthetic
+10-bit clip with the verified AV1 and HEVC paths, measures speed, bitrate, and
+PSNR, estimates 1080p real-time performance, and saves a private recommendation
+only for the exact bundled FFmpeg hash, architecture, and processor count. A slow
+or timed-out AV1 result can recommend HEVC on that Mac; all verified choices
+remain visible, and the test never runs without a click or uses the network.
 Every action's sanitized queue lifecycle is persisted atomically in the app's
 private Application Support container and is available from the lightweight
 History report. History also offers an explicit privacy-safe JSON export for

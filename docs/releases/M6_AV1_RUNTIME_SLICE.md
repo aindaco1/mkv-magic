@@ -1,9 +1,10 @@
 # M6 Universal AV1 runtime slice
 
 This records engineering acceptance of MKV Magic's pinned software AV1 encode
-and decode runtime on the Apple Silicon reference Mac and under Rosetta. It does
-not claim physical Intel performance acceptance, HDR10 transcoding, the planned
-first-run timed recommendation benchmark, or a public signed/notarized release.
+and decode runtime on the Apple Silicon reference Mac and under Rosetta. At this
+checkpoint it did not claim physical Intel performance acceptance, HDR10
+transcoding, or a public signed/notarized release. The subsequent timed
+recommendation work is recorded in `M6_ENCODING_BENCHMARK_SLICE.md`.
 
 ## Runtime contract
 
@@ -90,9 +91,8 @@ could not decode the app's new AV1 output. Adding the static dav1d path changed
 that failure into a passing end-to-end application transaction and a permanent
 two-architecture runtime-build regression.
 
-## Still pending
+## Still pending after the companion benchmark slice
 
-- Timed first-run AV1-versus-HEVC benchmark and persisted recommendation model.
 - Performance/thermal tuning with representative beta files on the M1 reference
   Mac and at least one physical Intel Mac.
 - User-facing advanced AV1 quality and speed controls backed by measured beta

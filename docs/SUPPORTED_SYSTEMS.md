@@ -20,6 +20,15 @@ decode hardware reopen AV1 inputs and MKV Magic outputs. If software AV1 cannot
 complete the local encode probe, it is not offered; a verified hardware HEVC
 path remains the preferred faster fallback on older Intel Macs.
 
+The optional **Encoding Test…** performs a longer, three-second local comparison
+of the verified AV1 and HEVC paths. It uses a generated 640×360 10-bit pattern,
+never library media, and records only bounded speed, bitrate, and PSNR metrics in
+the private app-support directory. The result is invalidated when the bundled
+FFmpeg hash, running architecture, or active processor count changes. An
+estimated 1080p AV1 speed below `0.5×` real time recommends verified HEVC as the
+initial selection while leaving AV1 available. Physical Intel performance
+acceptance remains required before the first public release.
+
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app
 must also be installed and exercised on physical Intel and Apple Silicon Macs.

@@ -353,6 +353,19 @@ With user consent, MKV Magic runs short local AV1 and HEVC test encodes and reco
 
 The result drives recommendations, never removes user choice. Old Intel systems may default to HEVC VideoToolbox when SVT-AV1 is impractically slow.
 
+Current implementation: **Encoding Test…** is an explicit native action; it
+does not run at launch or before metadata/remux work. It generates a private,
+three-second 640×360 P010 fixture, measures the verified AV1 and HEVC paths with
+their real app arguments, records encode FPS, output bitrate, and PSNR, and
+scales measured throughput into a conservative 1080p real-time estimate. AV1
+remains the quality-first recommendation at an estimated `0.5×` real time or
+better; otherwise a completed HEVC VideoToolbox result becomes the initial
+choice. A timeout is recorded as performance evidence instead of discarding a
+successful alternative. The bounded, versioned report is stored with `0600`
+permissions and is applied only when the FFmpeg SHA-256, process architecture,
+and active processor count still match. It contains no user-media identity,
+and every verified encoder remains selectable.
+
 #### Audio presets
 
 Audio is copied by default. Explicit AAC conversion uses Apple's AudioToolbox encoder when available and preserves sample rate and channel layout unless changed:
@@ -865,6 +878,9 @@ current bundled runtime includes checksum-pinned, statically linked SVT-AV1
 encoding, and requires software decode of the produced AV1 frame. This keeps AV1
 usable on Macs without AV1 decode hardware. The native review prefers AV1 only
 after its local encode succeeds and retains HEVC as the verified faster fallback.
+The opt-in timed Encoding Test now persists a runtime-bound recommendation and
+reorders the same verified choices when measured AV1 throughput is impractical;
+it never reads user media or removes an encoder choice.
 It fails closed for
 incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision
 transcodes, unsupported HDR, and image subtitle conversion. A revision-bound
@@ -958,8 +974,11 @@ matching source archives and SBOM components, and proves real 10-bit AV1 encode
 and software decode for both slices. Join and Exact Trim already route a
 verified AV1 choice through their shared single-generation compiler with an
 explicit balanced SVT preset.
-The first-run timed benchmark, user-facing advanced preset controls, HDR10
-transcode preservation, and physical Intel performance acceptance remain open.
+The native, consent-based timed benchmark now measures the actual bundled AV1
+and HEVC encoders against one synthetic fixture, persists only bounded local
+metrics, and feeds the shared initial preset order without removing choices.
+User-facing advanced preset controls, HDR10 transcode preservation, representative
+beta-corpus tuning, and physical Intel performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
 
@@ -1033,7 +1052,7 @@ The first engineering sequence should be:
 23. `UI-CHP-001` Implement the chapter outline/table and lazy thumbnail timeline editor.
 24. `JON-001` Implement append compatibility, common-format proposals, and joined track mapping.
 25. `TRM-001` Implement fast and exact trim planners.
-26. `ENC-001` Implement encoder capability detection and the first-run benchmark.
+26. `ENC-001` Implement encoder capability detection and the consent-based local benchmark. *(Implemented; physical Intel tuning remains under `PERF-001`.)*
 27. `ENC-002` Implement filter fusion and single-generation invariant tests.
 28. `HDR-001` Implement color/HDR contracts and verification.
 29. `WFL-001` Implement the portable workflow schema, plain-language cards, compiler, and migrations.

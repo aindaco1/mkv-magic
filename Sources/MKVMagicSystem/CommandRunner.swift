@@ -57,15 +57,18 @@ public struct CommandResult: Sendable, Equatable {
     public let exitCode: Int32
     public let standardOutput: CommandOutput
     public let standardError: CommandOutput
+    public let duration: TimeInterval
 
     public init(
         exitCode: Int32,
         standardOutput: CommandOutput,
-        standardError: CommandOutput
+        standardError: CommandOutput,
+        duration: TimeInterval = 0
     ) {
         self.exitCode = exitCode
         self.standardOutput = standardOutput
         self.standardError = standardError
+        self.duration = duration
     }
 }
 
@@ -553,6 +556,7 @@ private func launch(_ request: CommandRequest) throws -> LaunchedProcess {
 
 private func execute(_ request: CommandRequest) async throws -> CommandResult {
     try Task.checkCancellation()
+    let startedAt = ProcessInfo.processInfo.systemUptime
     let launched = try launch(request)
 
     let outputTask = Task.detached {
@@ -581,7 +585,8 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
     return try await CommandResult(
         exitCode: exitCode,
         standardOutput: outputTask.value,
-        standardError: errorTask.value
+        standardError: errorTask.value,
+        duration: max(0, ProcessInfo.processInfo.systemUptime - startedAt)
     )
 }
 
