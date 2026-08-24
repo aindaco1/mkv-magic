@@ -11,6 +11,10 @@ let package = Package(
         .library(name: "MKVMagicPlanning", targets: ["MKVMagicPlanning"]),
         .library(name: "MKVMagicExecution", targets: ["MKVMagicExecution"]),
         .executable(name: "MKVMagic", targets: ["MKVMagic"]),
+        .executable(
+            name: "MKVMagicPerformanceProbe",
+            targets: ["MKVMagicPerformanceProbe"]
+        ),
     ],
     dependencies: [
         .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5")
@@ -35,6 +39,14 @@ let package = Package(
             dependencies: [
                 "MKVMagicCore", "MKVMagicMedia", "MKVMagicPlanning", "MKVMagicSystem",
             ]
+        ),
+        .target(
+            name: "MKVMagicPerformance",
+            dependencies: ["MKVMagicCore", "MKVMagicPlanning"]
+        ),
+        .executableTarget(
+            name: "MKVMagicPerformanceProbe",
+            dependencies: ["MKVMagicPerformance"]
         ),
         .executableTarget(
             name: "MKVMagic",
@@ -80,6 +92,10 @@ let package = Package(
                 "MKVMagicCore", "MKVMagicExecution", "MKVMagicMedia", "MKVMagicPlanning",
                 "MKVMagicSystem",
             ]
+        ),
+        .testTarget(
+            name: "MKVMagicPerformanceTests",
+            dependencies: ["MKVMagicPerformance"]
         ),
         .testTarget(
             name: "MKVMagicAppTests",

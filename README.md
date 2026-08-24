@@ -312,6 +312,16 @@ and its app connection in
 followed by portable filename cleanup in
 [docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md).
 
+The first M8 performance harness is also checked in. Its release-mode,
+synthetic-only responsiveness probe measures the two pure paths most likely to
+make a very large library feel sluggish: compiling a saved workflow against a
+200-track MKV model and choosing starts from a 5,000-job production queue. The
+JSON report contains architecture, macOS version, processor count, workload
+sizes, latency statistics, and a workload checksum—never a media path, title,
+host name, timestamp, or user file. The optional 15 ms p95 budgets are an early
+regression tripwire, not a claim of physical Intel acceptance. See
+[docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md](docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
@@ -360,6 +370,17 @@ stream-family demultiplexer on a local, unchanged media file:
 The script withholds the media path from its report. It uses only the pinned
 FFprobe for the running architecture, never writes to the input, and rejects
 measurements if the source revision changes while it runs.
+
+Measure synthetic large-track workflow compilation and production-queue
+scheduling without reading any media:
+
+```sh
+./scripts/performance/benchmark-responsiveness.sh --enforce
+```
+
+Use `--quick` while developing. Run the standard enforced probe on both the M1
+reference and a physical Intel Mac before treating its budgets as hardware
+acceptance evidence.
 
 ## License
 

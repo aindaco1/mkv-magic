@@ -831,6 +831,12 @@ Private beta media remains outside version control. Record anonymized input fact
 ### 11.6 Performance, soak, and size gates
 
 - Record reproducible baselines on the M1 reference Mac and an Intel reference for cold/warm launch, idle resident memory, probe latency, large-track-list rendering, thumbnail generation, planner compilation, queue responsiveness, cancellation latency, mux throughput, and representative AV1/HEVC encodes.
+- The checked-in release-mode responsiveness probe supplies the first synthetic,
+  path-free baseline for saved-workflow compilation against 200 tracks and
+  scheduling from 5,000 queued jobs. It records median and p95 latency and can
+  enforce a provisional 15 ms p95 budget for each path. This is a deterministic
+  regression harness, not a substitute for app-window, private-library, soak,
+  M1-reference, or physical-Intel measurements.
 - Stream files, progress, hashes, and subprocess output instead of reading them wholesale. Drain stdout and stderr concurrently, bound log retention, use bounded task groups, and keep thumbnails in a size-limited cache.
 - Default to one video encode at a time. Permit a measured, configurable number of lightweight probes/remuxes; cap FFmpeg/encoder threads so parallel jobs do not make an old Intel Mac unusable.
 - Deep inspection and thumbnails are lazy and cancellable. Metadata edits must not wait for unrelated thumbnail, scene, silence, or benchmark work.
@@ -1232,7 +1238,14 @@ Deliverables:
 The privacy-safe evidence path is implemented: new History records capture only
 coarse, allowlisted input facts and encode counts, and the explicit History
 export produces a bounded local JSON report without library-identifying fields.
-This tooling does not itself claim that any private-corpus case has passed.
+The first release-mode responsiveness probe now exercises synthetic 200-track
+workflow compilation and 5,000-job queue scheduling with bounded workloads,
+stable machine-readable output, and provisional p95 budgets. Its report contains
+no source path, media title, hostname, timestamp, or private payload. On the
+current 10-logical-processor arm64 development Mac, the first observed standard
+run measured 0.480 ms p95 per workflow compilation and 1.396 ms p95 per queue
+schedule. These observations do not claim M1-reference, Intel, UI rendering,
+private-corpus, launch/memory, cancellation, transcode, or soak acceptance.
 
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
