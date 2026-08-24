@@ -1371,6 +1371,94 @@ final class AppPolicyTests: XCTestCase {
         }
     }
 
+    @MainActor
+    func testWorkflowPlanReviewShowsAppliedSkippedAndDisabledStepsAtMinimumSize() throws {
+        let workflow = SavedWorkflow(
+            name: "Prepare for Jellyfin",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+                SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1),
+                MediaTrack(
+                    id: 1,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 2,
+                    language: "fr",
+                    title: "French"
+                ),
+            ]
+        )
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let controller = WorkflowPlanReviewWindowController(
+            preview: preview,
+            sourceDisplayName: asset.sourceURL.lastPathComponent
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Workflow Preview")
+        XCTAssertEqual(window.minSize.width, 540)
+        XCTAssertEqual(window.minSize.height, 420)
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+        XCTAssertTrue(text.contains("Review what will change"))
+        XCTAssertTrue(text.contains("No transcoding • one MKV remux"))
+        XCTAssertTrue(text.contains("Remove 1 explicitly non-English subtitle track"))
+        XCTAssertTrue(text.contains("No redundant English SDH subtitle tracks were found."))
+        XCTAssertTrue(text.contains("Not included in this run."))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
+
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_WORKFLOW_REVIEW_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testWorkflowPlanReviewExplainsAlreadySatisfiedRecipeWithoutRunAction() throws {
+        let workflow = SavedWorkflow(
+            name: "Already clean",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Clean.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1)]
+        )
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let controller = WorkflowPlanReviewWindowController(
+            preview: preview,
+            sourceDisplayName: asset.sourceURL.lastPathComponent
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertNil(preview.compiledWorkflow)
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+        XCTAssertTrue(text.contains("This file already matches"))
+        XCTAssertTrue(text.contains("No applicable changes • No output"))
+        XCTAssertTrue(text.contains("No output will be created."))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Done" && !$0.isHidden })
+        XCTAssertFalse(buttons(in: content).contains { $0.title == "Use This Plan" })
+    }
+
     func testWorkflowEditorDuplicatesPortableIntentWithFreshIdentifiers() {
         let original = WorkflowEditorPolicy.newWorkflow()
         let copy = WorkflowEditorPolicy.duplicate(original)

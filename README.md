@@ -26,7 +26,10 @@ English SDH subtitles, plus optional segment-title removal. Applicable subtitle
 removals are fused into one remux. Workflows store intent rather than media paths
 or track identifiers, compile against the selected inspection, show a zero-encode
 impact preview, and share one verified output pipeline. Imported workflows using
-the original combined English Library Cleanup action remain supported.
+the original combined English Library Cleanup action remain supported. Save &
+Preview opens a native review that marks each recipe card as applied, already
+satisfied, or disabled; no plan becomes runnable until the user chooses **Use
+This Plan**. An already-satisfied recipe creates no output and offers only Done.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

@@ -123,6 +123,38 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
     }
 
+    func testPreviewExplainsAppliedSkippedAndDisabledStepsInRecipeOrder() throws {
+        let workflow = SavedWorkflow(
+            name: "Explain this run",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
+                SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
+            ]
+        )
+        let asset = makeAsset(foreignSubtitleUID: 72)
+
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertEqual(preview.workflowID, workflow.id)
+        XCTAssertEqual(preview.stepOutcomes.map(\.stepID), workflow.steps.map(\.id))
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.disposition),
+            [.applied, .skipped, .disabled]
+        )
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.detail),
+            [
+                "Remove 1 explicitly non-English subtitle track",
+                "No redundant English SDH subtitle tracks were found.",
+                "Not included in this run.",
+            ]
+        )
+        XCTAssertEqual(compiled.summaries, [preview.stepOutcomes[0].detail])
+        XCTAssertEqual(compiled.stepOutcomes, preview.stepOutcomes)
+    }
+
     func testDisabledStepsDoNotCompileAndNoApplicableChangesIsExplicit() throws {
         let onlyDisabled = SavedWorkflow(
             name: "Disabled",
@@ -150,6 +182,15 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 SavedWorkflowStep(action: .removeNonEnglishSubtitles),
                 SavedWorkflowStep(action: .removeRedundantEnglishSDH),
             ]
+        )
+        let noChangePreview = try SavedWorkflowCompiler().preview(
+            granularCleanupAlreadySatisfied,
+            for: makeAsset()
+        )
+        XCTAssertNil(noChangePreview.compiledWorkflow)
+        XCTAssertEqual(
+            noChangePreview.stepOutcomes.map(\.disposition),
+            [.skipped, .skipped]
         )
         XCTAssertThrowsError(
             try SavedWorkflowCompiler().compile(granularCleanupAlreadySatisfied, for: makeAsset())

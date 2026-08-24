@@ -471,6 +471,14 @@ cards. The saved recipe never contains media paths or track identity. The legacy
 combined English Library Cleanup action remains decodable and executable for
 portable workflow compatibility.
 
+Save & Preview evaluates every recipe card in its original order and opens a
+native review before installing a runnable plan. Applied, already-satisfied, and
+disabled cards are visually distinct; the review also states the fused tool
+passes, video-encode count, one-output transaction, and unchanged-source
+contract. The user must explicitly choose **Use This Plan** before **Verify &
+Run** is enabled. A recipe with no applicable changes shows its skipped cards,
+offers only Done, and creates no destination.
+
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
 ### 5.15 Queue and history
@@ -1058,8 +1066,10 @@ conditions: remove explicitly non-English subtitles when present, and remove an
 English SDH track only when a preferred English track remains. Compilation
 resolves stable track UIDs from the current inspection, fuses both conditions
 into one zero-encode remux, and preserves the original combined cleanup action
-for imported workflows. Subtitle text cleanup/mux cards, broader conditions,
-queue execution, and filename cleanup remain open.
+for imported workflows. A separate native compilation review now shows every
+card as applied, already satisfied, or disabled before the plan can be selected;
+an entirely satisfied recipe cannot become runnable. Subtitle text cleanup/mux
+cards, broader conditions, queue execution, and filename cleanup remain open.
 
 Deliverables:
 

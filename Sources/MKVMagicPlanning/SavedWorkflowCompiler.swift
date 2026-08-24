@@ -32,25 +32,72 @@ extension SavedWorkflowCompilationError: LocalizedError {
     }
 }
 
+public enum SavedWorkflowStepDisposition: Equatable, Sendable {
+    case applied
+    case skipped
+    case disabled
+}
+
+public struct SavedWorkflowStepOutcome: Equatable, Sendable {
+    public let stepID: UUID
+    public let action: SavedWorkflowAction
+    public let disposition: SavedWorkflowStepDisposition
+    public let detail: String
+
+    public init(
+        stepID: UUID,
+        action: SavedWorkflowAction,
+        disposition: SavedWorkflowStepDisposition,
+        detail: String
+    ) {
+        self.stepID = stepID
+        self.action = action
+        self.disposition = disposition
+        self.detail = detail
+    }
+}
+
+public struct SavedWorkflowCompilationPreview: Equatable, Sendable {
+    public let workflowID: UUID
+    public let workflowName: String
+    public let stepOutcomes: [SavedWorkflowStepOutcome]
+    public let compiledWorkflow: CompiledSavedWorkflow?
+
+    public init(
+        workflowID: UUID,
+        workflowName: String,
+        stepOutcomes: [SavedWorkflowStepOutcome],
+        compiledWorkflow: CompiledSavedWorkflow?
+    ) {
+        self.workflowID = workflowID
+        self.workflowName = workflowName
+        self.stepOutcomes = stepOutcomes
+        self.compiledWorkflow = compiledWorkflow
+    }
+}
+
 public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let workflowID: UUID
     public let workflowName: String
     public let operations: [WorkflowOperation]
     public let plan: ExecutionPlan
     public let summaries: [String]
+    public let stepOutcomes: [SavedWorkflowStepOutcome]
 
     public init(
         workflowID: UUID,
         workflowName: String,
         operations: [WorkflowOperation],
         plan: ExecutionPlan,
-        summaries: [String]
+        summaries: [String],
+        stepOutcomes: [SavedWorkflowStepOutcome] = []
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
         self.operations = operations
         self.plan = plan
         self.summaries = summaries
+        self.stepOutcomes = stepOutcomes
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -75,6 +122,16 @@ public struct SavedWorkflowCompiler: Sendable {
         _ workflow: SavedWorkflow,
         for asset: MediaAsset
     ) throws -> CompiledSavedWorkflow {
+        guard let compiled = try preview(workflow, for: asset).compiledWorkflow else {
+            throw SavedWorkflowCompilationError.noApplicableChanges
+        }
+        return compiled
+    }
+
+    public func preview(
+        _ workflow: SavedWorkflow,
+        for asset: MediaAsset
+    ) throws -> SavedWorkflowCompilationPreview {
         guard workflow.schemaVersion == SavedWorkflow.currentSchemaVersion else {
             throw SavedWorkflowCompilationError.unsupportedSchema
         }
@@ -99,10 +156,16 @@ public struct SavedWorkflowCompiler: Sendable {
         }
 
         var operations = [WorkflowOperation]()
-        var summaries = [String]()
+        var stepOutcomes = [SavedWorkflowStepOutcome]()
         var removalTrackUIDs = Set<UInt64>()
         var removalInsertionIndex: Int?
-        for step in enabledSteps {
+        for step in workflow.steps {
+            guard step.isEnabled else {
+                stepOutcomes.append(
+                    outcome(for: step, disposition: .disabled, detail: "Not included in this run.")
+                )
+                continue
+            }
             switch step.action {
             case .englishLibraryCleanup, .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH:
@@ -111,14 +174,42 @@ public struct SavedWorkflowCompiler: Sendable {
                 if !identifiers.isEmpty {
                     if removalInsertionIndex == nil { removalInsertionIndex = operations.count }
                     removalTrackUIDs.formUnion(identifiers)
-                    summaries.append(cleanupSummary(for: step.action, count: identifiers.count))
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: cleanupSummary(for: step.action, count: identifiers.count)
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: skippedCleanupSummary(for: step.action)
+                        )
+                    )
                 }
             case .removeSegmentTitle:
                 if asset.metadata.keys.contains(where: {
                     $0.caseInsensitiveCompare("title") == .orderedSame
                 }) {
                     operations.append(.editSegmentTitle(nil))
-                    summaries.append("Remove the segment title")
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Remove the segment title"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No segment title is present."
+                        )
+                    )
                 }
             }
         }
@@ -142,7 +233,12 @@ public struct SavedWorkflowCompiler: Sendable {
             )
         }
         guard !operations.isEmpty else {
-            throw SavedWorkflowCompilationError.noApplicableChanges
+            return SavedWorkflowCompilationPreview(
+                workflowID: workflow.id,
+                workflowName: workflow.name,
+                stepOutcomes: stepOutcomes,
+                compiledWorkflow: nil
+            )
         }
 
         let resolved = WorkflowDefinition(
@@ -150,12 +246,32 @@ public struct SavedWorkflowCompiler: Sendable {
             name: workflow.name,
             operations: operations
         )
-        return CompiledSavedWorkflow(
+        let compiled = CompiledSavedWorkflow(
             workflowID: workflow.id,
             workflowName: workflow.name,
             operations: operations,
             plan: try WorkflowPlanner().plan(asset: asset, workflow: resolved),
-            summaries: summaries
+            summaries: stepOutcomes.filter { $0.disposition == .applied }.map(\.detail),
+            stepOutcomes: stepOutcomes
+        )
+        return SavedWorkflowCompilationPreview(
+            workflowID: workflow.id,
+            workflowName: workflow.name,
+            stepOutcomes: stepOutcomes,
+            compiledWorkflow: compiled
+        )
+    }
+
+    private func outcome(
+        for step: SavedWorkflowStep,
+        disposition: SavedWorkflowStepDisposition,
+        detail: String
+    ) -> SavedWorkflowStepOutcome {
+        SavedWorkflowStepOutcome(
+            stepID: step.id,
+            action: step.action,
+            disposition: disposition,
+            detail: detail
         )
     }
 
@@ -186,6 +302,19 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove \(count) redundant English SDH subtitle \(noun)"
         case .removeSegmentTitle:
             "Remove the segment title"
+        }
+    }
+
+    private func skippedCleanupSummary(for action: SavedWorkflowAction) -> String {
+        switch action {
+        case .englishLibraryCleanup:
+            "No suggested subtitle tracks were found."
+        case .removeNonEnglishSubtitles:
+            "No explicitly non-English subtitle tracks were found."
+        case .removeRedundantEnglishSDH:
+            "No redundant English SDH subtitle tracks were found."
+        case .removeSegmentTitle:
+            "No segment title is present."
         }
     }
 }

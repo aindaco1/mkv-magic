@@ -97,6 +97,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var trackEditorWindowController: TrackEditorWindowController?
     private var trackRemovalWindowController: TrackRemovalWindowController?
     private var workflowWindowController: WorkflowWindowController?
+    private var workflowPlanReviewWindowController: WorkflowPlanReviewWindowController?
     private var subtitleCleanupWindowController: SubtitleCleanupWindowController?
     private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
     private var embeddedSubtitleTrackPickerWindowController:
@@ -836,31 +837,57 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func previewSavedWorkflow(_ workflow: SavedWorkflow) {
-        guard let asset = selectedAsset else {
+        guard let asset = selectedAsset, let parentWindow = view.window else {
             impactLabel.stringValue = "Select an inspected file first."
             clearPendingChange()
             return
         }
+        clearPendingChange()
         do {
-            let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
-            let stageSummary = compiled.plan.stages
-                .filter { $0.mechanism != .verify && $0.mechanism != .commit }
-                .map(\.mechanism.rawValue)
-                .joined(separator: " + ")
-            impactLabel.stringValue =
-                "\(compiled.plan.impact.videoEncodeCount) video encodes • \(stageSummary)"
-            pendingChange = .savedWorkflow(compiled)
-            pendingAssetID = asset.id
-            runButton.isEnabled = true
-            runButton.toolTip = compiled.summaries.joined(separator: "; ")
-            view.window?.makeKeyAndOrderFront(nil)
-        } catch SavedWorkflowCompilationError.noApplicableChanges {
-            impactLabel.stringValue = "No changes needed for this file"
-            clearPendingChange()
+            let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+            let controller = WorkflowPlanReviewWindowController(
+                preview: preview,
+                sourceDisplayName: asset.sourceURL.lastPathComponent
+            )
+            workflowPlanReviewWindowController = controller
+            statusLabel.stringValue = "Reviewing \(workflow.name)…"
+            parentWindow.makeKeyAndOrderFront(nil)
+            controller.beginSheet(for: parentWindow) { [weak self] accepted in
+                guard let self else { return }
+                self.workflowPlanReviewWindowController = nil
+                guard accepted, let compiled = preview.compiledWorkflow else {
+                    self.impactLabel.stringValue =
+                        preview.compiledWorkflow == nil
+                        ? "No changes needed for this file" : "Workflow preview cancelled"
+                    self.statusLabel.stringValue =
+                        preview.compiledWorkflow == nil
+                        ? "The selected file already satisfies this workflow."
+                        : "No workflow plan selected"
+                    self.clearPendingChange()
+                    return
+                }
+                guard self.selectedAsset?.id == asset.id else {
+                    self.impactLabel.stringValue = "The selected file changed; preview again"
+                    self.statusLabel.stringValue = "Workflow preview expired"
+                    self.clearPendingChange()
+                    return
+                }
+                self.installPendingWorkflow(compiled, assetID: asset.id)
+            }
         } catch {
             impactLabel.stringValue = "Workflow cannot run: \(error.localizedDescription)"
+            statusLabel.stringValue = "Workflow preview failed"
             clearPendingChange()
         }
+    }
+
+    private func installPendingWorkflow(_ compiled: CompiledSavedWorkflow, assetID: UUID) {
+        impactLabel.stringValue = WorkflowPlanReviewPresentation.impactSummary(for: compiled)
+        statusLabel.stringValue = "Workflow plan ready for verification"
+        pendingChange = .savedWorkflow(compiled)
+        pendingAssetID = assetID
+        runButton.isEnabled = true
+        runButton.toolTip = compiled.summaries.joined(separator: "; ")
     }
 
     private func inspect(_ urls: [URL]) {
@@ -1724,6 +1751,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         pendingChange = nil
         pendingAssetID = nil
         runButton.isEnabled = false
+        runButton.toolTip = nil
     }
 
     private static func canOfferEnglishCleanup(for asset: MediaAsset) -> Bool {
