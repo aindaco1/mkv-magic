@@ -24,7 +24,7 @@ final class ResponsivenessProbeTests: XCTestCase {
         XCTAssertFalse(failing.isWithinBudget)
     }
 
-    func testRejectsUnboundedOrEmptyConfigurations() {
+    func testRejectsUnboundedOrEmptyConfigurations() async {
         for configuration in [
             ResponsivenessProbeConfiguration(
                 rounds: 0,
@@ -40,9 +40,20 @@ final class ResponsivenessProbeTests: XCTestCase {
                 trackCount: 4,
                 queueJobCount: 100_001
             ),
+            ResponsivenessProbeConfiguration(
+                rounds: 1,
+                workflowCompilationsPerRound: 1,
+                queueSchedulesPerRound: 1,
+                trackCount: 4,
+                queueJobCount: 1,
+                cancellationStartupDelayNanoseconds: 0
+            ),
         ] {
-            XCTAssertThrowsError(try ResponsivenessProbe(configuration: configuration).run()) {
-                XCTAssertEqual($0 as? ResponsivenessProbeError, .invalidConfiguration)
+            do {
+                _ = try await ResponsivenessProbe(configuration: configuration).run()
+                XCTFail("Expected an invalid configuration")
+            } catch {
+                XCTAssertEqual(error as? ResponsivenessProbeError, .invalidConfiguration)
             }
         }
         XCTAssertThrowsError(
@@ -55,8 +66,8 @@ final class ResponsivenessProbeTests: XCTestCase {
         )
     }
 
-    func testMinimalSyntheticProbeIsPathFreeAndMachineReadable() throws {
-        let report = try ResponsivenessProbe(
+    func testMinimalSyntheticProbeIsPathFreeAndMachineReadable() async throws {
+        let report = try await ResponsivenessProbe(
             configuration: ResponsivenessProbeConfiguration(
                 rounds: 1,
                 workflowCompilationsPerRound: 1,
@@ -64,7 +75,9 @@ final class ResponsivenessProbeTests: XCTestCase {
                 trackCount: 4,
                 queueJobCount: 3,
                 workflowCompilationBudgetNanoseconds: .max,
-                queueSchedulingBudgetNanoseconds: .max
+                queueSchedulingBudgetNanoseconds: .max,
+                commandCancellationBudgetNanoseconds: .max,
+                cancellationStartupDelayNanoseconds: 50_000_000
             )
         ).run()
         let encoder = JSONEncoder()
@@ -75,7 +88,11 @@ final class ResponsivenessProbeTests: XCTestCase {
         XCTAssertEqual(report.metrics.map(\.id), ResponsivenessMetricID.allCases)
         XCTAssertTrue(report.isWithinBudget)
         XCTAssertGreaterThan(report.workloadChecksum, 0)
+        XCTAssertEqual(report.metrics.last?.id, .commandCancellation)
+        XCTAssertEqual(report.metrics.last?.operationsPerRound, 1)
+        XCTAssertGreaterThan(report.metrics.last?.p95NanosecondsPerOperation ?? 0, 0)
         XCTAssertFalse(json.contains("/private/"))
+        XCTAssertFalse(json.contains("/bin/sleep"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("hostname"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("sourceURL"))
         XCTAssertFalse(json.localizedCaseInsensitiveContains("timestamp"))

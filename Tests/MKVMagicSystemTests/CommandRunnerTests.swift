@@ -304,6 +304,54 @@ final class CommandRunnerTests: XCTestCase {
         }
     }
 
+    func testCancellationTerminatesRunAndDigestProcessesPromptly() async throws {
+        let command = Task {
+            try await FoundationCommandRunner().run(
+                CommandRequest(
+                    executableURL: URL(fileURLWithPath: "/bin/sleep"),
+                    arguments: ["5"],
+                    timeout: 10
+                )
+            )
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let start = DispatchTime.now().uptimeNanoseconds
+        command.cancel()
+
+        do {
+            _ = try await command.value
+            XCTFail("Expected cancellation")
+        } catch {
+            XCTAssertEqual(error as? CommandRunnerError, .cancelled)
+        }
+        let elapsed = DispatchTime.now().uptimeNanoseconds - start
+        XCTAssertLessThan(elapsed, 2_000_000_000)
+
+        let digest = Task {
+            try await FoundationCommandRunner().digestLines(
+                [
+                    CommandRequest(
+                        executableURL: URL(fileURLWithPath: "/bin/sleep"),
+                        arguments: ["5"],
+                        timeout: 10
+                    )
+                ],
+                policy: CommandLineDigestPolicy(
+                    requiredPrefix: "SHA256:",
+                    hexDigestByteCount: 64
+                )
+            )
+        }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        digest.cancel()
+        do {
+            _ = try await digest.value
+            XCTFail("Expected digest cancellation")
+        } catch {
+            XCTAssertEqual(error as? CommandRunnerError, .cancelled)
+        }
+    }
+
     func testRelativeExecutableIsRejected() async {
         do {
             _ = try await FoundationCommandRunner().run(

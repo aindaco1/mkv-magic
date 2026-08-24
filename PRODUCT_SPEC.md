@@ -1250,14 +1250,16 @@ Deliverables:
 The privacy-safe evidence path is implemented: new History records capture only
 coarse, allowlisted input facts and encode counts, and the explicit History
 export produces a bounded local JSON report without library-identifying fields.
-The first release-mode responsiveness probe now exercises synthetic 200-track
-workflow compilation and 5,000-job queue scheduling with bounded workloads,
-stable machine-readable output, and provisional p95 budgets. Its report contains
-no source path, media title, hostname, timestamp, or private payload. On the
-current 10-logical-processor arm64 development Mac, the first observed standard
-run measured 0.480 ms p95 per workflow compilation and 1.396 ms p95 per queue
-schedule. These observations do not claim M1-reference, Intel, UI rendering,
-private-corpus, launch/memory, cancellation, transcode, or soak acceptance.
+The release-mode responsiveness probe now exercises synthetic 200-track workflow
+compilation, 5,000-job queue scheduling, and typed cancellation-to-exit for a
+fixed five-second `/bin/sleep` child with bounded workloads, stable machine-
+readable output, and provisional p95 budgets. Its report contains no source
+path, media title, hostname, timestamp, or private payload. On the current
+10-logical-processor arm64 development Mac, the observed standard v2 run measured
+0.479 ms p95 per workflow compilation, 1.456 ms p95 per queue schedule, and
+0.499 ms p95 from cancellation request to synthetic child exit. These
+observations do not claim M1-reference, Intel, UI rendering, private-corpus,
+launch/memory, bundled media-tool cleanup, transcode, or soak acceptance.
 
 The first keyboard/VoiceOver baseline fixes the previously unbound Command-O
 menu item and adds intentional focus, Return/Escape review controls, and

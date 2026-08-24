@@ -42,7 +42,7 @@ let package = Package(
         ),
         .target(
             name: "MKVMagicPerformance",
-            dependencies: ["MKVMagicCore", "MKVMagicPlanning"]
+            dependencies: ["MKVMagicCore", "MKVMagicPlanning", "MKVMagicSystem"]
         ),
         .executableTarget(
             name: "MKVMagicPerformanceProbe",

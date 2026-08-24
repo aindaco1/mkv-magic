@@ -7,7 +7,8 @@ Usage: benchmark-responsiveness.sh [--quick] [--enforce]
 
 Run MKV Magic's synthetic, path-free responsiveness probe. The standard probe
 measures workflow compilation for a 200-track file and production-queue
-scheduling for 5,000 jobs. --quick uses smaller development workloads.
+scheduling for 5,000 jobs, plus cancellation-to-child-exit latency for a
+synthetic five-second system command. --quick uses smaller development workloads.
 --enforce exits nonzero when a p95 latency exceeds its documented budget.
 EOF
 }

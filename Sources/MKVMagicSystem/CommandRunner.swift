@@ -210,20 +210,24 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
     public func run(_ request: CommandRequest) async throws -> CommandResult {
         try validate(request)
 
-        return try await withThrowingTaskGroup(of: CommandResult.self) { group in
-            group.addTask {
-                try await execute(request)
+        do {
+            return try await withThrowingTaskGroup(of: CommandResult.self) { group in
+                group.addTask {
+                    try await execute(request)
+                }
+                group.addTask {
+                    let nanoseconds = UInt64(request.timeout * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                    throw CommandRunnerError.timedOut
+                }
+                guard let first = try await group.next() else {
+                    throw CommandRunnerError.launchFailed("Command produced no result")
+                }
+                group.cancelAll()
+                return first
             }
-            group.addTask {
-                let nanoseconds = UInt64(request.timeout * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw CommandRunnerError.timedOut
-            }
-            guard let first = try await group.next() else {
-                throw CommandRunnerError.launchFailed("Command produced no result")
-            }
-            group.cancelAll()
-            return first
+        } catch {
+            throw normalizedCommandError(error)
         }
     }
 
@@ -353,20 +357,31 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
         _ request: CommandRequest,
         operation: @escaping @Sendable () async throws -> DigestProcessResult
     ) async throws -> DigestProcessResult {
-        try await withThrowingTaskGroup(of: DigestProcessResult.self) { group in
-            group.addTask(operation: operation)
-            group.addTask {
-                let nanoseconds = UInt64(request.timeout * 1_000_000_000)
-                try await Task.sleep(nanoseconds: nanoseconds)
-                throw CommandRunnerError.timedOut
+        do {
+            return try await withThrowingTaskGroup(of: DigestProcessResult.self) { group in
+                group.addTask(operation: operation)
+                group.addTask {
+                    let nanoseconds = UInt64(request.timeout * 1_000_000_000)
+                    try await Task.sleep(nanoseconds: nanoseconds)
+                    throw CommandRunnerError.timedOut
+                }
+                guard let first = try await group.next() else {
+                    throw CommandRunnerError.launchFailed("Command produced no result")
+                }
+                group.cancelAll()
+                return first
             }
-            guard let first = try await group.next() else {
-                throw CommandRunnerError.launchFailed("Command produced no result")
-            }
-            group.cancelAll()
-            return first
+        } catch {
+            throw normalizedCommandError(error)
         }
     }
+}
+
+private func normalizedCommandError(_ error: Error) -> Error {
+    if error is CancellationError || Task.isCancelled {
+        return CommandRunnerError.cancelled
+    }
+    return error
 }
 
 private final class ProcessBox: @unchecked Sendable {

@@ -12,7 +12,7 @@ guard Set(arguments).isSubset(of: allowedArguments), Set(arguments).count == arg
 do {
     let configuration: ResponsivenessProbeConfiguration =
         arguments.contains("--quick") ? .quick : .standard
-    let report = try ResponsivenessProbe(configuration: configuration).run()
+    let report = try await ResponsivenessProbe(configuration: configuration).run()
     let encoder = JSONEncoder()
     encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
     let data = try encoder.encode(report)

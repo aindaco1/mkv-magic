@@ -313,13 +313,15 @@ followed by portable filename cleanup in
 [docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md).
 
 The first M8 performance harness is also checked in. Its release-mode,
-synthetic-only responsiveness probe measures the two pure paths most likely to
-make a very large library feel sluggish: compiling a saved workflow against a
-200-track MKV model and choosing starts from a 5,000-job production queue. The
-JSON report contains architecture, macOS version, processor count, workload
-sizes, latency statistics, and a workload checksum—never a media path, title,
-host name, timestamp, or user file. The optional 15 ms p95 budgets are an early
-regression tripwire, not a claim of physical Intel acceptance. See
+synthetic-only responsiveness probe measures workflow compilation against a
+200-track MKV model, scheduling from a 5,000-job production queue, and typed
+cancellation-to-exit latency for a fixed five-second `/bin/sleep` child through
+the real command runner. The JSON report contains architecture, macOS version,
+processor count, workload sizes, latency statistics, and a workload checksum—
+never a media path, title, host name, timestamp, or user file. Workflow and queue
+budgets are 15 ms p95; the deliberately loose cancellation budget is 500 ms p95.
+These are early regression tripwires, not claims about bundled media-tool
+cleanup or physical Intel acceptance. See
 [docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md](docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md).
 
 The main File menu now routes **Command-O** to the same local file/folder

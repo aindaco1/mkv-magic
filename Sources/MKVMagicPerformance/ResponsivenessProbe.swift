@@ -1,10 +1,12 @@
 import Foundation
 import MKVMagicCore
 import MKVMagicPlanning
+import MKVMagicSystem
 
 public enum ResponsivenessMetricID: String, Codable, CaseIterable, Sendable {
     case largeTrackWorkflowCompilation
     case productionQueueScheduling
+    case commandCancellation
 }
 
 public struct ResponsivenessMetric: Codable, Equatable, Sendable {
@@ -73,6 +75,8 @@ public struct ResponsivenessProbeConfiguration: Equatable, Sendable {
     public let queueJobCount: Int
     public let workflowCompilationBudgetNanoseconds: UInt64
     public let queueSchedulingBudgetNanoseconds: UInt64
+    public let commandCancellationBudgetNanoseconds: UInt64
+    public let cancellationStartupDelayNanoseconds: UInt64
 
     public init(
         rounds: Int,
@@ -81,7 +85,9 @@ public struct ResponsivenessProbeConfiguration: Equatable, Sendable {
         trackCount: Int,
         queueJobCount: Int,
         workflowCompilationBudgetNanoseconds: UInt64 = 15_000_000,
-        queueSchedulingBudgetNanoseconds: UInt64 = 15_000_000
+        queueSchedulingBudgetNanoseconds: UInt64 = 15_000_000,
+        commandCancellationBudgetNanoseconds: UInt64 = 500_000_000,
+        cancellationStartupDelayNanoseconds: UInt64 = 75_000_000
     ) {
         self.rounds = rounds
         self.workflowCompilationsPerRound = workflowCompilationsPerRound
@@ -90,6 +96,8 @@ public struct ResponsivenessProbeConfiguration: Equatable, Sendable {
         self.queueJobCount = queueJobCount
         self.workflowCompilationBudgetNanoseconds = workflowCompilationBudgetNanoseconds
         self.queueSchedulingBudgetNanoseconds = queueSchedulingBudgetNanoseconds
+        self.commandCancellationBudgetNanoseconds = commandCancellationBudgetNanoseconds
+        self.cancellationStartupDelayNanoseconds = cancellationStartupDelayNanoseconds
     }
 
     fileprivate func validate() throws {
@@ -99,7 +107,9 @@ public struct ResponsivenessProbeConfiguration: Equatable, Sendable {
             (4...1_000).contains(trackCount),
             (1...100_000).contains(queueJobCount),
             workflowCompilationBudgetNanoseconds > 0,
-            queueSchedulingBudgetNanoseconds > 0
+            queueSchedulingBudgetNanoseconds > 0,
+            commandCancellationBudgetNanoseconds > 0,
+            (1_000_000...1_000_000_000).contains(cancellationStartupDelayNanoseconds)
         else {
             throw ResponsivenessProbeError.invalidConfiguration
         }
@@ -110,6 +120,7 @@ public enum ResponsivenessProbeError: Error, Equatable, Sendable {
     case invalidConfiguration
     case inconsistentWorkload
     case clockOverflow
+    case unexpectedCancellationOutcome
 }
 
 extension ResponsivenessProbeError: LocalizedError {
@@ -118,12 +129,14 @@ extension ResponsivenessProbeError: LocalizedError {
         case .invalidConfiguration: "The responsiveness probe configuration is out of bounds."
         case .inconsistentWorkload: "The synthetic responsiveness workload changed unexpectedly."
         case .clockOverflow: "The monotonic responsiveness clock could not represent a sample."
+        case .unexpectedCancellationOutcome:
+            "The synthetic command did not report the expected cancellation outcome."
         }
     }
 }
 
 public struct ResponsivenessProbeReport: Codable, Equatable, Sendable {
-    public static let schema = "mkv-magic-responsiveness-v1"
+    public static let schema = "mkv-magic-responsiveness-v2"
 
     public let schema: String
     public let architecture: String
@@ -178,7 +191,7 @@ public struct ResponsivenessProbe: Sendable {
         self.configuration = configuration
     }
 
-    public func run() throws -> ResponsivenessProbeReport {
+    public func run() async throws -> ResponsivenessProbeReport {
         try configuration.validate()
         let workflowFixture = makeWorkflowFixture(trackCount: configuration.trackCount)
         let queueFixture = makeQueueFixture(jobCount: configuration.queueJobCount)
@@ -198,6 +211,7 @@ public struct ResponsivenessProbe: Sendable {
         ) {
             schedule(queueFixture)
         }
+        let cancellationSamples = try await measureCommandCancellation()
         guard workflowMeasurement.checksum > 0, queueMeasurement.checksum > 0 else {
             throw ResponsivenessProbeError.inconsistentWorkload
         }
@@ -216,6 +230,12 @@ public struct ResponsivenessProbe: Sendable {
                 operationsPerRound: configuration.queueSchedulesPerRound,
                 budgetNanosecondsPerOperation: configuration.queueSchedulingBudgetNanoseconds
             ),
+            try ResponsivenessMetric(
+                id: .commandCancellation,
+                operationSamples: cancellationSamples,
+                operationsPerRound: 1,
+                budgetNanosecondsPerOperation: configuration.commandCancellationBudgetNanoseconds
+            ),
         ]
         return ResponsivenessProbeReport(
             architecture: architecture,
@@ -227,7 +247,54 @@ public struct ResponsivenessProbe: Sendable {
             syntheticQueueJobCount: configuration.queueJobCount,
             metrics: metrics,
             workloadChecksum: workflowMeasurement.checksum &+ queueMeasurement.checksum
+                &+ UInt64(cancellationSamples.count)
         )
+    }
+
+    private func measureCommandCancellation() async throws -> [UInt64] {
+        var samples = [UInt64]()
+        samples.reserveCapacity(configuration.rounds)
+        for _ in 0..<configuration.rounds {
+            let command = Task {
+                try await FoundationCommandRunner().run(
+                    CommandRequest(
+                        executableURL: URL(fileURLWithPath: "/bin/sleep"),
+                        arguments: ["5"],
+                        timeout: 10,
+                        outputLimit: 1_024
+                    )
+                )
+            }
+            do {
+                try await Task.sleep(
+                    nanoseconds: configuration.cancellationStartupDelayNanoseconds
+                )
+            } catch {
+                command.cancel()
+                _ = try? await command.value
+                throw error
+            }
+
+            let start = DispatchTime.now().uptimeNanoseconds
+            command.cancel()
+            do {
+                _ = try await command.value
+                throw ResponsivenessProbeError.unexpectedCancellationOutcome
+            } catch let error as CommandRunnerError {
+                guard error == .cancelled else {
+                    throw ResponsivenessProbeError.unexpectedCancellationOutcome
+                }
+            } catch let error as ResponsivenessProbeError {
+                throw error
+            } catch {
+                throw ResponsivenessProbeError.unexpectedCancellationOutcome
+            }
+            let end = DispatchTime.now().uptimeNanoseconds
+            let elapsed = end.subtractingReportingOverflow(start)
+            guard !elapsed.overflow else { throw ResponsivenessProbeError.clockOverflow }
+            samples.append(elapsed.partialValue)
+        }
+        return samples
     }
 
     private var architecture: String {
