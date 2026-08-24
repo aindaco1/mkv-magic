@@ -10,12 +10,16 @@ downloaded, or accepted on physical Intel and Apple Silicon hardware.
 artifact verifier. The protected release workflow invokes it after downloading
 the draft candidate and again from a new directory after making the release
 public. The post-publication step first confirms that GitHub reports the exact
-tag as non-draft. A successful draft readback alone no longer closes the
-workflow. If that fresh public readback is skipped or fails after the publish
-step succeeds, an `always()` recovery step returns the release to draft and
-verifies the restored state. A runner or GitHub outage can still interrupt
-recovery, so the workflow's final success remains the observed acceptance
-record.
+tag as non-draft, verifies GitHub's cryptographically signed immutable-release
+attestation, and verifies every downloaded asset against that attestation. A
+successful draft readback alone no longer closes the workflow.
+
+Immutable releases lock assets and the tag when the draft is published, so a
+post-publication failure cannot be recovered by returning the release to draft.
+Every byte, hardware, updater, Apple, signature, and provenance gate must pass
+against the exact draft before publication. If public readback then fails, the
+workflow fails and the immutable release remains available for investigation;
+only a successful run is the observed public-distribution acceptance record.
 
 The verifier requires the exact release asset set. It rejects missing, empty,
 symbolic-link, special, nested, and unexpected assets. `SHA256SUMS` must contain

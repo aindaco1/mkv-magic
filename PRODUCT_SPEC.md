@@ -740,7 +740,7 @@ Diagnostics remain local unless the user explicitly exports them. The current pr
 
 ### 10.2 Release pipeline
 
-1. Release only an immutable, signed, annotated `vMAJOR.MINOR.PATCH` tag that resolves to the reviewed `main` commit and validates against the repository's pinned allowed signers. Derive the positive signed-32-bit `CFBundleVersion` from that signed tag's Unix tagger timestamp, require it to increase beyond the accepted prior build, and keep the result stable across workflow reruns. Tag update and deletion are blocked.
+1. Release only an immutable, signed, annotated `vMAJOR.MINOR.PATCH` tag that resolves to the reviewed `main` commit and validates against the repository's pinned allowed signers. Derive the positive signed-32-bit `CFBundleVersion` from that signed tag's Unix tagger timestamp, require it to increase beyond the accepted prior build, and keep the result stable across workflow reruns. Before any release build, live API evidence must prove the repository is public, immutable releases are enabled, and an active no-bypass `v*` tag ruleset blocks tag update and deletion. The current private-repository plan does not satisfy this gate.
 2. Run the complete local gate on the exact commit, then rerun it in hosted CI with read-only default permissions, commit-pinned GitHub Actions, a pinned release Xcode, and locked Swift dependencies that must not change during resolution.
 3. Run formatting/lint, unit, planner-golden, integration, UI, fault, security, sanitizer, architecture, package, secret, license, and dependency gates. Build-script fixtures must test their own rejection paths.
 4. Build or fetch only provenance-verified, checksum-pinned FFmpeg and MKVToolNix inputs for both `arm64` and `x86_64`; verify source/build manifests before assembly.
@@ -755,7 +755,7 @@ Diagnostics remain local unless the user explicitly exports them. The current pr
 13. Generate the Ed25519-signed Sparkle appcast from the final notarized ZIP. For releases after v1, fetch the previous archive only by pinned digest and generate a bounded signed delta when worthwhile.
 14. Create a draft containing the DMG, update ZIP, appcast, checksums, dependency locks, release notes, source/build metadata, third-party notices, CycloneDX SBOM, artifact-size report, notarization evidence, and build-provenance attestations. Download the complete draft into a fresh directory and repeat its full verifier, but do not publish it.
 15. Install that exact candidate on clean physical Intel and Apple Silicon accounts, execute fixture media, and exercise the prior-version update path. Bind each acceptance statement to the candidate DMG digest.
-16. In a separate manually approved publication workflow, re-download and fully verify the still-draft candidate, require all three acceptance digests and an exact tag confirmation, publish it, then download the public assets into another fresh directory and repeat the complete verifier. Only this downloaded-artifact acceptance closes the release.
+16. In a separate manually dispatched publication workflow, re-download and fully verify the still-draft candidate, require all three acceptance digests and an exact tag confirmation, publish it, verify GitHub's immutable-release attestation, then download the public assets into another fresh directory, repeat the complete verifier, and verify each asset against the release attestation. Only this downloaded-artifact acceptance closes the release. Add required-reviewer approval when repository visibility or plan support makes it available.
 
 An installed, processed, and verified downloaded artifact on both architectures is the release gate; a successful build, upload, visible release page, or notarization submission alone is insufficient.
 
@@ -776,7 +776,12 @@ Protected release-environment secrets use these interfaces, with values provisio
 - `APPLE_API_ISSUER_ID`
 - `SPARKLE_ED25519_PRIVATE_KEY`
 
-The repository contains only the Sparkle public key, reviewed entitlement plists, allowed tag signers, and non-secret expected signing identity metadata. No release job runs on an untrusted pull request or exposes secrets to forked code; release secrets live in an approval-protected environment.
+The live repository-control preflight separately requires
+`RELEASE_CONTROLS_READ_TOKEN`: a fine-grained token limited to this repository
+with Administration read access and no write permissions. The standard Actions
+token cannot read that setting, and a broad personal token is not acceptable.
+
+The repository contains only the Sparkle public key, reviewed entitlement plists, allowed tag signers, and non-secret expected signing identity metadata. No release job runs on an untrusted pull request or exposes secrets to forked code; release secrets live in a ref-restricted environment. Add required reviewers when repository visibility or plan support makes that protection available.
 
 ## 11. Testing strategy
 
@@ -1444,9 +1449,10 @@ draft. A separate manual workflow must reverify the draft and match the exact
 candidate DMG digest against clean-account Apple Silicon, clean-account Intel,
 and prior-version updater acceptance before publication, then reverify a fresh
 public download. The digest gate binds the operator's evidence to exact bytes;
-it does not pretend automation observed physical hardware. If public readback
-does not complete successfully, the workflow returns the release to draft and
-verifies that recovery instead of leaving an unverified publication live.
+it does not pretend automation observed physical hardware. Publication makes
+the release assets and tag immutable. Public readback must verify GitHub's
+release attestation and every downloaded asset against it; a readback failure
+fails the workflow but cannot mutate the published release back into a draft.
 
 The updater-acceptance continuation closes the reproducibility gap before that
 manual digest entry. A production-only operator harness revalidates the

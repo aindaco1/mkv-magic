@@ -77,6 +77,13 @@ jobs:
           printf 'MKV_MAGIC_BUILD_NUMBER=%s\n' "$release_build_number" \
             >> "$GITHUB_ENV"
 
+      - name: Verify public repository release controls
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_CONTROLS_READ_TOKEN }}
+        run: |
+          ./scripts/release/verify-repository-release-controls.sh \
+            "$GITHUB_REPOSITORY"
+
       - name: Install source and runtime-build dependencies
         run: brew install actionlint cmake meson ninja pkgconf ripgrep shellcheck
 

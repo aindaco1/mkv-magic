@@ -32,15 +32,22 @@ Publication is a separate manual workflow protected by the
    replacement acceptance;
 6. requires the exact confirmation `publish-vMAJOR.MINOR.PATCH`;
 7. publishes only after every digest matches the newly downloaded DMG; and
-8. downloads the public assets into another fresh directory and repeats the
-   complete verifier. If this public readback does not succeed, an `always()`
-   recovery step returns the release to draft and confirms that state.
+8. requires GitHub's cryptographic immutable-release attestation, downloads the
+   public assets into another fresh directory, repeats the complete verifier,
+   and verifies every local asset against the release attestation.
 
 The repeated digest is intentionally not a generic checkbox: it binds each
 operator acceptance statement to the exact bytes being published. It is still
 manual evidence, so the operator must obtain each digest only after completing
 the corresponding acceptance path. Repository automation cannot manufacture a
 physical Intel or clean-account result.
+
+GitHub immutable releases lock the assets and associated tag at publication.
+The workflow therefore cannot truthfully promise to return a failed public
+readback to draft. All byte, Apple, hardware, updater, signature, and provenance
+acceptance happens against the exact draft before publication. The public
+readback is the final distribution observation; if it fails, the workflow fails
+and the already-published release remains immutable for investigation.
 
 ## Repository environment
 

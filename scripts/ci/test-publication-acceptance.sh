@@ -13,6 +13,7 @@ dmg_path="$test_root/MKV-Magic-1.2.3-universal.dmg"
 printf 'fixed candidate\n' > "$dmg_path"
 digest="$(shasum -a 256 "$dmg_path" | awk '{print $1}')"
 validator="$repo_root/scripts/release/validate-publication-acceptance.sh"
+publication_workflow="$repo_root/.github/workflows/publish-release.yml"
 
 run_valid() {
     MKV_MAGIC_APPLE_SILICON_ACCEPTED_DMG_SHA256="$digest" \
@@ -67,5 +68,20 @@ expect_rejection "a symbolic-link candidate" \
         MKV_MAGIC_UPDATE_ACCEPTED_DMG_SHA256="$digest" \
         MKV_MAGIC_PUBLICATION_CONFIRMATION="publish-$tag" \
         "$validator" "$symlink_path/MKV-Magic-1.2.3-universal.dmg" "$tag"
+
+# These are intentionally literal workflow source fragments.
+# shellcheck disable=SC2016
+for immutable_readback_command in \
+    'gh release verify "$RELEASE_TAG"' \
+    'gh release verify-asset "$RELEASE_TAG"'; do
+    if ! grep -Fq "$immutable_readback_command" "$publication_workflow"; then
+        echo "publication workflow is missing immutable release readback" >&2
+        exit 1
+    fi
+done
+if grep -Fq -- '--draft=true' "$publication_workflow"; then
+    echo "immutable publication workflow still attempts an impossible re-draft" >&2
+    exit 1
+fi
 
 echo "publication acceptance tests passed"

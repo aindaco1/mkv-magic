@@ -88,13 +88,11 @@ jobs:
             "$RELEASE_TAG"
 
       - name: Publish accepted release
-        id: publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest
 
-      - name: Re-download and verify published release
-        id: public_readback
+      - name: Verify immutable published release and public assets
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -104,19 +102,12 @@ jobs:
           jq -e --arg tag "$RELEASE_TAG" \
             '.isDraft == false and .tagName == $tag' \
             <<< "$release_state" >/dev/null
+          gh release verify "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY"
           gh release download "$RELEASE_TAG" --dir "$public_root"
           MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
             ./scripts/release/verify-downloaded-release.sh \
               "$public_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
-
-      - name: Return unverified publication to draft
-        if: ${{ always() && steps.publish.outcome == 'success' && steps.public_readback.outcome != 'success' }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release edit "$RELEASE_TAG" --draft=true
-          release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
-          jq -e --arg tag "$RELEASE_TAG" \
-            '.isDraft == true and .tagName == $tag' \
-            <<< "$release_state" >/dev/null
-          echo "Public readback did not complete; $RELEASE_TAG is a draft again."
+          while IFS= read -r -d '' public_asset; do
+            gh release verify-asset "$RELEASE_TAG" "$public_asset" \
+              --repo "$GITHUB_REPOSITORY"
+          done < <(find "$public_root" -mindepth 1 -maxdepth 1 -type f -print0)

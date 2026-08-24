@@ -487,6 +487,16 @@ accepted private build `20260825`. The disposable package gate exercises that
 replacement. See
 [docs/releases/M9_RELEASE_BUILD_NUMBER_SLICE.md](docs/releases/M9_RELEASE_BUILD_NUMBER_SLICE.md).
 
+The release workflow also verifies live repository controls before any signing
+or Apple submission. It requires a public repository, immutable releases, and
+an active no-bypass `v*` tag ruleset that blocks deletion and force updates. The
+current private-repository plan does not satisfy that gate, so no public release
+can proceed until those user-visible repository settings are deliberately
+changed. The live immutable-setting check uses a repository-scoped,
+Administration-read-only release-environment token rather than a broad personal
+credential; that narrow token is not provisioned yet. See
+[docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md](docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
