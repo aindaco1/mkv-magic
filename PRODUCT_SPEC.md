@@ -752,8 +752,9 @@ Diagnostics remain local unless the user explicitly exports them. The current pr
 11. Create a ZIP and a DMG containing exactly `MKV Magic.app` plus an `/Applications` link. Sign, notarize, and staple the DMG separately.
 12. Mount the finished DMG read-only in a private temporary directory and recheck layout, app and DMG signatures, signed entitlements, tool inventory, stapled tickets, Gatekeeper, bundled-tool launch, and a fixture smoke job.
 13. Generate the Ed25519-signed Sparkle appcast from the final notarized ZIP. For releases after v1, fetch the previous archive only by pinned digest and generate a bounded signed delta when worthwhile.
-14. Publish the DMG, update ZIP, appcast, checksums, dependency locks, release notes, source/build metadata, third-party notices, CycloneDX SBOM, artifact-size report, notarization evidence, and build-provenance attestations.
-15. Download the published artifacts, verify their attestations and checksums, rerun DMG verification, install on clean Intel and Apple Silicon accounts, execute fixture media, and exercise the prior-version update path. Only this downloaded-artifact acceptance closes the release.
+14. Create a draft containing the DMG, update ZIP, appcast, checksums, dependency locks, release notes, source/build metadata, third-party notices, CycloneDX SBOM, artifact-size report, notarization evidence, and build-provenance attestations. Download the complete draft into a fresh directory and repeat its full verifier, but do not publish it.
+15. Install that exact candidate on clean physical Intel and Apple Silicon accounts, execute fixture media, and exercise the prior-version update path. Bind each acceptance statement to the candidate DMG digest.
+16. In a separate manually approved publication workflow, re-download and fully verify the still-draft candidate, require all three acceptance digests and an exact tag confirmation, publish it, then download the public assets into another fresh directory and repeat the complete verifier. Only this downloaded-artifact acceptance closes the release.
 
 An installed, processed, and verified downloaded artifact on both architectures is the release gate; a successful build, upload, visible release page, or notarization submission alone is insufficient.
 
@@ -1426,6 +1427,14 @@ source commit `113526c` passed Developer ID signing, separate app and DMG Apple
 notarization, stapling, Gatekeeper, and both architecture fixture paths. It was
 not published and does not satisfy final-tag, clean-account, physical-Intel, or
 prior-version update acceptance.
+
+The two-phase publication continuation prevents a successful release build from
+making itself public. Signed-tag automation ends at an independently verified
+draft. A separate manual workflow must reverify the draft and match the exact
+candidate DMG digest against clean-account Apple Silicon, clean-account Intel,
+and prior-version updater acceptance before publication, then reverify a fresh
+public download. The digest gate binds the operator's evidence to exact bytes;
+it does not pretend automation observed physical hardware.
 
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 

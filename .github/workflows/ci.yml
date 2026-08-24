@@ -24,12 +24,13 @@ jobs:
           persist-credentials: false
 
       - name: Install source-gate dependencies
-        run: brew install ripgrep shellcheck
+        run: brew install actionlint ripgrep shellcheck
 
       - name: Report toolchain
         run: |
           swift --version
           xcodebuild -version
+          actionlint --version
           rg --version
           shellcheck --version
 

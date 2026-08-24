@@ -1,4 +1,4 @@
-name: Release
+name: Release Candidate
 
 on:
   push:
@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build, sign, notarize, verify, and publish
+    name: Build, sign, notarize, verify, and stage draft
     runs-on: macos-15
     timeout-minutes: 180
     environment: release
@@ -73,7 +73,7 @@ jobs:
           fi
 
       - name: Install source and runtime-build dependencies
-        run: brew install cmake meson ninja pkgconf ripgrep shellcheck
+        run: brew install actionlint cmake meson ninja pkgconf ripgrep shellcheck
 
       - name: Validate source
         run: ./scripts/ci/local-gate.sh
@@ -211,25 +211,15 @@ jobs:
             ./scripts/release/verify-downloaded-release.sh \
               "$download_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
 
-      - name: Publish verified release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release edit "$RELEASE_TAG" --draft=false --latest
-
-      - name: Re-download and verify published release
+      - name: Confirm verified candidate remains a draft
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          public_root="$RUNNER_TEMP/mkv-magic-downloaded-public"
-          mkdir "$public_root"
           release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
           jq -e --arg tag "$RELEASE_TAG" \
-            '.isDraft == false and .tagName == $tag' \
+            '.isDraft == true and .tagName == $tag' \
             <<< "$release_state" >/dev/null
-          gh release download "$RELEASE_TAG" --dir "$public_root"
-          MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
-            ./scripts/release/verify-downloaded-release.sh \
-              "$public_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
+          echo "Verified draft $RELEASE_TAG is ready for hardware and updater acceptance."
 
       - name: Remove temporary signing material
         if: always()

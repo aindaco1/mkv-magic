@@ -9,8 +9,10 @@ cd "$repo_root"
 ./scripts/ci/check-user-facing-errors.sh
 ./scripts/ci/scan-secrets.sh
 ./scripts/ci/verify-actions-pinning.sh
+actionlint -color
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
+./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-tool-tree-layout.sh
 
 shell_files=()

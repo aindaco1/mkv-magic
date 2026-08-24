@@ -443,6 +443,13 @@ stapling, Gatekeeper, and both architecture fixture paths. It was not published
 and does not replace final-tag, clean-account, physical-Intel, or updater
 acceptance.
 
+Public release is now a deliberate second phase. The signed-tag workflow can
+only leave a fully verified draft; a separate manual workflow binds clean-account
+Apple Silicon, clean-account Intel, and prior-version updater acceptance to the
+exact candidate DMG digest before publication, then redownloads and reverifies
+the public assets. See
+[docs/releases/M9_TWO_PHASE_PUBLICATION_SLICE.md](docs/releases/M9_TWO_PHASE_PUBLICATION_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
@@ -461,7 +468,8 @@ Requirements:
 
 - macOS 13 or newer
 - Xcode 16 or newer with Swift 6
-- `rg`, `shellcheck`, and standard Apple command-line developer tools
+- `actionlint`, `rg`, `shellcheck`, and standard Apple command-line developer
+  tools
 - `cmake`, `meson`, `ninja`, and `pkg-config` when rebuilding the bundled media
   runtime from source
 

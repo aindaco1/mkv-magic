@@ -1,0 +1,108 @@
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Verified draft tag to publish, such as v1.0.0
+        required: true
+        type: string
+      apple_silicon_clean_account_dmg_sha256:
+        description: DMG SHA-256 accepted on a clean physical Apple Silicon account
+        required: true
+        type: string
+      intel_clean_account_dmg_sha256:
+        description: DMG SHA-256 accepted on a clean physical Intel account
+        required: true
+        type: string
+      update_replacement_dmg_sha256:
+        description: DMG SHA-256 accepted through prior-version Sparkle replacement
+        required: true
+        type: string
+      confirmation:
+        description: Enter publish-vMAJOR.MINOR.PATCH after completing the runbook
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  attestations: read
+
+concurrency:
+  group: publish-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Reverify accepted candidate and publish
+    runs-on: macos-15
+    timeout-minutes: 45
+    environment: release-publication
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+      MKV_MAGIC_APPLE_SILICON_ACCEPTED_DMG_SHA256: ${{ inputs.apple_silicon_clean_account_dmg_sha256 }}
+      MKV_MAGIC_INTEL_ACCEPTED_DMG_SHA256: ${{ inputs.intel_clean_account_dmg_sha256 }}
+      MKV_MAGIC_UPDATE_ACCEPTED_DMG_SHA256: ${{ inputs.update_replacement_dmg_sha256 }}
+      MKV_MAGIC_PUBLICATION_CONFIRMATION: ${{ inputs.confirmation }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ env.RELEASE_TAG }}
+
+      - name: Validate signed tag and exact source
+        run: |
+          git config gpg.format ssh
+          git config gpg.ssh.allowedSignersFile \
+            "$GITHUB_WORKSPACE/.github/allowed_signers"
+          ./scripts/release/validate-tag.sh "$RELEASE_TAG"
+          release_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          if [[ "$GITHUB_SHA" != "$release_commit" ]]; then
+            echo "publication source does not match the release tag" >&2
+            exit 1
+          fi
+          printf 'MKV_MAGIC_VERSION=%s\n' "${RELEASE_TAG#v}" >> "$GITHUB_ENV"
+
+      - name: Require an unpublished verified draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.isDraft == true and .tagName == $tag' \
+            <<< "$release_state" >/dev/null
+
+      - name: Download and independently reverify draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          download_root="$RUNNER_TEMP/mkv-magic-publication-candidate"
+          mkdir "$download_root"
+          gh release download "$RELEASE_TAG" --dir "$download_root"
+          MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
+            ./scripts/release/verify-downloaded-release.sh \
+              "$download_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
+          ./scripts/release/validate-publication-acceptance.sh \
+            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg" \
+            "$RELEASE_TAG"
+
+      - name: Publish accepted release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "$RELEASE_TAG" --draft=false --latest
+
+      - name: Re-download and verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          public_root="$RUNNER_TEMP/mkv-magic-downloaded-public"
+          mkdir "$public_root"
+          release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.isDraft == false and .tagName == $tag' \
+            <<< "$release_state" >/dev/null
+          gh release download "$RELEASE_TAG" --dir "$public_root"
+          MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
+            ./scripts/release/verify-downloaded-release.sh \
+              "$public_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"

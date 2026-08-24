@@ -6,6 +6,7 @@ if [[ "$(uname -s)" != Darwin ]]; then
     exit 1
 fi
 required_commands=(
+    actionlint
     codesign
     ditto
     git
