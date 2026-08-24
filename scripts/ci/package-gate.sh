@@ -58,8 +58,17 @@ fi
 if grep -R -q '/Users/' \
     "$release_root/Package.resolved" \
     "$release_root/BUILD-METADATA.txt" \
-    "$release_root/SBOM.cdx.json"; then
+    "$release_root/SBOM.cdx.json" \
+    "$release_root/TROUBLESHOOTING.md"; then
     echo "release metadata contains a personal path" >&2
+    exit 1
+fi
+if [[ ! -f "$release_root/TROUBLESHOOTING.md" || \
+      -L "$release_root/TROUBLESHOOTING.md" ]] || \
+    ! grep -q 'MKV Magic troubleshooting' "$release_root/TROUBLESHOOTING.md" || \
+    ! cmp -s "$release_root/TROUBLESHOOTING.md" \
+        "$app_path/Contents/Resources/TROUBLESHOOTING.md"; then
+    echo "release troubleshooting guide is missing or unsafe" >&2
     exit 1
 fi
 echo "package gate passed"

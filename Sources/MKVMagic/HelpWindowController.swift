@@ -122,5 +122,8 @@ final class HelpViewController: NSViewController {
 
         LICENSES AND NOTICES
         Choose Help > Third-Party Software to read the notices and full license texts shipped inside your installed copy of MKV Magic.
+
+        TROUBLESHOOTING
+        If a file is unavailable, select the real local file instead of a link and read the disabled control's prerequisite. If an output is refused, keep the original, choose a new destination, reinspect the source, and review the plan again. Queue jobs that are interrupted, stale, or changed require review instead of silent retry. History can export a bounded privacy-safe report when you choose.
         """
 }

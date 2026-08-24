@@ -70,12 +70,15 @@ install -m 0644 THIRD_PARTY_NOTICES.md \
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
 install -m 0644 docs/SUPPORTED_SYSTEMS.md \
     "$app_path/Contents/Resources/SUPPORTED_SYSTEMS.md"
+install -m 0644 docs/TROUBLESHOOTING.md \
+    "$app_path/Contents/Resources/TROUBLESHOOTING.md"
 install -m 0644 LICENSE "$app_path/Contents/Resources/Licenses/MKV-Magic-GPL-3.0.txt"
 install -m 0644 .build/checkouts/Sparkle/LICENSE \
     "$app_path/Contents/Resources/Licenses/Sparkle-MIT.txt"
 install -m 0644 Package.resolved "$release_root/Package.resolved"
 install -m 0644 THIRD_PARTY_NOTICES.md "$release_root/THIRD-PARTY-NOTICES.md"
 install -m 0644 docs/SUPPORTED_SYSTEMS.md "$release_root/SUPPORTED-SYSTEMS.md"
+install -m 0644 docs/TROUBLESHOOTING.md "$release_root/TROUBLESHOOTING.md"
 
 if [[ -n "$tool_source_root" ]]; then
     if [[ "$tool_source_root" != /* || ! -d "$tool_source_root" || -L "$tool_source_root" ]]; then

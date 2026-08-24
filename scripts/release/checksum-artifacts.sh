@@ -22,6 +22,7 @@ for name in \
     Package.resolved \
     THIRD-PARTY-NOTICES.md \
     SUPPORTED-SYSTEMS.md \
+    TROUBLESHOOTING.md \
     BUILD-METADATA.txt \
     SBOM.cdx.json \
     ARTIFACT-SIZES.json \

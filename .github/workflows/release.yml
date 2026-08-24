@@ -180,6 +180,7 @@ jobs:
             "$root/Package.resolved" \
             "$root/THIRD-PARTY-NOTICES.md" \
             "$root/SUPPORTED-SYSTEMS.md" \
+            "$root/TROUBLESHOOTING.md" \
             "$root/BUILD-METADATA.txt" \
             "$root/ARTIFACT-SIZES.json" \
             "$root/SBOM.cdx.json" \

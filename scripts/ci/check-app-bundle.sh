@@ -19,6 +19,7 @@ required_files=(
     "$app_path/Contents/Info.plist"
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
     "$app_path/Contents/Resources/SUPPORTED_SYSTEMS.md"
+    "$app_path/Contents/Resources/TROUBLESHOOTING.md"
     "$app_path/Contents/Resources/Licenses/MKV-Magic-GPL-3.0.txt"
     "$app_path/Contents/Resources/Licenses/Sparkle-MIT.txt"
 )

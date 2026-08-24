@@ -155,6 +155,8 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(helpText.string.contains("Moving originals to Trash is explicit"))
         XCTAssertTrue(helpText.string.contains("has no accounts, analytics, uploads"))
         XCTAssertTrue(helpText.string.contains("Help > Third-Party Software"))
+        XCTAssertTrue(helpText.string.contains("reinspect the source"))
+        XCTAssertTrue(helpText.string.contains("privacy-safe report"))
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_HELP_CAPTURE"
         ], capturePath.hasPrefix("/"), let content = helpWindow.contentView {

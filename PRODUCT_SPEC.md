@@ -1394,6 +1394,13 @@ and includes the runtime's full license tree when bundled tools are present.
 The package gate already requires the primary notices and app/Sparkle licenses;
 the viewer does not replace legal review or downloaded-artifact acceptance.
 
+The release-documentation continuation adds one canonical troubleshooting guide
+for safe refusal recovery, file access, unavailable actions, queue state,
+encoding, subtitles/chapters/trim/join, Trash recovery, and privacy-safe support
+evidence. The exact document ships inside the app and as a checksummed release
+asset; the offline Help window carries its shortest recovery path without
+creating a second competing guide.
+
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 
 ## 13. Initial implementation backlog

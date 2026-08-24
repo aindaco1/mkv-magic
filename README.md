@@ -416,6 +416,11 @@ fails below conservative line, function, or region floors; tests, generated
 runners, Sparkle, and other dependencies cannot inflate the gate. See
 [docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
 
+For safe recovery steps, unavailable-action prerequisites, queue/encoding
+guidance, and privacy-safe support evidence, see the canonical
+[troubleshooting guide](docs/TROUBLESHOOTING.md). The same guide is embedded in
+the app and published beside every release.
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
