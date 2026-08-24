@@ -50,7 +50,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .englishLibraryCleanup: "English Library Cleanup"
         case .removeNonEnglishSubtitles: "If present: Remove non-English subtitles"
         case .removeRedundantEnglishSDH: "If redundant: Remove English SDH subtitles"
-        case .removeSegmentTitle: "Remove segment title"
+        case .removeSegmentTitle: "If present: Remove segment title"
         }
     }
 

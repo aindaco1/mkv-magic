@@ -19,10 +19,12 @@ then commit a new output without replacing the original. Track removal remuxes
 retained streams without encoding, preserves their order, chapters, tags, and
 attachments, and uses the same verify-before-commit rule. A deterministic Clean
 MKV preview can suggest English-library subtitle removals for individual review.
-The native Workflows builder can name, duplicate, reorder, enable, save, import,
-and export portable recipes. New workflows begin with separate plain-language
-conditions for removing explicitly non-English subtitles and removing redundant
-English SDH subtitles, plus optional segment-title removal. Applicable subtitle
+The native Workflows builder can name, duplicate, add, remove, reorder, enable,
+save, import, and export portable recipe cards. Add Step disables cards already
+present and does not expose the legacy combined compatibility action. New
+workflows begin with separate plain-language conditions for removing explicitly
+non-English subtitles and removing redundant English SDH subtitles, plus
+optional segment-title removal. Applicable subtitle
 removals are fused into one remux. Workflows store intent rather than media paths
 or track identifiers, compile against the selected inspection, show a zero-encode
 impact preview, and share one verified output pipeline. Imported workflows using

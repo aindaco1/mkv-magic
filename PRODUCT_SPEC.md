@@ -461,7 +461,12 @@ Every card and compiled plan displays one of:
 - Audio-only transcode
 - Video transcode required
 
-Workflows can be named, duplicated, reordered, enabled/disabled step-by-step, and exported/imported as versioned human-readable `.mkvmagic-workflow` JSON.
+Workflows can be named, duplicated, added to, reduced, reordered,
+enabled/disabled step-by-step, and exported/imported as versioned human-readable
+`.mkvmagic-workflow` JSON. Add Step exposes the safe portable card catalog in a
+stable order, disables actions already present, and excludes the legacy combined
+cleanup action from new authoring. Removing the final card is allowed while
+editing, but Save & Preview still requires at least one enabled card.
 
 The first conditional implementation separates explicitly non-English subtitle
 removal from redundant English SDH removal. Each condition is evaluated against
@@ -1068,8 +1073,10 @@ resolves stable track UIDs from the current inspection, fuses both conditions
 into one zero-encode remux, and preserves the original combined cleanup action
 for imported workflows. A separate native compilation review now shows every
 card as applied, already satisfied, or disabled before the plan can be selected;
-an entirely satisfied recipe cannot become runnable. Subtitle text cleanup/mux
-cards, broader conditions, queue execution, and filename cleanup remain open.
+an entirely satisfied recipe cannot become runnable. The builder now supports
+adding and removing the safe card catalog with duplicate prevention, in addition
+to enable/disable and reordering. Subtitle text cleanup/mux cards, broader
+conditions, queue execution, and filename cleanup remain open.
 
 Deliverables:
 

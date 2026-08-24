@@ -49,6 +49,8 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
     private let duplicateButton = NSButton(title: "Duplicate", target: nil, action: nil)
     private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
     private let exportButton = NSButton(title: "Export…", target: nil, action: nil)
+    private let addStepButton = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let removeStepButton = NSButton(title: "Remove Step", target: nil, action: nil)
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let useButton = NSButton(title: "Save & Preview", target: nil, action: nil)
@@ -175,13 +177,21 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         scroll.documentView = stepTable
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
+        configureAddStepMenu()
+        removeStepButton.target = self
+        removeStepButton.action = #selector(removeSelectedStep)
         moveUpButton.target = self
         moveUpButton.action = #selector(moveStepUp)
         moveDownButton.target = self
         moveDownButton.action = #selector(moveStepDown)
-        let moveButtons = NSStackView(views: [moveUpButton, moveDownButton])
-        moveButtons.orientation = .horizontal
-        moveButtons.spacing = 8
+        let stepButtonSpacer = NSView()
+        stepButtonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        let stepButtons = NSStackView(views: [
+            addStepButton, removeStepButton, stepButtonSpacer, moveUpButton, moveDownButton,
+        ])
+        stepButtons.orientation = .horizontal
+        stepButtons.alignment = .centerY
+        stepButtons.spacing = 8
 
         let importButton = NSButton(
             title: "Import…", target: self, action: #selector(importWorkflow))
@@ -207,7 +217,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
         let stack = NSStackView(views: [
-            heading, nameLabel, nameField, stepLabel, scroll, moveButtons, statusLabel, actions,
+            heading, nameLabel, nameField, stepLabel, scroll, stepButtons, statusLabel, actions,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -216,6 +226,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         nameField.translatesAutoresizingMaskIntoConstraints = false
+        stepButtons.translatesAutoresizingMaskIntoConstraints = false
         actions.translatesAutoresizingMaskIntoConstraints = false
         let container = NSView()
         container.addSubview(stack)
@@ -227,6 +238,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             nameField.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
+            stepButtons.widthAnchor.constraint(equalTo: stack.widthAnchor),
             actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         return container
@@ -348,6 +360,40 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         refreshEditorButtons()
     }
 
+    @objc private func addStep(_ sender: NSMenuItem) {
+        guard let workflowIndex = selectedWorkflowIndex,
+            let rawValue = sender.representedObject as? String,
+            let action = SavedWorkflowAction(rawValue: rawValue),
+            WorkflowEditorPolicy.add(action, to: &workflows[workflowIndex])
+        else { return }
+        stepTable.reloadData()
+        let addedRow = workflows[workflowIndex].steps.count - 1
+        stepTable.selectRowIndexes(IndexSet(integer: addedRow), byExtendingSelection: false)
+        markUnsaved()
+        refreshEditorButtons()
+    }
+
+    @objc private func removeSelectedStep() {
+        guard let workflowIndex = selectedWorkflowIndex else { return }
+        let removedRow = stepTable.selectedRow
+        guard
+            WorkflowEditorPolicy.removeStep(
+                at: removedRow,
+                from: &workflows[workflowIndex]
+            )
+        else { return }
+        stepTable.reloadData()
+        let remainingCount = workflows[workflowIndex].steps.count
+        if remainingCount > 0 {
+            stepTable.selectRowIndexes(
+                IndexSet(integer: min(removedRow, remainingCount - 1)),
+                byExtendingSelection: false
+            )
+        }
+        markUnsaved()
+        refreshEditorButtons()
+    }
+
     @objc private func moveStepUp() { moveSelectedStep(by: -1) }
     @objc private func moveStepDown() { moveSelectedStep(by: 1) }
 
@@ -454,7 +500,11 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
     private func refreshEditor() {
         nameField.stringValue = selectedWorkflow?.name ?? ""
         stepTable.reloadData()
-        stepTable.deselectAll(nil)
+        if selectedWorkflow?.steps.isEmpty == false {
+            stepTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        } else {
+            stepTable.deselectAll(nil)
+        }
         refreshEditorButtons()
     }
 
@@ -467,12 +517,14 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         useButton.isEnabled =
             hasWorkflow && hasSelectedAsset
             && selectedWorkflow?.steps.contains(where: \.isEnabled) == true
+        refreshAddStepMenu()
         refreshMoveButtons()
     }
 
     private func refreshMoveButtons() {
         let row = stepTable.selectedRow
         let count = selectedWorkflow?.steps.count ?? 0
+        removeStepButton.isEnabled = row >= 0 && row < count
         moveUpButton.isEnabled = row > 0
         moveDownButton.isEnabled = row >= 0 && row < count - 1
     }
@@ -481,9 +533,51 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         workflowTable.isEnabled = enabled
         stepTable.isEnabled = enabled
         nameField.isEnabled = enabled && selectedWorkflow != nil
+        addStepButton.isEnabled =
+            enabled && selectedWorkflow != nil
+        removeStepButton.isEnabled = enabled && stepTable.selectedRow >= 0
+        moveUpButton.isEnabled = enabled && stepTable.selectedRow > 0
+        moveDownButton.isEnabled =
+            enabled && stepTable.selectedRow >= 0
+            && stepTable.selectedRow < (selectedWorkflow?.steps.count ?? 0) - 1
         useButton.isEnabled =
             enabled && hasSelectedAsset
             && selectedWorkflow?.steps.contains(where: \.isEnabled) == true
+    }
+
+    private func configureAddStepMenu() {
+        let menu = NSMenu()
+        menu.addItem(withTitle: "Add Step…", action: nil, keyEquivalent: "")
+        menu.addItem(.separator())
+        for action in WorkflowEditorPolicy.actionCatalog {
+            let item = NSMenuItem(
+                title: action.displayName,
+                action: #selector(addStep(_:)),
+                keyEquivalent: ""
+            )
+            item.target = self
+            item.representedObject = action.rawValue
+            menu.addItem(item)
+        }
+        addStepButton.menu = menu
+        addStepButton.setAccessibilityLabel("Add workflow step")
+    }
+
+    private func refreshAddStepMenu() {
+        let available = Set(
+            selectedWorkflow.map { WorkflowEditorPolicy.availableActions(for: $0) } ?? []
+        )
+        for item in addStepButton.itemArray {
+            guard let rawValue = item.representedObject as? String,
+                let action = SavedWorkflowAction(rawValue: rawValue)
+            else { continue }
+            item.isEnabled = available.contains(action)
+        }
+        addStepButton.isEnabled = selectedWorkflow != nil
+        addStepButton.toolTip =
+            available.isEmpty
+            ? "All available steps are already in this workflow."
+            : "Add another portable step to this workflow."
     }
 
     private func markUnsaved() {
@@ -505,6 +599,12 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
 }
 
 enum WorkflowEditorPolicy {
+    static let actionCatalog: [SavedWorkflowAction] = [
+        .removeNonEnglishSubtitles,
+        .removeRedundantEnglishSDH,
+        .removeSegmentTitle,
+    ]
+
     static func newWorkflow() -> SavedWorkflow {
         SavedWorkflow(
             name: "New Workflow",
@@ -523,6 +623,25 @@ enum WorkflowEditorPolicy {
                 SavedWorkflowStep(isEnabled: $0.isEnabled, action: $0.action)
             }
         )
+    }
+
+    static func availableActions(for workflow: SavedWorkflow) -> [SavedWorkflowAction] {
+        let existing = Set(workflow.steps.map(\.action))
+        return actionCatalog.filter { !existing.contains($0) }
+    }
+
+    @discardableResult
+    static func add(_ action: SavedWorkflowAction, to workflow: inout SavedWorkflow) -> Bool {
+        guard availableActions(for: workflow).contains(action) else { return false }
+        workflow.steps.append(SavedWorkflowStep(action: action))
+        return true
+    }
+
+    @discardableResult
+    static func removeStep(at index: Int, from workflow: inout SavedWorkflow) -> Bool {
+        guard workflow.steps.indices.contains(index) else { return false }
+        workflow.steps.remove(at: index)
+        return true
     }
 
     static func exportFilename(for workflow: SavedWorkflow) -> String {

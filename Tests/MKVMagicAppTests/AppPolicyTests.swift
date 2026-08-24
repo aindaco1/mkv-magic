@@ -1372,6 +1372,86 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testWorkflowBuilderAddsAndRemovesAvailableCardsWithoutDuplicates() throws {
+        let workflow = SavedWorkflow(
+            name: "Custom cleanup",
+            steps: [SavedWorkflowStep(action: .removeNonEnglishSubtitles)]
+        )
+        let controller = WorkflowWindowController(
+            workflows: [workflow],
+            hasSelectedAsset: true,
+            onSave: { _ in },
+            onUse: { _ in }
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let stepTable = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first {
+                $0.rowHeight == 62
+            }
+        )
+        let addStep = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first
+        )
+        let removeStep = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Remove Step" }
+        )
+        let existing = try XCTUnwrap(
+            addStep.item(withTitle: SavedWorkflowAction.removeNonEnglishSubtitles.displayName)
+        )
+        let available = try XCTUnwrap(
+            addStep.item(withTitle: SavedWorkflowAction.removeSegmentTitle.displayName)
+        )
+
+        XCTAssertEqual(stepTable.numberOfRows, 1)
+        XCTAssertFalse(existing.isEnabled)
+        XCTAssertTrue(available.isEnabled)
+        XCTAssertNil(addStep.item(withTitle: SavedWorkflowAction.englishLibraryCleanup.displayName))
+        XCTAssertTrue(
+            NSApplication.shared.sendAction(
+                try XCTUnwrap(available.action),
+                to: available.target,
+                from: available
+            )
+        )
+        XCTAssertEqual(stepTable.numberOfRows, 2)
+        XCTAssertFalse(available.isEnabled)
+        XCTAssertTrue(removeStep.isEnabled)
+
+        removeStep.performClick(nil)
+        XCTAssertEqual(stepTable.numberOfRows, 1)
+        XCTAssertTrue(available.isEnabled)
+
+        removeStep.performClick(nil)
+        XCTAssertEqual(stepTable.numberOfRows, 0)
+        XCTAssertTrue(addStep.isEnabled)
+        XCTAssertFalse(removeStep.isEnabled)
+        XCTAssertTrue(existing.isEnabled)
+        XCTAssertFalse(
+            try XCTUnwrap(buttons(in: content).first { $0.title == "Save & Preview" }).isEnabled
+        )
+    }
+
+    func testWorkflowEditorPolicyCatalogAndMutationsAreBounded() {
+        var workflow = SavedWorkflow(name: "Blank", steps: [])
+
+        XCTAssertEqual(
+            WorkflowEditorPolicy.availableActions(for: workflow),
+            [
+                .removeNonEnglishSubtitles,
+                .removeRedundantEnglishSDH,
+                .removeSegmentTitle,
+            ]
+        )
+        XCTAssertTrue(WorkflowEditorPolicy.add(.removeSegmentTitle, to: &workflow))
+        XCTAssertFalse(WorkflowEditorPolicy.add(.removeSegmentTitle, to: &workflow))
+        XCTAssertFalse(WorkflowEditorPolicy.add(.englishLibraryCleanup, to: &workflow))
+        XCTAssertEqual(workflow.steps.map(\.action), [.removeSegmentTitle])
+        XCTAssertFalse(WorkflowEditorPolicy.removeStep(at: -1, from: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
+        XCTAssertTrue(workflow.steps.isEmpty)
+    }
+
+    @MainActor
     func testWorkflowPlanReviewShowsAppliedSkippedAndDisabledStepsAtMinimumSize() throws {
         let workflow = SavedWorkflow(
             name: "Prepare for Jellyfin",
