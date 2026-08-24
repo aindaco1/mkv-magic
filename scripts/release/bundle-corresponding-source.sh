@@ -59,6 +59,7 @@ nasm_version="$(jq -r '.nasm.version' "$sources")"
 svtav1_version="$(jq -r '.svtav1.version' "$sources")"
 dav1d_version="$(jq -r '.dav1d.version' "$sources")"
 opus_version="$(jq -r '.opus.version' "$sources")"
+zimg_version="$(jq -r '.zimg.version' "$sources")"
 mkvtoolnix_version="$(jq -r '.mkvtoolnix.version' "$sources")"
 qt_version="$(jq -r '.qtbase.version' "$sources")"
 copy_verified_source \
@@ -76,6 +77,9 @@ copy_verified_source \
 copy_verified_source \
     "$cache_root/opus-$opus_version/opus-$opus_version.tar.gz" \
     "$(jq -r '.opus.sha256' "$sources")"
+copy_verified_source \
+    "$cache_root/zimg-$zimg_version/zimg-release-$zimg_version.tar.gz" \
+    "$(jq -r '.zimg.sha256' "$sources")"
 copy_verified_source \
     "$cache_root/mkvtoolnix-$mkvtoolnix_version/mkvtoolnix-$mkvtoolnix_version.tar.xz" \
     "$(jq -r '.mkvtoolnix.sourceSha256' "$sources")"

@@ -63,6 +63,18 @@ does not expose FFmpeg's experimental native Opus encoder. The Opus license is
 included in every tool bundle, and the matching source archive is included in
 corresponding source releases.
 
+## zimg 3.0.6
+
+- Project: https://github.com/sekrit-twc/zimg
+- License: WTFPL
+- Purpose: PQ-aware colorspace conversion through FFmpeg's `zscale` filter
+- Distribution: architecture-specific static library linked into `ffmpeg`
+
+MKV Magic builds separate checksum-pinned ARM64 and x86_64 static libraries.
+The zimg license is included in every tool bundle, and the matching source
+archive is included in corresponding source releases. No zimg dynamic library
+is loaded at runtime.
+
 ## MKVToolNix 100.0
 
 - Project: https://codeberg.org/mbunkus/mkvtoolnix

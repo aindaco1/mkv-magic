@@ -139,6 +139,25 @@ if [[ -d "$tool_root" ]]; then
     jq --argjson component "$opus_component" \
         '.components += [$component]' "$temporary" > "$temporary.next"
     mv "$temporary.next" "$temporary"
+    zimg_component="$(
+        jq -c '
+          .zimg | {
+            type: "library",
+            name: "zimg",
+            version: .version,
+            purl: ("pkg:github/sekrit-twc/zimg@release-" + .version),
+            hashes: [{alg: "SHA-256", content: .sha256}],
+            licenses: [{license: {id: .license}}],
+            externalReferences: [{type: "distribution", url: .url}],
+            properties: [
+              {name: "mkv-magic:linkage", value: "static-in-ffmpeg"}
+            ]
+          }
+        ' "$sources"
+    )"
+    jq --argjson component "$zimg_component" \
+        '.components += [$component]' "$temporary" > "$temporary.next"
+    mv "$temporary.next" "$temporary"
 fi
 jq -S . "$temporary" > "$output"
 chmod 0644 "$output"

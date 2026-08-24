@@ -19,6 +19,9 @@ dav1d_url="https://code.videolan.org/videolan/dav1d/-/archive/$dav1d_version/dav
 opus_version=1.6.1
 opus_sha256=6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
 opus_url="https://downloads.xiph.org/releases/opus/opus-$opus_version.tar.gz"
+zimg_version=3.0.6
+zimg_sha256=be89390f13a5c9b2388ce0f44a5e89364a20c1c57ce46d382b1fcc3967057577
+zimg_url="https://github.com/sekrit-twc/zimg/archive/refs/tags/release-$zimg_version.tar.gz"
 mkvtoolnix_version=100.0
 mkvtoolnix_dmg_sha256=114e85cd42f3b0ea7ea0e194c5409d66dfdd49f4663a9d572009fd312dd279f1
 mkvtoolnix_dmg_url="https://mkvtoolnix.download/macos/releases/$mkvtoolnix_version/MKVToolNix-$mkvtoolnix_version-1-universal.dmg"
@@ -70,6 +73,7 @@ nasm_archive="$cache_root/nasm-$nasm_version/nasm-$nasm_version.tar.xz"
 svtav1_archive="$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz"
 dav1d_archive="$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.bz2"
 opus_archive="$cache_root/opus-$opus_version/opus-$opus_version.tar.gz"
+zimg_archive="$cache_root/zimg-$zimg_version/zimg-release-$zimg_version.tar.gz"
 mkvtoolnix_dmg="$cache_root/mkvtoolnix-$mkvtoolnix_version/MKVToolNix-$mkvtoolnix_version-1-universal.dmg"
 mkvtoolnix_source="$cache_root/mkvtoolnix-$mkvtoolnix_version/mkvtoolnix-$mkvtoolnix_version.tar.xz"
 qtbase_archive="$cache_root/qtbase-$qt_version/qtbase-everywhere-src-$qt_version.tar.xz"
@@ -78,6 +82,7 @@ download_verified "$nasm_url" "$nasm_sha256" "$nasm_archive"
 download_verified "$svtav1_url" "$svtav1_sha256" "$svtav1_archive"
 download_verified "$dav1d_url" "$dav1d_sha256" "$dav1d_archive"
 download_verified "$opus_url" "$opus_sha256" "$opus_archive"
+download_verified "$zimg_url" "$zimg_sha256" "$zimg_archive"
 download_verified "$mkvtoolnix_dmg_url" "$mkvtoolnix_dmg_sha256" "$mkvtoolnix_dmg"
 download_verified "$mkvtoolnix_source_url" "$mkvtoolnix_source_sha256" "$mkvtoolnix_source"
 download_verified "$qtbase_url" "$qtbase_sha256" "$qtbase_archive"
@@ -160,7 +165,7 @@ attached=0
 # Universal static library, and separate prefixes also prevent cross-slice
 # contamination. The library is linked statically into FFmpeg and is not a
 # separately loaded runtime dependency.
-for required_command in cmake meson ninja pkg-config; do
+for required_command in autoreconf cmake meson ninja pkg-config; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         echo "missing required runtime-build command: $required_command" >&2
         exit 1
@@ -314,9 +319,52 @@ for architecture in arm64 x86_64; do
     fi
 done
 
+# Build zimg as one static library per architecture. FFmpeg's zscale filter uses
+# it for explicit PQ/linear/BT.709 conversion; it is never loaded dynamically.
+for architecture in arm64 x86_64; do
+    zimg_source="$build_root/zimg-$architecture"
+    zimg_prefix="$build_root/zimg-install-$architecture"
+    mkdir "$zimg_source"
+    tar -xzf "$zimg_archive" -C "$zimg_source" --strip-components 1
+    if [[ "$architecture" == arm64 ]]; then
+        zimg_host=arm64-apple-darwin
+    else
+        zimg_host=x86_64-apple-darwin
+    fi
+    (
+        cd "$zimg_source"
+        ./autogen.sh > "$build_root/zimg-$architecture-autogen.log"
+        CC="$clang" \
+        CXX="$clangxx" \
+        AR="$ar" \
+        RANLIB="$ranlib" \
+        CFLAGS="-arch $architecture -mmacosx-version-min=13.0 -isysroot $sdk_root -O2" \
+        CXXFLAGS="-arch $architecture -mmacosx-version-min=13.0 -isysroot $sdk_root -O2" \
+        LDFLAGS="-arch $architecture -mmacosx-version-min=13.0 -isysroot $sdk_root" \
+            ./configure \
+                --host="$zimg_host" \
+                --prefix="$zimg_prefix" \
+                --disable-shared \
+                --enable-static \
+                --disable-testapp \
+                --disable-example \
+                --disable-unit-test \
+                > "$build_root/zimg-$architecture-configure.log"
+        make -j"$(sysctl -n hw.ncpu)" \
+            > "$build_root/zimg-$architecture-build.log"
+        make install >> "$build_root/zimg-$architecture-build.log"
+    )
+    zimg_library="$zimg_prefix/lib/libzimg.a"
+    if [[ ! -f "$zimg_library" || -L "$zimg_library" || \
+          "$(lipo -archs "$zimg_library")" != "$architecture" ]]; then
+        echo "invalid $architecture zimg static library" >&2
+        exit 1
+    fi
+done
+
 # Build static FFmpeg/FFprobe for each runtime architecture with no network
 # protocols or ambient package discovery. The enabled external libraries come
-# only from the checksum-pinned SVT-AV1, dav1d, and Opus prefixes selected
+# only from the checksum-pinned SVT-AV1, dav1d, Opus, and zimg prefixes selected
 # through a constrained pkg-config search path. The x86_64 build retains
 # optimized NASM paths.
 ffmpeg_flags=(
@@ -347,6 +395,7 @@ ffmpeg_flags=(
     --enable-libdav1d
     --enable-libopus
     --enable-libsvtav1
+    --enable-libzimg
     --enable-optimizations
     --enable-pic
 )
@@ -365,10 +414,11 @@ for architecture in arm64 x86_64; do
     svt_prefix="$build_root/svt-av1-install-$architecture"
     dav1d_prefix="$build_root/dav1d-install-$architecture"
     opus_prefix="$build_root/opus-install-$architecture"
+    zimg_prefix="$build_root/zimg-install-$architecture"
     (
         cd "$source_root"
         PATH="$nasm_prefix/bin:/usr/bin:/bin" \
-        PKG_CONFIG_LIBDIR="$svt_prefix/lib/pkgconfig:$dav1d_prefix/lib/pkgconfig:$opus_prefix/lib/pkgconfig" \
+        PKG_CONFIG_LIBDIR="$svt_prefix/lib/pkgconfig:$dav1d_prefix/lib/pkgconfig:$opus_prefix/lib/pkgconfig:$zimg_prefix/lib/pkgconfig" \
         PKG_CONFIG_PATH='' \
             ./configure "${ffmpeg_flags[@]}" "${architecture_flags[@]}" \
             > "$build_root/ffmpeg-$architecture-configure.log"
@@ -411,6 +461,9 @@ tar -xOjf "$dav1d_archive" "dav1d-$dav1d_version/COPYING" \
 mkdir "$output_root/Licenses/Opus"
 tar -xOf "$opus_archive" "opus-$opus_version/COPYING" \
     > "$output_root/Licenses/Opus/COPYING"
+mkdir "$output_root/Licenses/zimg"
+tar -xOf "$zimg_archive" "zimg-release-$zimg_version/COPYING" \
+    > "$output_root/Licenses/zimg/COPYING"
 mkdir "$output_root/Licenses/Qt"
 tar -xJf "$qtbase_archive" -C "$output_root/Licenses/Qt" \
     --strip-components 1 "qtbase-everywhere-src-$qt_version/LICENSES"
@@ -419,7 +472,8 @@ chmod 0644 "$output_root/Licenses/FFmpeg-GPLv3.txt" \
     "$output_root/Licenses/SVT-AV1/LICENSE.md" \
     "$output_root/Licenses/SVT-AV1/PATENTS.md" \
     "$output_root/Licenses/dav1d/COPYING" \
-    "$output_root/Licenses/Opus/COPYING"
+    "$output_root/Licenses/Opus/COPYING" \
+    "$output_root/Licenses/zimg/COPYING"
 find "$output_root/Licenses/Qt" -type f -exec chmod 0644 {} +
 
 for architecture in arm64 x86_64; do
@@ -477,6 +531,9 @@ jq -n \
     --arg opusVersion "$opus_version" \
     --arg opusURL "$opus_url" \
     --arg opusSha256 "$opus_sha256" \
+    --arg zimgVersion "$zimg_version" \
+    --arg zimgURL "$zimg_url" \
+    --arg zimgSha256 "$zimg_sha256" \
     --arg mkvVersion "$mkvtoolnix_version" \
     --arg mkvDMGURL "$mkvtoolnix_dmg_url" \
     --arg mkvDMGSha256 "$mkvtoolnix_dmg_sha256" \
@@ -506,7 +563,8 @@ jq -n \
           "--enable-audiotoolbox",
           "--enable-libdav1d",
           "--enable-libopus",
-          "--enable-libsvtav1"
+          "--enable-libsvtav1",
+          "--enable-libzimg"
         ]
       },
       nasm: {version: $nasmVersion, url: $nasmURL, sha256: $nasmSha256, buildOnly: true, license: "BSD-2-Clause"},
@@ -554,6 +612,20 @@ jq -n \
         ],
         license: "BSD-3-Clause"
       },
+      zimg: {
+        version: $zimgVersion,
+        url: $zimgURL,
+        sha256: $zimgSha256,
+        linkedStatically: true,
+        build: [
+          "disable_shared=true",
+          "enable_static=true",
+          "disable_testapp=true",
+          "disable_example=true",
+          "disable_unit_test=true"
+        ],
+        license: "WTFPL"
+      },
       mkvtoolnix: {version: $mkvVersion, binaryURL: $mkvDMGURL, binarySha256: $mkvDMGSha256, sourceURL: $mkvSourceURL, sourceSha256: $mkvSourceSha256, license: "GPL-2.0-or-later"},
       qtbase: {version: $qtVersion, url: $qtURL, sha256: $qtSha256, license: "LGPL-3.0-only"}
     }' > "$output_root/SOURCES.json"
@@ -584,7 +656,7 @@ for architecture in arm64 x86_64; do
         fi
     done
     filters="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -filters)"
-    for filter in aformat anullsrc apad aresample asetpts atrim channelmap concat format pad psnr scale setpts setsar tpad trim; do
+    for filter in aformat anullsrc apad aresample asetpts atrim channelmap concat format pad psnr scale setpts setsar tonemap tpad trim zscale; do
         if ! grep -Eq "[[:space:]]${filter}[[:space:]]" <<< "$filters"; then
             echo "missing required $architecture FFmpeg filter: $filter" >&2
             exit 1

@@ -19,7 +19,9 @@ verification. A checksum-pinned libopus encoder is statically linked for stable
 Opus audio output; AC-3, E-AC-3, and FLAC use FFmpeg's maintained encoders and
 are likewise offered only after a local smoke encode. Statically linked dav1d
 software decoding lets Macs without AV1 decode hardware reopen AV1 inputs and
-MKV Magic outputs. If software AV1 cannot
+MKV Magic outputs. Statically linked zimg provides the PQ-aware `zscale` filter
+needed for locally verified HDR-to-SDR conversion without adding a dynamic
+runtime dependency. If software AV1 cannot
 complete the local encode probe, it is not offered; a verified hardware HEVC
 path remains the preferred faster fallback on older Intel Macs.
 
