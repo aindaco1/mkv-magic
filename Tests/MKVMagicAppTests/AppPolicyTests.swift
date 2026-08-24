@@ -17,6 +17,12 @@ private final class FakeUpdateChecker: UpdateChecking {
     }
 }
 
+private struct FixedAppQueueEnvironmentReader: MediaQueueSchedulingEnvironmentReading {
+    let environment: MediaQueueSchedulingEnvironment
+
+    func read() -> MediaQueueSchedulingEnvironment { environment }
+}
+
 final class AppPolicyTests: XCTestCase {
     @MainActor
     func testAppDelegateAcceptsNarrowUpdateAdapter() {
@@ -26,10 +32,25 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
-    func testAppDelegateCreatesVisibleUsableMainWindow() throws {
+    func testAppDelegateCreatesVisibleUsableMainWindow() async throws {
         _ = NSApplication.shared
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-launch-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let queueStore = try JSONJobQueueStore(
+            fileURL: root.appendingPathComponent("job-queue.json")
+        )
+        let model = AppModel(
+            queueStoreFactory: { queueStore },
+            queueEnvironmentReader: FixedAppQueueEnvironmentReader(
+                environment: .init(isOnBattery: false, thermalPressure: .critical)
+            )
+        )
         let checker = FakeUpdateChecker()
-        let delegate = AppDelegate(updateController: checker)
+        let delegate = AppDelegate(model: model, updateController: checker)
 
         delegate.applicationDidFinishLaunching(
             Notification(name: NSApplication.didFinishLaunchingNotification)
@@ -44,6 +65,9 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(window.minSize.width, 820)
         XCTAssertEqual(window.minSize.height, 520)
         XCTAssertTrue(window.contentViewController is MainViewController)
+        await delegate.waitForInitialQueueCycle()
+        let queueSnapshot = try await queueStore.load()
+        XCTAssertTrue(queueSnapshot.jobs.isEmpty)
     }
 
     func testBundledToolVerificationUsesOnlyVersionArguments() {
@@ -1429,7 +1453,9 @@ final class AppPolicyTests: XCTestCase {
         let controls = buttons(in: content)
         XCTAssertNotNil(controls.first { $0.title == "Pause Automatic Starts" })
         let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
-        XCTAssertTrue(labels.contains { $0.contains("Verify & Run remains an explicit start") })
+        XCTAssertTrue(labels.contains { $0.contains("Add to Queue saves a reviewed workflow") })
+        XCTAssertTrue(
+            labels.contains { $0.contains("Verify & Run remains an explicit immediate start") })
         XCTAssertEqual(QueuePresentation.stateLabel(running.state), "Running")
         XCTAssertEqual(QueuePresentation.resourceLabel(failed.resourceClass), "Audio encode")
         XCTAssertEqual(
@@ -2618,6 +2644,16 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(buttons(in: controller.view).contains { $0.title == "Trim…" })
         XCTAssertTrue(
             buttons(in: controller.view).contains { $0.title == "Encoding Test…" }
+        )
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Add to Queue" && !button.isEnabled
+            }
+        )
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Verify & Run" && !button.isEnabled
+            }
         )
     }
 

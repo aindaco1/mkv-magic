@@ -2,11 +2,16 @@ import AppKit
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private let model = AppModel()
+    private let model: AppModel
     private let updateController: UpdateChecking
     private var windowController: NSWindowController?
+    private var automaticQueueTask: Task<Void, Never>?
 
-    init(updateController: UpdateChecking = AppUpdateController()) {
+    init(
+        model: AppModel = AppModel(),
+        updateController: UpdateChecking = AppUpdateController()
+    ) {
+        self.model = model
         self.updateController = updateController
         super.init()
     }
@@ -26,6 +31,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        automaticQueueTask = Task { await model.runAutomaticQueueCycleIfEligible() }
+    }
+
+    func waitForInitialQueueCycle() async {
+        await automaticQueueTask?.value
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        automaticQueueTask?.cancel()
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

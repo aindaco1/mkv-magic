@@ -9,6 +9,7 @@ public enum SavedWorkflowExecutionError: Error, Equatable, Sendable {
     case noOperations
     case missingExternalSubtitleInput
     case mismatchedExternalSubtitleInput
+    case sourceChangedSinceReview
     case committedOutputAuditFailed(outputURL: URL, reason: String)
 }
 
@@ -23,6 +24,8 @@ extension SavedWorkflowExecutionError: LocalizedError {
             "This workflow requires the reviewed external subtitle input."
         case .mismatchedExternalSubtitleInput:
             "The external subtitle changed between workflow preview and execution."
+        case .sourceChangedSinceReview:
+            "The source changed after review. Review the workflow again."
         case .committedOutputAuditFailed(let outputURL, let reason):
             "The verified copy was saved as \(outputURL.lastPathComponent), but its final reopen "
                 + "audit failed: \(reason)"
@@ -62,6 +65,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
+        expectedSourceRevision: MediaFileRevision? = nil,
         destinationURL: URL,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
@@ -104,6 +108,22 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
         }
 
+        let executionRevision: MediaFileRevision
+        do {
+            executionRevision = try MediaFileRevisionReader().read(source.sourceURL)
+        } catch {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
+        }
+        guard expectedSourceRevision == nil || expectedSourceRevision == executionRevision else {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
+        }
+        let validateSource: @Sendable () throws -> Void = {
+            guard (try? MediaFileRevisionReader().read(source.sourceURL)) == executionRevision
+            else {
+                throw SavedWorkflowExecutionError.sourceChangedSinceReview
+            }
+        }
+
         return try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: source,
             destinationURL: destinationURL,
@@ -136,6 +156,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                     )
                 }
             },
+            validateSource: validateSource,
             committedAuditError: { outputURL, reason in
                 SavedWorkflowExecutionError.committedOutputAuditFailed(
                     outputURL: outputURL,

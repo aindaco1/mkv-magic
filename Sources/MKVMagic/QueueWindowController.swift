@@ -90,7 +90,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let help = NSTextField(
             wrappingLabelWithString:
-                "Pause stops automatic starts; Verify & Run remains an explicit start. Work already running continues to its next safe boundary. Interrupted or failed jobs must be reviewed again before retry."
+                "Add to Queue saves a reviewed workflow for automatic starts. Pause blocks new automatic starts; Verify & Run remains an explicit immediate start. Work already running continues to its next safe boundary. Interrupted or failed jobs must be reviewed again before retry."
         )
         help.textColor = .secondaryLabelColor
 
@@ -362,7 +362,7 @@ enum QueuePresentation {
 
     static func summary(_ snapshot: MediaQueueSnapshot) -> String {
         guard !snapshot.jobs.isEmpty else {
-            return "No queued jobs. Saved workflows will appear here after Verify & Run."
+            return "No queued jobs. Review a saved workflow, then choose Add to Queue."
         }
         let active = snapshot.jobs.filter { $0.state == .running || $0.state == .cancelling }.count
         let pending = snapshot.jobs.filter { $0.state.isPending }.count

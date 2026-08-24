@@ -8,6 +8,10 @@ later unattended scheduler.
 The later
 [Trash-after-verified-success slice](M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md)
 adds the opt-in source disposition while preserving this slice's commit boundary.
+The later
+[automatic saved-workflow queue slice](M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md)
+adds **Add to Queue** and app-driven admission while preserving the explicit
+**Verify & Run** path documented here.
 
 ## Verified execution boundary
 

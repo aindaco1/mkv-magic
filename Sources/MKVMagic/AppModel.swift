@@ -124,8 +124,10 @@ final class AppModel {
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
     private let queueStoreFactory: @Sendable () throws -> any JobQueueManaging
+    private let queueEnvironmentReader: any MediaQueueSchedulingEnvironmentReading
     private let trashSource: (URL) throws -> Void
     private var queueStore: (any JobQueueManaging)?
+    private var queueAdmissionCoordinator: MediaQueueAdmissionCoordinator?
     private var queueRecoveryStarted = false
     private let encodingBenchmarkStoreFactory:
         @Sendable () throws -> any EncodingBenchmarkPersisting
@@ -140,6 +142,8 @@ final class AppModel {
         queueStoreFactory: @escaping @Sendable () throws -> any JobQueueManaging = {
             try AppHistoryLocation.makeQueueStore()
         },
+        queueEnvironmentReader: any MediaQueueSchedulingEnvironmentReading =
+            SystemMediaQueueSchedulingEnvironmentReader(),
         trashSource: @escaping (URL) throws -> Void = { sourceURL in
             _ = try FileManager.default.trashItem(at: sourceURL, resultingItemURL: nil)
         },
@@ -151,6 +155,7 @@ final class AppModel {
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
         self.queueStoreFactory = queueStoreFactory
+        self.queueEnvironmentReader = queueEnvironmentReader
         self.trashSource = trashSource
         self.encodingBenchmarkStoreFactory = encodingBenchmarkStoreFactory
     }
@@ -233,6 +238,11 @@ final class AppModel {
     func setQueuePaused(_ paused: Bool) async throws -> MediaQueueSnapshot {
         let snapshot = try await queueRecorder().setPaused(paused, at: Date())
         queueDidChange?()
+        if !paused {
+            Task { [weak self] in
+                await self?.runAutomaticQueueCycleIfEligible()
+            }
+        }
         return snapshot
     }
 
@@ -265,6 +275,39 @@ final class AppModel {
             job.sourceDisposition == .trashAfterVerifiedSuccess
             ? .readWriteFile : .readOnlyFile
         return try SecurityScopedBookmarkCodec().resolve(input, access: access)
+    }
+
+    func runAutomaticQueueCycle() async throws -> MediaQueueSnapshot {
+        _ = try await loadQueue()
+        let coordinator = try automaticQueueCoordinator()
+        let report = try await coordinator.runCycle(
+            environment: queueEnvironmentReader.read(),
+            supports: MediaQueueAutomaticWorkflowPolicy.supports,
+            execute: { [weak self] admission in
+                guard let self else { throw CancellationError() }
+                return try await self.executeAutomaticQueueAdmission(admission)
+            }
+        )
+        let recovered = await recoverPendingSourceDispositions(in: report.snapshot)
+        queueDidChange?()
+        return recovered
+    }
+
+    func runAutomaticQueueCycleIfEligible() async {
+        do {
+            _ = try await runAutomaticQueueCycle()
+        } catch MediaQueueAdmissionCoordinatorError.cycleAlreadyRunning {
+            return
+        } catch {
+            state = .completedWithWarnings(
+                "Automatic queue starts are waiting: \(error.localizedDescription)"
+            )
+            didChange?()
+        }
+    }
+
+    func cancelAutomaticQueueJob(_ jobID: UUID) async {
+        await queueAdmissionCoordinator?.cancel(jobID: jobID)
     }
 
     func exportPrivacySafeSupportReport(
@@ -1219,6 +1262,29 @@ final class AppModel {
         )
     }
 
+    func enqueueSavedWorkflow(
+        _ workflow: CompiledSavedWorkflow,
+        recipe: SavedWorkflow,
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
+        retryingQueueJobID: UUID? = nil,
+        in asset: MediaAsset,
+        destinationURL: URL
+    ) async throws -> MediaQueueSnapshot {
+        guard workflow.externalSubtitleInput == nil else {
+            throw JobQueueStoreError.malformedQueue
+        }
+        let execution = try await prepareQueueExecution(
+            recipe: recipe,
+            plan: workflow.plan,
+            inputURLs: [asset.sourceURL],
+            destinationURL: destinationURL,
+            sourceDisposition: sourceDisposition,
+            retryingJobID: retryingQueueJobID
+        )
+        queueDidChange?()
+        return try await execution.recorder.load()
+    }
+
     @discardableResult
     func runSavedWorkflow(
         _ workflow: CompiledSavedWorkflow,
@@ -1439,7 +1505,8 @@ final class AppModel {
         in asset: MediaAsset,
         destinationURL: URL,
         edit: VerifiedEdit,
-        queueExecution: QueueExecution? = nil
+        queueExecution: QueueExecution? = nil,
+        expectedSourceRevision: MediaFileRevision? = nil
     ) async throws -> MediaAsset {
         let scopedURLs = ([asset.sourceURL, destinationURL] + edit.externalInputURLs).map {
             ($0, $0.startAccessingSecurityScopedResource())
@@ -1526,6 +1593,7 @@ final class AppModel {
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     externalSubtitleInput: workflow.externalSubtitleInput,
                     externalSubtitlePayload: externalSubtitlePayload,
+                    expectedSourceRevision: expectedSourceRevision,
                     destinationURL: destinationURL,
                     onStage: { stage in
                         try await Self.record(
@@ -1640,6 +1708,33 @@ final class AppModel {
         sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
     ) async throws -> QueueExecution {
+        let execution = try await prepareQueueExecution(
+            recipe: recipe,
+            plan: plan,
+            inputURLs: inputURLs,
+            destinationURL: destinationURL,
+            sourceDisposition: sourceDisposition,
+            retryingJobID: retryingJobID
+        )
+        _ = try await execution.recorder.transition(
+            jobID: execution.jobID,
+            to: .running,
+            at: Date(),
+            reason: nil
+        )
+        activeQueueJobID = execution.jobID
+        queueDidChange?()
+        return execution
+    }
+
+    private func prepareQueueExecution(
+        recipe: SavedWorkflow,
+        plan: ExecutionPlan,
+        inputURLs: [URL],
+        destinationURL: URL,
+        sourceDisposition: MediaQueueSourceDisposition,
+        retryingJobID: UUID?
+    ) async throws -> QueueExecution {
         _ = try await loadQueue()
         let recorder = try queueRecorder()
         let codec = SecurityScopedBookmarkCodec()
@@ -1680,14 +1775,6 @@ final class AppModel {
             _ = try await recorder.append(job, at: timestamp)
             jobID = job.id
         }
-        _ = try await recorder.transition(
-            jobID: jobID,
-            to: .running,
-            at: Date(),
-            reason: nil
-        )
-        activeQueueJobID = jobID
-        queueDidChange?()
         return QueueExecution(
             recorder: recorder,
             jobID: jobID,
@@ -1889,6 +1976,61 @@ final class AppModel {
         let recorder = try queueStoreFactory()
         queueStore = recorder
         return recorder
+    }
+
+    private func automaticQueueCoordinator() throws -> MediaQueueAdmissionCoordinator {
+        if let queueAdmissionCoordinator { return queueAdmissionCoordinator }
+        let coordinator = MediaQueueAdmissionCoordinator(store: try queueRecorder())
+        queueAdmissionCoordinator = coordinator
+        return coordinator
+    }
+
+    private func executeAutomaticQueueAdmission(
+        _ admission: MediaQueueAdmission
+    ) async throws -> MediaQueueAutomaticExecutionOutcome {
+        guard case .saved(let workflow) = admission.job.workflow,
+            let sourceURL = admission.inputURLs.first,
+            admission.inputURLs.count == 1,
+            let reviewedRevision = admission.job.inputs.first?.reviewedRevision
+        else {
+            return .needsReview
+        }
+        let exactRevision: MediaFileRevision
+        do {
+            exactRevision = try MediaFileRevisionReader().read(sourceURL)
+        } catch {
+            return .needsReview
+        }
+        guard exactRevision.atMillisecondPrecision == reviewedRevision else {
+            return .needsReview
+        }
+
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        let asset = try await inspector.inspect(sourceURL)
+        let compiled: CompiledSavedWorkflow
+        do {
+            compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+        } catch is SavedWorkflowCompilationError {
+            return .needsReview
+        }
+        guard compiled.plan.hasSameReviewedWork(as: admission.job.reviewedPlan),
+            (try? MediaFileRevisionReader().read(sourceURL)) == exactRevision
+        else {
+            return .needsReview
+        }
+        _ = try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: admission.outputURL,
+            edit: .saved(compiled, nil),
+            expectedSourceRevision: exactRevision
+        )
+        return .verifiedSuccess
     }
 
     private func beginHistory(

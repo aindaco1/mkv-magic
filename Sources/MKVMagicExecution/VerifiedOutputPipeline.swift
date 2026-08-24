@@ -16,10 +16,12 @@ struct VerifiedOutputPipeline<Inspector: MediaInspecting>: Sendable {
         preparation: VerifiedOutputPreparation,
         produce: @escaping @Sendable (URL) async throws -> Void,
         verify: @escaping @Sendable (MediaAsset) async throws -> Void,
+        validateSource: @escaping @Sendable () throws -> Void = {},
         committedAuditError: @escaping @Sendable (URL, String) -> any Error,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void
     ) async throws -> MediaAsset {
         try Task.checkCancellation()
+        try validateSource()
         let transaction = VerifiedOutputTransaction(
             sourceURL: source.sourceURL,
             destinationURL: destinationURL
@@ -32,15 +34,18 @@ struct VerifiedOutputPipeline<Inspector: MediaInspecting>: Sendable {
                 }
             try await produce(temporaryOutput)
             try Task.checkCancellation()
+            try validateSource()
             try await onStage(.verifying)
             try Task.checkCancellation()
             let temporaryAsset = try await inspector.inspect(temporaryOutput)
             try Task.checkCancellation()
             try await verify(temporaryAsset)
             try Task.checkCancellation()
+            try validateSource()
             try await transaction.markVerified()
             try await onStage(.committing)
             try Task.checkCancellation()
+            try validateSource()
             let committedURL = try await transaction.commit()
             do {
                 let committedAsset = try await inspector.inspect(committedURL)

@@ -4,6 +4,11 @@ This slice turns the pure queue scheduler and reviewed file revisions into one
 fail-closed automatic-admission contract. It deliberately stops before an app
 launch hook or production media executor is connected.
 
+The later
+[automatic saved-workflow queue slice](M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md)
+connects this contract to the app while preserving the limitations recorded
+below as historical scope for this foundation slice.
+
 ## Admission boundary
 
 For every scheduler-selected waiting job, the coordinator:

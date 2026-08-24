@@ -9,6 +9,10 @@ public enum MediaQueueAdmissionResolutionError: Error, Equatable, Sendable {
     case outputAlreadyExists
 }
 
+public enum MediaQueueAdmissionCoordinatorError: Error, Equatable, Sendable {
+    case cycleAlreadyRunning
+}
+
 public struct MediaQueueAdmission: Equatable, Sendable {
     public let job: MediaQueueJob
     public let inputURLs: [URL]
@@ -125,6 +129,10 @@ public actor MediaQueueAdmissionCoordinator {
     private let store: any JobQueueManaging
     private let scheduler: MediaQueueScheduler
     private let resolver: MediaQueueAdmissionResolver
+    private var activeExecutions = [
+        UUID: Task<MediaQueueAutomaticExecutionOutcome, Never>
+    ]()
+    private var isRunningCycle = false
 
     public init(
         store: any JobQueueManaging,
@@ -141,6 +149,15 @@ public actor MediaQueueAdmissionCoordinator {
         supports: @escaping SupportCheck,
         execute: @escaping Executor
     ) async throws -> MediaQueueAdmissionCycleReport {
+        guard !isRunningCycle else {
+            throw MediaQueueAdmissionCoordinatorError.cycleAlreadyRunning
+        }
+        isRunningCycle = true
+        defer {
+            for task in activeExecutions.values { task.cancel() }
+            activeExecutions.removeAll()
+            isRunningCycle = false
+        }
         var admissions = [MediaQueueAdmission]()
         var needsReviewJobIDs = [UUID]()
 
@@ -188,21 +205,32 @@ public actor MediaQueueAdmissionCoordinator {
         }
 
         var outcomes = [UUID: MediaQueueAutomaticExecutionOutcome]()
-        try await withThrowingTaskGroup(
-            of: (UUID, MediaQueueAutomaticExecutionOutcome).self
-        ) { group in
-            for admission in admissions {
-                group.addTask {
-                    let outcome = await Self.executeWithScopedAccess(
-                        admission,
-                        using: execute
-                    )
-                    return (admission.job.id, outcome)
+        let executions = admissions.map { admission in
+            let jobID = admission.job.id
+            return (
+                jobID,
+                Task { await Self.executeWithScopedAccess(admission, using: execute) }
+            )
+        }
+        for (jobID, execution) in executions {
+            activeExecutions[jobID] = execution
+        }
+        try await withTaskCancellationHandler {
+            try await withThrowingTaskGroup(
+                of: (UUID, MediaQueueAutomaticExecutionOutcome).self
+            ) { group in
+                for (jobID, execution) in executions {
+                    group.addTask { (jobID, await execution.value) }
+                }
+                for try await (jobID, outcome) in group {
+                    activeExecutions[jobID] = nil
+                    outcomes[jobID] = outcome
+                    try await record(outcome, for: jobID)
                 }
             }
-            for try await (jobID, outcome) in group {
-                outcomes[jobID] = outcome
-                try await record(outcome, for: jobID)
+        } onCancel: {
+            for (_, execution) in executions {
+                execution.cancel()
             }
         }
 
@@ -212,6 +240,10 @@ public actor MediaQueueAdmissionCoordinator {
             outcomes: outcomes,
             snapshot: try await store.load()
         )
+    }
+
+    public func cancel(jobID: UUID) {
+        activeExecutions[jobID]?.cancel()
     }
 
     private func record(

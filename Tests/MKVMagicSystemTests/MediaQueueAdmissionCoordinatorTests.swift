@@ -242,6 +242,97 @@ final class MediaQueueAdmissionCoordinatorTests: XCTestCase {
         XCTAssertTrue(report.snapshot.jobs.allSatisfy { $0.attemptCount == 1 })
     }
 
+    func testPerJobCancellationStopsTheExecutorAndConcurrentCycleIsRefused() async throws {
+        let job = try makeJob(
+            id: id(1),
+            name: "Cancellable",
+            sourceURL: makeSource("Cancellable.mkv"),
+            outputName: "Cancellable Output.mkv"
+        )
+        let store = try JSONJobQueueStore(fileURL: queueURL)
+        try await store.save(MediaQueueSnapshot(jobs: [job], updatedAt: job.updatedAt))
+        let recorder = AdmissionRecorder()
+        let coordinator = MediaQueueAdmissionCoordinator(store: store)
+        let cycle = Task {
+            try await coordinator.runCycle(
+                environment: .init(isOnBattery: false, thermalPressure: .nominal),
+                supports: { _ in true },
+                execute: { admission in
+                    await recorder.append(admission)
+                    try await Task.sleep(for: .seconds(5))
+                    return .verifiedSuccess
+                }
+            )
+        }
+        for _ in 0..<100 {
+            let currentAdmissions = await recorder.admissions
+            if !currentAdmissions.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let startedAdmissions = await recorder.admissions
+        XCTAssertEqual(startedAdmissions.map(\.job.id), [job.id])
+
+        do {
+            _ = try await coordinator.runCycle(
+                environment: .init(isOnBattery: false, thermalPressure: .nominal),
+                supports: { _ in true },
+                execute: { _ in .verifiedSuccess }
+            )
+            XCTFail("Expected overlapping cycle refusal")
+        } catch {
+            XCTAssertEqual(
+                error as? MediaQueueAdmissionCoordinatorError,
+                .cycleAlreadyRunning
+            )
+        }
+        await coordinator.cancel(jobID: job.id)
+        let report = try await cycle.value
+
+        XCTAssertEqual(report.outcomes, [job.id: .cancelled])
+        XCTAssertEqual(report.snapshot.jobs.first?.state, .cancelled)
+        XCTAssertEqual(
+            report.snapshot.jobs.first?.events.map(\.state),
+            [.waiting, .running, .cancelling, .cancelled]
+        )
+    }
+
+    func testCancellingTheCycleCancelsEveryAdmittedExecutor() async throws {
+        let job = try makeJob(
+            id: id(1),
+            name: "Cycle cancellation",
+            sourceURL: makeSource("Cycle Cancellation.mkv"),
+            outputName: "Cycle Cancellation Output.mkv"
+        )
+        let store = try JSONJobQueueStore(fileURL: queueURL)
+        try await store.save(MediaQueueSnapshot(jobs: [job], updatedAt: job.updatedAt))
+        let recorder = AdmissionRecorder()
+        let coordinator = MediaQueueAdmissionCoordinator(store: store)
+        let cycle = Task {
+            try await coordinator.runCycle(
+                environment: .init(isOnBattery: false, thermalPressure: .nominal),
+                supports: { _ in true },
+                execute: { admission in
+                    await recorder.append(admission)
+                    try await Task.sleep(for: .seconds(5))
+                    return .verifiedSuccess
+                }
+            )
+        }
+        for _ in 0..<100 {
+            let currentAdmissions = await recorder.admissions
+            if !currentAdmissions.isEmpty { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let startedAdmissions = await recorder.admissions
+        XCTAssertEqual(startedAdmissions.map(\.job.id), [job.id])
+
+        cycle.cancel()
+        let report = try await cycle.value
+
+        XCTAssertEqual(report.outcomes, [job.id: .cancelled])
+        XCTAssertEqual(report.snapshot.jobs.first?.state, .cancelled)
+    }
+
     private func makeSource(_ filename: String) throws -> URL {
         let url = rootURL.appendingPathComponent(filename)
         try Data([1, 2, 3]).write(to: url)

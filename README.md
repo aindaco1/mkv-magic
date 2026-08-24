@@ -244,23 +244,30 @@ running or cancelling work becomes **Needs Review** after relaunch and is never
 silently restarted. Its pure scheduler starts at most one video-heavy job,
 bounds audio-heavy and zero-encode lightweight work separately, stops new starts
 under serious thermal pressure, and reduces battery operation to one lightweight
-job. Saved-workflow **Verify & Run** now records fresh, narrow security-scoped
-bookmarks and the exact reviewed plan before starting tools, then advances the
-durable job through verified success, recoverable failure, or cooperative
-cancellation. Every newly reviewed queue input also stores a path-free file
-revision made from size, modification time, and filesystem identity. The shared
-resolver can require that exact revision before returning bookmark authority;
-legacy queue entries without one and files changed since review both fail
-closed. A system-layer admission coordinator now combines that check with the
-existing pause, queue-order, resource, battery, and thermal policy. It also
-requires an explicit executor capability check and an unused safe output before
-marking work **Running**, then persists verified success, failure, cancellation,
-or re-review. The app does not invoke that coordinator yet, so this is not a
-claim that unattended execution is connected. The native **Queue** window shows
-resource cost, status, and
-attempts; it offers hold/resume, pending reorder, cancel, review-again retry, and
-a persistent pause for future automatic starts. Opening the window refreshes
-current work without treating it as a relaunch interruption.
+job. After reviewing a saved workflow without an external subtitle, **Add to
+Queue** stores fresh, narrow security-scoped bookmarks and the exact reviewed
+plan as waiting work. MKV Magic takes a live macOS power and thermal snapshot on
+launch, after resume, and after queue authoring, then invokes the production
+admission coordinator. The coordinator combines the scheduler policy with an
+explicit workflow-capability check, unchanged input revisions, a writable
+destination, and an unused safe output before marking work **Running**.
+
+Automatic execution re-inspects the current MKV with the bundled tools and
+recompiles the portable recipe. The semantic plan must retain the same impact,
+ordered mechanisms, and summaries as the reviewed plan; ephemeral stage IDs do
+not create false mismatches. The exact source revision is checked again after
+inspection and throughout the verified output transaction, including
+immediately before commit. A verified result is reopened and audited before the
+queue records **Succeeded**. Changes, legacy entries without a revision,
+unsupported workflows, and unsafe destinations move to **Needs Review** without
+silently refreshing authority. Per-job cancellation reaches the supervised tool
+task. Saved-workflow **Verify & Run** remains a distinct immediate path even
+while automatic starts are paused.
+
+The native **Queue** window shows resource cost, status, and attempts; it offers
+hold/resume, pending reorder, cancel, review-again retry, and persistent pause.
+Opening the window refreshes current work without treating it as a relaunch
+interruption.
 
 Saved workflows also offer an opt-in **Move original video file to Trash after
 verified success** checkbox in the Save panel. It is off by default. Only the
@@ -277,10 +284,12 @@ pending follow-up. A source that has already disappeared is recorded as
 uncertain and is never falsely reported as successfully trashed; once any
 outcome is durable, later queue refreshes do not repeat the request.
 
-This is a user-operable execution bridge, not the completed automatic production
-scheduler: an explicit **Verify & Run** starts immediately even while automatic
-starts are paused, built-in quick actions are not queued yet, and battery/thermal
-admission plus unattended batch startup remain open. See
+This is the first narrowly supported automatic production path, not a background
+daemon: built-in quick actions and workflows requiring ephemeral external-
+subtitle review are not automatically queued; there is no watched folder,
+scheduled wake, helper process, or continuous power-state monitor. A blocked
+queue is reconsidered at the next launch, resume, or **Add to Queue** action.
+Long queue soak and physical Intel acceptance remain open. See
 [docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md)
 and
 [docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md](docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md),
@@ -289,7 +298,9 @@ with its relaunch outcome contract in
 and the automatic-admission input boundary in
 [docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md](docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md),
 followed by the coordinator foundation in
-[docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md](docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md).
+[docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md](docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md),
+and its app connection in
+[docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md).
 
 ## Design promises
 

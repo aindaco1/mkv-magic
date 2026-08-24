@@ -19,7 +19,8 @@ let package = Package(
         .target(name: "MKVMagicCore"),
         .target(
             name: "MKVMagicSystem",
-            dependencies: ["MKVMagicCore"]
+            dependencies: ["MKVMagicCore"],
+            linkerSettings: [.linkedFramework("IOKit")]
         ),
         .target(
             name: "MKVMagicMedia",

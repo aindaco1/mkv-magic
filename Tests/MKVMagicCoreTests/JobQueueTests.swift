@@ -4,6 +4,114 @@ import XCTest
 @testable import MKVMagicCore
 
 final class JobQueueTests: XCTestCase {
+    func testReviewedPlanComparisonIgnoresOnlyEphemeralStageIdentifiers() {
+        let impact = PlanImpact(
+            videoEncodeCount: 0,
+            audioEncodeCount: 0,
+            copiesVideo: true
+        )
+        let reviewed = ExecutionPlan(
+            stages: [
+                PlanStage(id: id(1), mechanism: .mkvPropEdit, summary: "Remove title"),
+                PlanStage(id: id(2), mechanism: .verify, summary: "Verify output"),
+            ],
+            impact: impact
+        )
+        let recompiled = ExecutionPlan(
+            stages: [
+                PlanStage(id: id(3), mechanism: .mkvPropEdit, summary: "Remove title"),
+                PlanStage(id: id(4), mechanism: .verify, summary: "Verify output"),
+            ],
+            impact: impact
+        )
+
+        XCTAssertNotEqual(reviewed, recompiled)
+        XCTAssertTrue(reviewed.hasSameReviewedWork(as: recompiled))
+        XCTAssertFalse(
+            reviewed.hasSameReviewedWork(
+                as: ExecutionPlan(
+                    stages: [
+                        PlanStage(mechanism: .mkvMerge, summary: "Remove title"),
+                        PlanStage(mechanism: .verify, summary: "Verify output"),
+                    ],
+                    impact: impact
+                )
+            )
+        )
+        XCTAssertFalse(
+            reviewed.hasSameReviewedWork(
+                as: ExecutionPlan(
+                    stages: [
+                        PlanStage(mechanism: .mkvPropEdit, summary: "Change title"),
+                        PlanStage(mechanism: .verify, summary: "Verify output"),
+                    ],
+                    impact: impact
+                )
+            )
+        )
+        XCTAssertFalse(
+            reviewed.hasSameReviewedWork(
+                as: ExecutionPlan(
+                    stages: recompiled.stages,
+                    impact: PlanImpact(
+                        videoEncodeCount: 1,
+                        audioEncodeCount: 0,
+                        copiesVideo: false
+                    )
+                )
+            )
+        )
+    }
+
+    func testAutomaticWorkflowPolicyRejectsInteractiveOrAmbiguousInputs() {
+        let supported = SavedWorkflow(
+            name: "Clean metadata",
+            steps: [SavedWorkflowStep(action: .removeSegmentTitle)]
+        )
+        let disabledInteractiveStep = SavedWorkflow(
+            name: "Disabled subtitle step",
+            steps: [
+                SavedWorkflowStep(isEnabled: false, action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 1))
+        XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(disabledInteractiveStep, inputCount: 1)
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 0))
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 2))
+
+        let builtInJob = makeJob(id: id(20), createdAt: Date(timeIntervalSince1970: 0))
+        let savedJob = MediaQueueJob(
+            id: id(21),
+            createdAt: builtInJob.createdAt,
+            workflow: .saved(supported),
+            inputs: builtInJob.inputs,
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(builtInJob))
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(savedJob))
+
+        for action in [
+            SavedWorkflowAction.addExternalSubtitle,
+            .cleanExternalSubtitleText,
+        ] {
+            XCTAssertFalse(
+                MediaQueueAutomaticWorkflowPolicy.supports(
+                    SavedWorkflow(
+                        name: "Interactive",
+                        steps: [SavedWorkflowStep(action: action)]
+                    ),
+                    inputCount: 1
+                )
+            )
+        }
+    }
+
     func testRetryableStateMachineCountsOnlyStartedAttemptsAndRequiresSafeFailureReason() throws {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         var job = makeJob(id: id(1), createdAt: base, videoEncodes: 1)

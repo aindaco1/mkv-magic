@@ -110,6 +110,25 @@ public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
     }
 }
 
+/// The deliberately narrow saved-workflow subset that can be admitted without
+/// another interactive review. Keep this policy shared by queue authoring and
+/// execution so the UI never promises automation the executor will reject.
+public enum MediaQueueAutomaticWorkflowPolicy {
+    public static func supports(_ workflow: SavedWorkflow, inputCount: Int) -> Bool {
+        guard inputCount == 1 else { return false }
+        return !workflow.steps.contains { step in
+            step.isEnabled
+                && (step.action == .addExternalSubtitle
+                    || step.action == .cleanExternalSubtitleText)
+        }
+    }
+
+    public static func supports(_ job: MediaQueueJob) -> Bool {
+        guard case .saved(let workflow) = job.workflow else { return false }
+        return supports(workflow, inputCount: job.inputs.count)
+    }
+}
+
 public enum MediaQueueSourceDisposition: String, Codable, CaseIterable, Hashable, Sendable {
     case keepOriginal
     case trashAfterVerifiedSuccess

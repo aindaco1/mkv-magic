@@ -30,6 +30,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    private struct DestinationSelection {
+        let url: URL
+        let sourceDisposition: MediaQueueSourceDisposition
+    }
+
     private enum PendingChange {
         case segmentTitle(String?)
         case track(TrackMetadataEdit)
@@ -112,6 +117,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
     private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
     private let joinButton = NSButton(title: "Join Files…", target: nil, action: nil)
+    private let queueButton = NSButton(title: "Add to Queue", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
@@ -399,10 +405,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         runButton.keyEquivalent = "\r"
         runButton.target = self
         runButton.action = #selector(runChange)
+        queueButton.isEnabled = false
+        queueButton.target = self
+        queueButton.action = #selector(addPendingWorkflowToQueue)
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let stack = NSStackView(views: [statusLabel, spacer, impactLabel, runButton])
+        let stack = NSStackView(views: [
+            statusLabel, spacer, impactLabel, queueButton, runButton,
+        ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
         stack.spacing = 16
@@ -477,6 +488,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                             to: state,
                             reason: reason
                         )
+                        if state == .cancelling {
+                            await model.cancelAutomaticQueueJob(jobID)
+                        }
                         if QueueExecutionControl.shouldCancelActiveTask(
                             jobID: jobID,
                             transition: state,
@@ -1065,6 +1079,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         pendingAssetID = assetID
         runButton.isEnabled = true
         runButton.toolTip = compiled.summaries.joined(separator: "; ")
+        updateQueueButton()
     }
 
     private func inspect(_ urls: [URL]) {
@@ -1645,6 +1660,142 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             clearPendingChange()
             return
         }
+        guard
+            let destination = chooseDestination(
+                for: pendingChange,
+                asset: asset,
+                prompt: "Save Verified Copy"
+            )
+        else { return }
+        disableEditingControls()
+        verifiedRunTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.verifiedRunTask = nil }
+            do {
+                let outputURL: URL
+                switch pendingChange {
+                case .segmentTitle(let title):
+                    outputURL = try await model.editSegmentTitle(
+                        in: asset,
+                        title: title,
+                        destinationURL: destination.url
+                    ).sourceURL
+                case .track(let edit):
+                    outputURL = try await model.editTrackMetadata(
+                        in: asset,
+                        edit: edit,
+                        destinationURL: destination.url
+                    ).sourceURL
+                case .trackRemoval(let removal, let isEnglishCleanup):
+                    if isEnglishCleanup {
+                        outputURL = try await model.cleanEnglishLibrary(
+                            in: asset,
+                            removal: removal,
+                            destinationURL: destination.url
+                        ).sourceURL
+                    } else {
+                        outputURL = try await model.removeTracks(
+                            in: asset,
+                            removal: removal,
+                            destinationURL: destination.url
+                        ).sourceURL
+                    }
+                case .savedWorkflow(let prepared):
+                    outputURL = try await model.runSavedWorkflow(
+                        prepared.compiled,
+                        recipe: prepared.recipe,
+                        externalSubtitlePayload: prepared.externalSubtitlePayload,
+                        sourceDisposition: destination.sourceDisposition,
+                        retryingQueueJobID: prepared.retryingQueueJobID,
+                        in: asset,
+                        destinationURL: destination.url
+                    ).sourceURL
+                case .subtitleCleanup(let preview, let restoringCueIDs):
+                    outputURL = try await model.cleanSubtitle(
+                        preview: preview,
+                        restoringCueIDs: restoringCueIDs,
+                        destinationURL: destination.url
+                    ).outputURL
+                case .advancedSubtitleCleanup(let preview, let restoringEventIDs):
+                    outputURL = try await model.cleanAdvancedSubtitle(
+                        preview: preview,
+                        restoringEventIDs: restoringEventIDs,
+                        destinationURL: destination.url
+                    ).outputURL
+                case .externalSubtitle(let preview, let metadata):
+                    outputURL = try await model.muxExternalSubtitle(
+                        in: asset,
+                        subtitlePreview: preview,
+                        metadata: metadata,
+                        destinationURL: destination.url
+                    ).sourceURL
+                case .embeddedSubtitle(let preview, let restoringIDs):
+                    outputURL = try await model.cleanEmbeddedSubtitle(
+                        preview: preview,
+                        restoringIDs: restoringIDs,
+                        destinationURL: destination.url
+                    ).sourceURL
+                case .chapters(let preview, let desired):
+                    outputURL = try await model.editChapters(
+                        preview: preview,
+                        desired: desired,
+                        destinationURL: destination.url
+                    ).sourceURL
+                }
+                preferredSelectionURL =
+                    model.assets.contains { $0.sourceURL == outputURL }
+                    ? outputURL : nil
+                clearPendingChange()
+                refresh()
+            } catch {
+                restoreEditingControls(for: asset)
+            }
+        }
+    }
+
+    @objc private func addPendingWorkflowToQueue() {
+        guard case .savedWorkflow(let prepared) = pendingChange,
+            MediaQueueAutomaticWorkflowPolicy.supports(prepared.recipe, inputCount: 1),
+            let asset = selectedAsset,
+            pendingAssetID == asset.id,
+            let destination = chooseDestination(
+                for: .savedWorkflow(prepared),
+                asset: asset,
+                prompt: "Add to Queue"
+            )
+        else {
+            updateQueueButton()
+            return
+        }
+        disableEditingControls()
+        verifiedRunTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.verifiedRunTask = nil }
+            do {
+                _ = try await model.enqueueSavedWorkflow(
+                    prepared.compiled,
+                    recipe: prepared.recipe,
+                    sourceDisposition: destination.sourceDisposition,
+                    retryingQueueJobID: prepared.retryingQueueJobID,
+                    in: asset,
+                    destinationURL: destination.url
+                )
+                statusLabel.stringValue = "Added \(prepared.recipe.name) to the queue"
+                clearPendingChange()
+                refreshOpenQueue()
+                await model.runAutomaticQueueCycleIfEligible()
+            } catch {
+                statusLabel.stringValue = "Could not add to queue: \(error.localizedDescription)"
+                restoreEditingControls(for: asset)
+            }
+        }
+    }
+
+    private func chooseDestination(
+        for pendingChange: PendingChange,
+        asset: MediaAsset,
+        prompt: String
+    ) -> DestinationSelection? {
         let panel = NSSavePanel()
         let isSubtitleCleanup: Bool
         switch pendingChange {
@@ -1670,7 +1821,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             isEmbeddedSubtitleCleanup = false
         }
         panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
-        panel.prompt = "Save Verified Copy"
+        panel.prompt = prompt
         panel.canCreateDirectories = true
         if isSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(
@@ -1699,8 +1850,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             panel.accessoryView = accessory.view
             sourceDispositionCheckbox = accessory.checkbox
         }
-        guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
+        guard panel.runModal() == .OK, let destinationURL = panel.url else { return nil }
+        return DestinationSelection(
+            url: destinationURL,
+            sourceDisposition: SourceDispositionPresentation.disposition(
+                for: sourceDispositionCheckbox
+            )
+        )
+    }
 
+    private func disableEditingControls() {
         previewButton.isEnabled = false
         editTrackButton.isEnabled = false
         cleanMKVButton.isEnabled = false
@@ -1709,106 +1868,24 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
         trimButton.isEnabled = false
+        queueButton.isEnabled = false
         runButton.isEnabled = false
-        verifiedRunTask = Task { [weak self] in
-            guard let self else { return }
-            defer { self.verifiedRunTask = nil }
-            do {
-                let outputURL: URL
-                switch pendingChange {
-                case .segmentTitle(let title):
-                    outputURL = try await model.editSegmentTitle(
-                        in: asset,
-                        title: title,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                case .track(let edit):
-                    outputURL = try await model.editTrackMetadata(
-                        in: asset,
-                        edit: edit,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                case .trackRemoval(let removal, let isEnglishCleanup):
-                    if isEnglishCleanup {
-                        outputURL = try await model.cleanEnglishLibrary(
-                            in: asset,
-                            removal: removal,
-                            destinationURL: destinationURL
-                        ).sourceURL
-                    } else {
-                        outputURL = try await model.removeTracks(
-                            in: asset,
-                            removal: removal,
-                            destinationURL: destinationURL
-                        ).sourceURL
-                    }
-                case .savedWorkflow(let prepared):
-                    let sourceDisposition = SourceDispositionPresentation.disposition(
-                        for: sourceDispositionCheckbox
-                    )
-                    outputURL = try await model.runSavedWorkflow(
-                        prepared.compiled,
-                        recipe: prepared.recipe,
-                        externalSubtitlePayload: prepared.externalSubtitlePayload,
-                        sourceDisposition: sourceDisposition,
-                        retryingQueueJobID: prepared.retryingQueueJobID,
-                        in: asset,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                case .subtitleCleanup(let preview, let restoringCueIDs):
-                    outputURL = try await model.cleanSubtitle(
-                        preview: preview,
-                        restoringCueIDs: restoringCueIDs,
-                        destinationURL: destinationURL
-                    ).outputURL
-                case .advancedSubtitleCleanup(let preview, let restoringEventIDs):
-                    outputURL = try await model.cleanAdvancedSubtitle(
-                        preview: preview,
-                        restoringEventIDs: restoringEventIDs,
-                        destinationURL: destinationURL
-                    ).outputURL
-                case .externalSubtitle(let preview, let metadata):
-                    outputURL = try await model.muxExternalSubtitle(
-                        in: asset,
-                        subtitlePreview: preview,
-                        metadata: metadata,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                case .embeddedSubtitle(let preview, let restoringIDs):
-                    outputURL = try await model.cleanEmbeddedSubtitle(
-                        preview: preview,
-                        restoringIDs: restoringIDs,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                case .chapters(let preview, let desired):
-                    outputURL = try await model.editChapters(
-                        preview: preview,
-                        desired: desired,
-                        destinationURL: destinationURL
-                    ).sourceURL
-                }
-                preferredSelectionURL =
-                    model.assets.contains { $0.sourceURL == outputURL }
-                    ? outputURL : nil
-                clearPendingChange()
-                refresh()
-            } catch {
-                previewButton.isEnabled = true
-                editTrackButton.isEnabled = asset.tracks.contains {
-                    $0.kind != .attachment && $0.uid != nil
-                }
-                removeTracksButton.isEnabled = TrackRemovalPresentation.canOfferRemoval(
-                    for: asset.tracks)
-                cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
-                cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
-                addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
-                chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
-                trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
-                runButton.isEnabled =
-                    self.pendingChange != nil
-                    && pendingAssetID == asset.id
-            }
+    }
+
+    private func restoreEditingControls(for asset: MediaAsset) {
+        previewButton.isEnabled = true
+        editTrackButton.isEnabled = asset.tracks.contains {
+            $0.kind != .attachment && $0.uid != nil
         }
+        removeTracksButton.isEnabled = TrackRemovalPresentation.canOfferRemoval(
+            for: asset.tracks)
+        cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
+        cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
+        addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+        chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+        trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
+        runButton.isEnabled = pendingChange != nil && pendingAssetID == asset.id
+        updateQueueButton()
     }
 
     private func reviewQueueJob(_ job: MediaQueueJob) {
@@ -1884,6 +1961,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             chaptersButton.isEnabled = false
             trimButton.isEnabled = false
             joinButton.isEnabled = false
+            queueButton.isEnabled = false
             runButton.isEnabled = false
         }
     }
@@ -2084,6 +2162,25 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         pendingAssetID = nil
         runButton.isEnabled = false
         runButton.toolTip = nil
+        updateQueueButton()
+    }
+
+    private func updateQueueButton() {
+        guard case .savedWorkflow(let prepared) = pendingChange,
+            MediaQueueAutomaticWorkflowPolicy.supports(prepared.recipe, inputCount: 1)
+        else {
+            queueButton.isEnabled = false
+            if case .savedWorkflow? = pendingChange {
+                queueButton.toolTip =
+                    "Automatic queueing currently supports saved workflows without an external subtitle."
+            } else {
+                queueButton.toolTip = nil
+            }
+            return
+        }
+        queueButton.isEnabled = true
+        queueButton.toolTip =
+            "Save this reviewed plan as waiting work, then let pause, power, thermal, and resource limits decide when it starts."
     }
 
     private static func canOfferEnglishCleanup(for asset: MediaAsset) -> Bool {

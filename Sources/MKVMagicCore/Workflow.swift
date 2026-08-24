@@ -103,4 +103,11 @@ public struct ExecutionPlan: Codable, Hashable, Sendable {
         self.stages = stages
         self.impact = impact
     }
+
+    public func hasSameReviewedWork(as other: Self) -> Bool {
+        guard impact == other.impact, stages.count == other.stages.count else { return false }
+        return zip(stages, other.stages).allSatisfy { lhs, rhs in
+            lhs.mechanism == rhs.mechanism && lhs.summary == rhs.summary
+        }
+    }
 }

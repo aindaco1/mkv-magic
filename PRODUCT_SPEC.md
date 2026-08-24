@@ -1148,13 +1148,32 @@ the job identity and attempt history. Queue recovery runs once per app launch,
 so opening or refreshing the window cannot reclassify current work as
 interrupted.
 
-Production automatic execution remains open. The coordinator contract is not
-yet invoked by the app, and no production executor callback or live battery and
-thermal adapter is connected. The current explicit **Verify & Run**
-path starts immediately and is intentionally distinguished in the UI from the
-persisted pause for future automatic starts. Built-in quick actions, unattended
-batch startup, queue authoring without an immediate run, and soak/physical-Intel
-acceptance also remain open.
+The first production automatic-execution subset is connected. After the user
+reviews a saved workflow with one MKV input and no external-subtitle card, **Add
+to Queue** persists it in **Waiting** without forcing an immediate start. On app
+launch, queue resume, and queue authoring, a macOS system adapter reads the
+IOKit power-source state and `ProcessInfo` thermal state and invokes the
+admission coordinator. Unknown power or thermal facts fail conservatively. A
+supported job must still resolve unchanged bookmark authority, target an unused
+safe output, re-inspect through the bundled tools, and recompile to the same
+reviewed impact and ordered semantic stages. Random compilation-stage IDs are
+ignored; mechanism, summary, order, and encode impact must match.
+
+The executor retains the exact full-precision source revision from immediately
+before inspection and checks it again after compilation, around temporary-output
+production and verification, and immediately before atomic commit. A changed
+source becomes **Needs Review**; no revision is silently refreshed. Verified
+success, failure, cancellation, and re-review remain durable coordinator
+outcomes, and successful automatic work receives the normal sanitized History
+record. Per-job cancellation reaches the automatic task and its supervised
+subprocess tree. The current explicit **Verify & Run** path remains an immediate
+user start and is intentionally distinct from persisted automatic pause.
+
+Built-in quick-action queueing, external-subtitle workflow reconstruction,
+watched folders, scheduled wakes, a background helper/daemon, continuous
+power-state monitoring, long queue soak, and physical-Intel acceptance remain
+open. A thermally or power-blocked queue is reconsidered at launch, resume, or
+the next **Add to Queue** action.
 
 The saved-workflow Save panel now exposes **Move original video file to Trash
 after verified success** as an off-by-default option. Selecting it grants write
