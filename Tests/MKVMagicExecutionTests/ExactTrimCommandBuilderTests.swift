@@ -77,8 +77,49 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         XCTAssertEqual(value(after: "-b:a:0", in: command.arguments), "192000")
         XCTAssertEqual(value(after: "-ar:a:0", in: command.arguments), "48000")
         XCTAssertEqual(value(after: "-ac:a:0", in: command.arguments), "2")
+        XCTAssertEqual(value(after: "-channel_layout:a:0", in: command.arguments), "stereo")
         XCTAssertEqual(command.encodedAudioTrackIDs, [1])
         XCTAssertEqual(command.copiedAudioTrackIDs, [])
+    }
+
+    func testEveryVerifiedAudioPresetCompilesOneBoundedLayoutPreservingEncode() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let cases: [(AudioTranscodePreset, String, String?)] = [
+            (.aacCompatibility, "aac_at", "192000"),
+            (.opusQuality, "libopus", "160000"),
+            (.ac3Compatibility, "ac3", "256000"),
+            (.eac3Compatibility, "eac3", "256000"),
+            (.flacLossless, "flac", nil),
+        ]
+        for (index, entry) in cases.enumerated() {
+            let plan = try resolve(
+                source: fixture.source,
+                choice: ExactTrimChoice(
+                    videoPreset: .h264Compatibility,
+                    videoRateControl: .averageBitrate(3_000_000),
+                    audioPolicy: ExactTrimAudioPolicy(preset: entry.0)
+                ),
+                range: range(1, 9),
+                presets: [.h264Compatibility],
+                audioPresets: Set(AudioTranscodePreset.allCases)
+            )
+            let command = try ExactTrimCommandBuilder().build(
+                resolvedPlan: plan,
+                capabilities: capabilities(),
+                outputURL: fixture.root.appendingPathComponent("Audio-\(index).mkv")
+            )
+            XCTAssertEqual(value(after: "-c:a:0", in: command.arguments), entry.1)
+            XCTAssertEqual(value(after: "-b:a:0", in: command.arguments), entry.2)
+            XCTAssertEqual(value(after: "-ar:a:0", in: command.arguments), "48000")
+            XCTAssertEqual(value(after: "-ac:a:0", in: command.arguments), "2")
+            XCTAssertEqual(value(after: "-channel_layout:a:0", in: command.arguments), "stereo")
+            XCTAssertEqual(command.encodedAudioTrackIDs, [1])
+            XCTAssertEqual(command.copiedAudioTrackIDs, [])
+            if entry.0 == .opusQuality {
+                XCTAssertEqual(value(after: "-application:a:0", in: command.arguments), "audio")
+            }
+        }
     }
 
     func testPassesReviewedAV1RFAndSpeedToTheSharedEncoderCompiler() throws {
@@ -213,14 +254,16 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         source: MediaAsset,
         choice: ExactTrimChoice,
         range: MediaTrimRange,
-        presets: Set<VideoPreset> = [.hevcCompatibility]
+        presets: Set<VideoPreset> = [.hevcCompatibility],
+        audioPresets: Set<AudioTranscodePreset> = [.aacCompatibility]
     ) throws -> ResolvedExactTrimPlan {
         try ExactTrimPlanner().resolve(
             source: source,
             range: range,
             choice: choice,
             availableVideoPresets: presets,
-            aacAvailable: true
+            aacAvailable: true,
+            availableAudioPresets: audioPresets
         )
     }
 
@@ -234,7 +277,14 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
             proResEncoder: nil,
             aac: .verified,
             aacEncoder: "aac_at",
-            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters,
+            audioCapabilities: [
+                .aacCompatibility: .init(status: .verified, encoder: "aac_at"),
+                .opusQuality: .init(status: .verified, encoder: "libopus"),
+                .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
+                .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
+                .flacLossless: .init(status: .verified, encoder: "flac"),
+            ]
         )
     }
 

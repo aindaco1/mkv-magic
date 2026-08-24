@@ -368,16 +368,23 @@ and every verified encoder remains selectable.
 
 #### Audio presets
 
-Audio is copied by default. Explicit AAC conversion uses Apple's AudioToolbox encoder when available and preserves sample rate and channel layout unless changed:
+Audio is copied by default. Exact Trim can explicitly encode once to AAC through
+AudioToolbox, stable libopus, AC-3, E-AC-3, or lossless FLAC. A format appears
+only after its local encoder smoke succeeds and every selected track has a known
+layout/sample rate that the target can represent without implicit downmix or
+rematrixing. Opus explicitly targets its standardized 48 kHz Matroska clock;
+other accepted Exact Trim inputs retain their sample rate.
 
-| Layout | Default AAC bitrate |
-|---|---:|
-| Mono | 96 kbps |
-| Stereo | 192 kbps |
-| 5.1 | 512 kbps |
-| 7.1 | 640 kbps |
+| Preset | Mono | Stereo | 3–6 channels | 7–8 channels |
+|---|---:|---:|---:|---:|
+| AAC | 96 kbps | 192 kbps | 384 kbps | 512 kbps when the exact layout is representable |
+| Opus | 96 kbps | 160 kbps | 384 kbps | 512 kbps |
+| AC-3 | 192 kbps | 256 kbps | 640 kbps | Not offered |
+| E-AC-3 | 192 kbps | 256 kbps | 768 kbps | Not offered |
+| FLAC | Lossless | Lossless | Lossless | Lossless |
 
-Opus, AC-3, E-AC-3, and lossless options remain available in Advanced settings when container compatibility permits.
+Common-format Join still defaults its encoded audio lanes to the reviewed AAC
+target until its per-lane advanced audio control slice is complete.
 
 #### Input and output containers
 
@@ -920,9 +927,12 @@ passed the active local capability probe, and compiles one FFmpeg invocation
 with one video generation. Strict BT.709 SDR and validated 10-bit static HDR10
 are executable; HDR10 uses only AV1 or HEVC and binds output verification to the
 exact inspected BT.2020/PQ, matrix, mastering-display, and content-light signal.
-Audio is packet-copied by default; explicit AAC
-conversion retains reviewed channel count, layout, and sample rate and encodes
-each audio track once. Output-side seeking applies the in-point to copied audio,
+Audio is packet-copied by default. Explicit AAC, Opus, AC-3, E-AC-3, and FLAC
+choices each encode a selected track once and retain the exact reviewed channel
+layout. Accepted AAC/AC-3/E-AC-3/FLAC rates remain unchanged; Opus declares a
+48 kHz output clock. Static layout/rate policy plus the active encoder probe hide
+unsafe choices rather than accepting FFmpeg's implicit downmix/rematrix behavior.
+Output-side seeking applies the in-point to copied audio,
 avoiding the pre-in packets retained by input-side accurate seeking. The executor
 preserves reviewed track metadata and attachments, replaces FFmpeg-generated
 statistics tags only after requiring a tag-free source, installs the clipped and
@@ -1006,10 +1016,14 @@ The runtime additionally requires FFmpeg's AC-3, E-AC-3, and FLAC encoders and
 statically links checksum-pinned stable libopus. The app capability probe smoke
 encodes AAC, Opus, AC-3, E-AC-3, and FLAC independently and fails each choice
 closed; FFmpeg's experimental native Opus encoder is never eligible. Packet copy
-remains the product default. User-facing typed audio choices, layout validation,
-single-generation command compilation, and output audit remain the next slice.
+remains the product default. Exact Trim now exposes those five formats only for
+source layouts/rates that the selected codec can retain without implicit
+downmix/rematrix, compiles every selected track into the same single-generation
+FFmpeg invocation, and verifies codec, layout, declared sample rate, metadata,
+timing, attachments, chapters, and source immutability before and after commit.
+Per-lane advanced audio selection for common-format Join remains open.
 Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding,
-representative beta-corpus tuning, advanced audio execution, and physical Intel
+representative beta-corpus tuning, advanced Join audio execution, and physical Intel
 performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue

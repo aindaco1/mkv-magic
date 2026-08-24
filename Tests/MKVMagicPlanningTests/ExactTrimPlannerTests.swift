@@ -41,6 +41,81 @@ final class ExactTrimPlannerTests: XCTestCase {
         XCTAssertEqual(aac.audioEncodeCount, 1)
     }
 
+    func testAdvancedAudioRequiresAProbeAndAnExactlyPreservedLayout() throws {
+        let planner = ExactTrimPlanner()
+        let source = makeSource()
+        for preset in AudioTranscodePreset.allCases {
+            let plan = try planner.resolve(
+                source: source,
+                range: range(2, 8),
+                choice: ExactTrimChoice(
+                    videoPreset: .hevcCompatibility,
+                    videoRateControl: .averageBitrate(2_000_000),
+                    audioPolicy: ExactTrimAudioPolicy(preset: preset)
+                ),
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true,
+                availableAudioPresets: Set(AudioTranscodePreset.allCases)
+            )
+            XCTAssertEqual(plan.audioEncodeCount, 1)
+        }
+
+        XCTAssertThrowsError(
+            try planner.resolve(
+                source: source,
+                range: range(2, 8),
+                choice: ExactTrimChoice(
+                    videoPreset: .hevcCompatibility,
+                    videoRateControl: .averageBitrate(2_000_000),
+                    audioPolicy: .opusPreserveLayout
+                ),
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? ExactTrimPlanningError,
+                .unavailableAudioPreset(.opusQuality)
+            )
+        }
+
+        for policy in [ExactTrimAudioPolicy.aacPreserveLayout, .ac3PreserveLayout] {
+            XCTAssertThrowsError(
+                try planner.resolve(
+                    source: makeSource(audioLayout: "7.1", audioChannels: 8),
+                    range: range(2, 8),
+                    choice: ExactTrimChoice(
+                        videoPreset: .hevcCompatibility,
+                        videoRateControl: .averageBitrate(2_000_000),
+                        audioPolicy: policy
+                    ),
+                    availableVideoPresets: [.hevcCompatibility],
+                    aacAvailable: true,
+                    availableAudioPresets: Set(AudioTranscodePreset.allCases)
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? ExactTrimPlanningError,
+                    .incompleteAudioFacts(trackID: 1)
+                )
+            }
+        }
+        XCTAssertNoThrow(
+            try planner.resolve(
+                source: makeSource(audioLayout: "7.1", audioChannels: 8),
+                range: range(2, 8),
+                choice: ExactTrimChoice(
+                    videoPreset: .hevcCompatibility,
+                    videoRateControl: .averageBitrate(2_000_000),
+                    audioPolicy: .opusPreserveLayout
+                ),
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true,
+                availableAudioPresets: [.opusQuality]
+            )
+        )
+    }
+
     func testRecommendationPrefersFirstVerifiedPresetAndPacketCopiesAudio() throws {
         let planner = ExactTrimPlanner()
         let av1 = try XCTUnwrap(
@@ -301,7 +376,9 @@ final class ExactTrimPlannerTests: XCTestCase {
         globalTagCount: Int = 0,
         hdrFormats: [String] = [],
         hdr10: Bool = false,
-        audioLayout: String? = "stereo"
+        audioLayout: String? = "stereo",
+        audioChannels: Int = 2,
+        audioSampleRate: Int = 48_000
     ) -> MediaAsset {
         var tracks = [
             MediaTrack(
@@ -336,9 +413,9 @@ final class ExactTrimPlannerTests: XCTestCase {
                 language: "en",
                 title: "Main Audio",
                 isDefault: true,
-                channels: 2,
+                channels: audioChannels,
                 channelLayout: audioLayout,
-                sampleRate: 48_000
+                sampleRate: audioSampleRate
             ),
         ]
         if let extraTrack { tracks.append(extraTrack) }

@@ -27,4 +27,33 @@ final class AudioTranscodePresetTests: XCTestCase {
         XCTAssertNil(AudioTranscodePreset.flacLossless.recommendedBitrate(channels: 8))
         XCTAssertNil(AudioTranscodePreset.opusQuality.recommendedBitrate(channels: 0))
     }
+
+    func testLayoutBoundaryRejectsObservedImplicitRematrixing() {
+        XCTAssertTrue(AudioTranscodePreset.opusQuality.preserves(channelLayout: "7.1", channels: 8))
+        XCTAssertFalse(
+            AudioTranscodePreset.opusQuality.preserves(channelLayout: "5.1(side)", channels: 6))
+        XCTAssertTrue(
+            AudioTranscodePreset.ac3Compatibility.preserves(channelLayout: "5.1(side)", channels: 6)
+        )
+        XCTAssertFalse(
+            AudioTranscodePreset.ac3Compatibility.preserves(channelLayout: "7.1", channels: 8))
+        XCTAssertFalse(
+            AudioTranscodePreset.aacCompatibility.preserves(channelLayout: "7.1", channels: 8))
+        XCTAssertTrue(
+            AudioTranscodePreset.flacLossless.preserves(channelLayout: "7.1", channels: 8))
+        XCTAssertFalse(
+            AudioTranscodePreset.flacLossless.preserves(channelLayout: "stereo", channels: 6))
+    }
+
+    func testSampleRateTargetIsExplicitAndNeverAnImplicitFallback() {
+        XCTAssertEqual(
+            AudioTranscodePreset.aacCompatibility.outputSampleRate(forInput: 44_100), 44_100)
+        XCTAssertNil(AudioTranscodePreset.aacCompatibility.outputSampleRate(forInput: 96_000))
+        XCTAssertEqual(AudioTranscodePreset.opusQuality.outputSampleRate(forInput: 44_100), 48_000)
+        XCTAssertEqual(
+            AudioTranscodePreset.ac3Compatibility.outputSampleRate(forInput: 32_000), 32_000)
+        XCTAssertNil(AudioTranscodePreset.eac3Compatibility.outputSampleRate(forInput: 24_000))
+        XCTAssertEqual(
+            AudioTranscodePreset.flacLossless.outputSampleRate(forInput: 192_000), 192_000)
+    }
 }

@@ -114,7 +114,8 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
             range: range,
             choice: choice,
             availableVideoPresets: Set(capabilities.availableVideoPresets),
-            aacAvailable: capabilities.aac == .verified
+            aacAvailable: capabilities.aac == .verified,
+            availableAudioPresets: Set(capabilities.availableAudioPresets)
         )
         let revision: MediaSourceRevision
         do {

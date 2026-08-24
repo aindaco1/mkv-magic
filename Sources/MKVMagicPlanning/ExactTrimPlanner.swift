@@ -4,6 +4,31 @@ import MKVMagicCore
 public enum ExactTrimAudioPolicy: String, Codable, Hashable, Sendable {
     case packetCopy
     case aacPreserveLayout
+    case opusPreserveLayout
+    case ac3PreserveLayout
+    case eac3PreserveLayout
+    case flacPreserveLayout
+
+    public init(preset: AudioTranscodePreset) {
+        switch preset {
+        case .aacCompatibility: self = .aacPreserveLayout
+        case .opusQuality: self = .opusPreserveLayout
+        case .ac3Compatibility: self = .ac3PreserveLayout
+        case .eac3Compatibility: self = .eac3PreserveLayout
+        case .flacLossless: self = .flacPreserveLayout
+        }
+    }
+
+    public var transcodePreset: AudioTranscodePreset? {
+        switch self {
+        case .packetCopy: nil
+        case .aacPreserveLayout: .aacCompatibility
+        case .opusPreserveLayout: .opusQuality
+        case .ac3PreserveLayout: .ac3Compatibility
+        case .eac3PreserveLayout: .eac3Compatibility
+        case .flacPreserveLayout: .flacLossless
+        }
+    }
 }
 
 public struct ExactTrimChoice: Codable, Hashable, Sendable {
@@ -67,6 +92,7 @@ public enum ExactTrimPlanningError: Error, Equatable, Sendable {
     case incompleteAudioFacts(trackID: Int)
     case unavailableVideoPreset(VideoPreset)
     case unavailableAAC
+    case unavailableAudioPreset(AudioTranscodePreset)
     case invalidChoice
 }
 
@@ -86,10 +112,12 @@ extension ExactTrimPlanningError: LocalizedError {
         case .incompleteVideoFacts:
             "Exact Trim needs complete even video dimensions and color facts."
         case .incompleteAudioFacts(let trackID):
-            "Audio track \(trackID) needs complete layout facts before AAC conversion."
+            "Audio track \(trackID) needs a layout and sample rate the selected audio format can preserve safely."
         case .unavailableVideoPreset(let preset):
             "The selected \(preset.rawValue) encoder did not pass the active local probe."
         case .unavailableAAC: "The bundled AAC encoder did not pass the active local probe."
+        case .unavailableAudioPreset(let preset):
+            "The bundled \(preset.displayName) encoder did not pass the active local probe."
         case .invalidChoice: "The Exact Trim encoding choice is outside its safe bounds."
         }
     }
@@ -127,7 +155,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
 
     public var videoEncodeCount: Int { 1 }
     public var audioEncodeCount: Int {
-        choice.audioPolicy == .aacPreserveLayout ? audioTrackIDs.count : 0
+        choice.audioPolicy.transcodePreset == nil ? 0 : audioTrackIDs.count
     }
 }
 
@@ -173,7 +201,8 @@ public struct ExactTrimPlanner: Sendable {
         range: MediaTrimRange,
         choice: ExactTrimChoice,
         availableVideoPresets: Set<VideoPreset>,
-        aacAvailable: Bool
+        aacAvailable: Bool,
+        availableAudioPresets: Set<AudioTranscodePreset> = []
     ) throws -> ResolvedExactTrimPlan {
         guard source.sourceURL.pathExtension.lowercased() == "mkv",
             source.container.localizedCaseInsensitiveContains("matroska")
@@ -228,12 +257,22 @@ public struct ExactTrimPlanner: Sendable {
             throw ExactTrimPlanningError.unavailableVideoPreset(choice.videoPreset)
         }
         try validate(choice)
-        if choice.audioPolicy == .aacPreserveLayout {
-            guard aacAvailable else { throw ExactTrimPlanningError.unavailableAAC }
+        if let audioPreset = choice.audioPolicy.transcodePreset {
+            let effectiveAudioPresets = availableAudioPresets.union(
+                aacAvailable ? [.aacCompatibility] : []
+            )
+            guard effectiveAudioPresets.contains(audioPreset) else {
+                if audioPreset == .aacCompatibility {
+                    throw ExactTrimPlanningError.unavailableAAC
+                }
+                throw ExactTrimPlanningError.unavailableAudioPreset(audioPreset)
+            }
             for audio in audios {
-                guard let channels = audio.channels, (1...8).contains(channels),
-                    let sampleRate = audio.sampleRate, (8_000...192_000).contains(sampleRate),
-                    let layout = audio.channelLayout, !layout.isEmpty
+                guard let channels = audio.channels,
+                    let sampleRate = audio.sampleRate,
+                    let layout = audio.channelLayout,
+                    audioPreset.preserves(channelLayout: layout, channels: channels),
+                    audioPreset.outputSampleRate(forInput: sampleRate) != nil
                 else {
                     throw ExactTrimPlanningError.incompleteAudioFacts(trackID: audio.id)
                 }

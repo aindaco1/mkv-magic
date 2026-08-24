@@ -143,7 +143,8 @@ actions while exact `HH:MM:SS.mmm` fields remain directly editable. Fast Trim is
 the default and truthfully previews any forward keyframe adjustment before Save
 is enabled. Exact Trim retains the numeric range and exposes only video presets
 that passed the active local encoder probe, with packet-copy audio as the safe
-default and explicit one-generation AAC as an option. Both modes require an
+default. Explicit AAC, Opus, AC-3, E-AC-3, and FLAC choices appear only when the
+encoder smoke and every source track's exact layout/rate boundary are safe. Both modes require an
 immutable review, use the same cancellable verified-output progress surface,
 disable cancellation during commit, save to a new deterministic MKV name, and
 record a sanitized eight-state History lifecycle.
@@ -168,9 +169,11 @@ The internal Exact Trim path retains the user's numeric boundaries and encodes
 the video exactly once with the selected encoder that passed the active local
 probe. It accepts strict BT.709 SDR, or validated 10-bit static HDR10 through AV1
 or HEVC while preserving BT.2020/PQ, matrix, mastering-display, and content-light
-facts. Every audio track is packet-copied by default. Explicit AAC
-conversion preserves each reviewed channel layout and sample rate while encoding
-each selected audio track once. Output-side seeking makes the reviewed boundary
+facts. Every audio track is packet-copied by default. Explicit AAC, Opus, AC-3,
+E-AC-3, and FLAC conversion preserves each reviewed channel layout while encoding
+each selected audio track once. AAC, AC-3, E-AC-3, and FLAC retain accepted sample
+rates; Opus explicitly targets its 48 kHz Matroska clock. Incompatible choices are
+hidden instead of silently downmixing or rematrixing. Output-side seeking makes the reviewed boundary
 apply to copied audio as well as encoded video. The same transaction preserves
 track metadata and attachments, clips and rebases the exact nested chapter tree,
 removes only FFmpeg-synthesized statistics tags from a reviewed tag-free source,

@@ -589,10 +589,15 @@ public struct ExactTrimOutputVerifier: Sendable {
         case .packetCopy:
             return ExactTrimCopiedAudioSnapshot(actual)
                 == ExactTrimCopiedAudioSnapshot(source)
-        case .aacPreserveLayout:
-            return normalized(actual.codec) == "aac"
+        case .aacPreserveLayout, .opusPreserveLayout, .ac3PreserveLayout,
+            .eac3PreserveLayout, .flacPreserveLayout:
+            guard let preset = policy.transcodePreset,
+                let inputSampleRate = source.sampleRate,
+                let expectedSampleRate = preset.outputSampleRate(forInput: inputSampleRate)
+            else { return false }
+            return normalized(actual.codec) == preset.codecName
                 && actual.channels == source.channels
-                && actual.sampleRate == source.sampleRate
+                && actual.sampleRate == expectedSampleRate
                 && normalized(actual.channelLayout) == normalized(source.channelLayout)
         }
     }

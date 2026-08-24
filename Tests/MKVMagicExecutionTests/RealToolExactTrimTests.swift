@@ -140,6 +140,84 @@ final class RealToolExactTrimTests: XCTestCase {
         }
     }
 
+    func testBundledToolsExactTrimEveryVerifiedAudioFormatWithoutLayoutDrift() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified,
+            Set(capabilities.availableAudioPresets) == Set(AudioTranscodePreset.allCases)
+        else {
+            throw XCTSkip("The complete bundled Exact Trim audio matrix is unavailable")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-exact-audio"
+        ) { root in
+            let sourceURL = try await makeFixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner
+            )
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            let sourceAudio = try XCTUnwrap(source.tracks.first { $0.kind == .audio })
+            let executor = ExactTrimExecutor(
+                ffmpegURL: ffmpegURL,
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            for preset in AudioTranscodePreset.allCases {
+                let preview = try await executor.preview(
+                    source: source,
+                    range: MediaTrimRange(
+                        start: MediaTime(nanoseconds: 250_000_000),
+                        end: MediaTime(nanoseconds: 1_250_000_000)
+                    ),
+                    choice: ExactTrimChoice(
+                        videoPreset: .h264Compatibility,
+                        videoRateControl: .averageBitrate(500_000),
+                        audioPolicy: ExactTrimAudioPolicy(preset: preset)
+                    ),
+                    capabilities: capabilities
+                )
+                XCTAssertEqual(preview.resolvedPlan.audioEncodeCount, 1)
+                let output = try await executor.execute(
+                    preview: preview,
+                    destinationURL: root.appendingPathComponent("\(preset.rawValue).mkv")
+                )
+                let outputAudio = try XCTUnwrap(output.tracks.first { $0.kind == .audio })
+                XCTAssertEqual(outputAudio.codec, preset.codecName)
+                XCTAssertEqual(outputAudio.channels, sourceAudio.channels)
+                XCTAssertEqual(outputAudio.channelLayout, sourceAudio.channelLayout)
+                XCTAssertEqual(
+                    outputAudio.sampleRate,
+                    sourceAudio.sampleRate.flatMap(preset.outputSampleRate(forInput:))
+                )
+            }
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+        }
+    }
+
     func testBundledToolsExactTrimPreservesStaticHDR10Signal() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

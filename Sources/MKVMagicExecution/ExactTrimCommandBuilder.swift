@@ -8,6 +8,7 @@ public enum ExactTrimCommandError: Error, Equatable, Sendable {
     case existingOutput
     case unavailableEncoder(VideoPreset)
     case unavailableAAC
+    case unavailableAudioPreset(AudioTranscodePreset)
     case commandTooLarge
 }
 
@@ -20,6 +21,8 @@ extension ExactTrimCommandError: LocalizedError {
         case .unavailableEncoder(let preset):
             "The selected \(preset.rawValue) encoder did not pass the active local probe."
         case .unavailableAAC: "The bundled AAC encoder did not pass the active local probe."
+        case .unavailableAudioPreset(let preset):
+            "The bundled \(preset.displayName) encoder did not pass the active local probe."
         case .commandTooLarge: "The bounded Exact Trim command is too large."
         }
     }
@@ -77,10 +80,13 @@ public struct ExactTrimCommandBuilder: Sendable {
                 resolvedPlan.choice.videoPreset
             )
         }
-        if resolvedPlan.choice.audioPolicy == .aacPreserveLayout,
-            capabilities.aac != .verified || capabilities.aacEncoder == nil
+        if let audioPreset = resolvedPlan.choice.audioPolicy.transcodePreset,
+            capabilities.verifiedAudioEncoder(for: audioPreset) == nil
         {
-            throw ExactTrimCommandError.unavailableAAC
+            if audioPreset == .aacCompatibility {
+                throw ExactTrimCommandError.unavailableAAC
+            }
+            throw ExactTrimCommandError.unavailableAudioPreset(audioPreset)
         }
         let current: ResolvedExactTrimPlan
         do {
@@ -89,7 +95,8 @@ public struct ExactTrimCommandBuilder: Sendable {
                 range: resolvedPlan.range,
                 choice: resolvedPlan.choice,
                 availableVideoPresets: Set(capabilities.availableVideoPresets),
-                aacAvailable: capabilities.aac == .verified
+                aacAvailable: capabilities.aac == .verified,
+                availableAudioPresets: Set(capabilities.availableAudioPresets)
             )
         } catch {
             throw ExactTrimCommandError.inconsistentPlan
@@ -151,28 +158,41 @@ public struct ExactTrimCommandBuilder: Sendable {
 
         var encodedAudioTrackIDs = [Int]()
         var copiedAudioTrackIDs = [Int]()
-        switch resolvedPlan.choice.audioPolicy {
-        case .packetCopy:
+        if resolvedPlan.choice.audioPolicy == .packetCopy {
             copiedAudioTrackIDs = resolvedPlan.audioTrackIDs
-        case .aacPreserveLayout:
-            guard capabilities.aac == .verified, let aacEncoder = capabilities.aacEncoder else {
-                throw ExactTrimCommandError.unavailableAAC
+        } else if let audioPreset = resolvedPlan.choice.audioPolicy.transcodePreset {
+            guard let audioEncoder = capabilities.verifiedAudioEncoder(for: audioPreset) else {
+                if audioPreset == .aacCompatibility {
+                    throw ExactTrimCommandError.unavailableAAC
+                }
+                throw ExactTrimCommandError.unavailableAudioPreset(audioPreset)
             }
             encodedAudioTrackIDs = resolvedPlan.audioTrackIDs
             for (outputIndex, trackID) in resolvedPlan.audioTrackIDs.enumerated() {
                 guard let track = source.tracks.first(where: { $0.id == trackID }),
                     let channels = track.channels,
-                    let sampleRate = track.sampleRate
+                    let sampleRate = track.sampleRate,
+                    let channelLayout = track.channelLayout
                 else {
                     throw ExactTrimCommandError.inconsistentPlan
                 }
-                arguments.append(contentsOf: [
-                    "-c:a:\(outputIndex)", aacEncoder,
-                    "-b:a:\(outputIndex)", String(aacBitrate(channels: channels)),
-                    "-ar:a:\(outputIndex)", String(sampleRate),
-                    "-ac:a:\(outputIndex)", String(channels),
-                ])
+                do {
+                    arguments.append(
+                        contentsOf: try FFmpegAudioEncoderArguments().make(
+                            outputIndex: outputIndex,
+                            encoder: audioEncoder,
+                            preset: audioPreset,
+                            channels: channels,
+                            channelLayout: channelLayout,
+                            inputSampleRate: sampleRate
+                        )
+                    )
+                } catch {
+                    throw ExactTrimCommandError.inconsistentPlan
+                }
             }
+        } else {
+            throw ExactTrimCommandError.inconsistentPlan
         }
         arguments.append(contentsOf: [
             "-map_metadata", "0",
@@ -194,15 +214,6 @@ public struct ExactTrimCommandBuilder: Sendable {
             encodedAudioTrackIDs: encodedAudioTrackIDs,
             copiedAudioTrackIDs: copiedAudioTrackIDs
         )
-    }
-
-    private func aacBitrate(channels: Int) -> Int {
-        switch channels {
-        case 1: 128_000
-        case 2: 192_000
-        case 3...6: 640_000
-        default: 768_000
-        }
     }
 
     private func decimalSeconds(_ time: MediaTime) -> String {

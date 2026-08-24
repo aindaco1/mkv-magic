@@ -783,9 +783,9 @@ final class AppModel {
                     audioTracksEncoded: UInt(exact.encodedAudioTrackIDs.count)
                 )
                 let audio =
-                    exact.resolvedPlan.choice.audioPolicy == .packetCopy
-                    ? "packet-copy every audio track"
-                    : "encode \(exact.encodedAudioTrackIDs.count) audio track(s) once to AAC"
+                    exact.resolvedPlan.choice.audioPolicy.transcodePreset.map {
+                        "encode \(exact.encodedAudioTrackIDs.count) audio track(s) once to \($0.displayName)"
+                    } ?? "packet-copy every audio track"
                 planningMessage =
                     "One video encode using "
                     + TrimPresentationPolicy.presetName(

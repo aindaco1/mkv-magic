@@ -42,6 +42,28 @@ public enum AudioTranscodePreset: String, Codable, CaseIterable, Hashable, Senda
         }
     }
 
+    public func preserves(channelLayout rawLayout: String, channels: Int) -> Bool {
+        let layout = rawLayout.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.channelCounts[layout] == channels else { return false }
+        return supportedLayouts.contains(layout)
+    }
+
+    /// The exact declared output sample rate. A `nil` result means this preset
+    /// must not be offered for the input rate. Opus uses its standardized 48 kHz
+    /// Matroska clock; all other accepted choices retain the input rate.
+    public func outputSampleRate(forInput input: Int) -> Int? {
+        switch self {
+        case .aacCompatibility:
+            return Self.aacSampleRates.contains(input) ? input : nil
+        case .opusQuality:
+            return (8_000...192_000).contains(input) ? 48_000 : nil
+        case .ac3Compatibility, .eac3Compatibility:
+            return [32_000, 44_100, 48_000].contains(input) ? input : nil
+        case .flacLossless:
+            return (8_000...192_000).contains(input) ? input : nil
+        }
+    }
+
     public func recommendedBitrate(channels: Int) -> Int? {
         guard (1...maximumChannelCount).contains(channels) else { return nil }
         switch self {
@@ -75,4 +97,44 @@ public enum AudioTranscodePreset: String, Codable, CaseIterable, Hashable, Senda
             return nil
         }
     }
+
+    private var supportedLayouts: Set<String> {
+        switch self {
+        case .aacCompatibility:
+            ["mono", "stereo", "3.0", "quad", "4.0", "5.0", "5.1", "7.0", "octagonal"]
+        case .opusQuality:
+            ["mono", "stereo", "3.0", "quad", "5.0", "5.1", "6.1", "7.1"]
+        case .ac3Compatibility, .eac3Compatibility:
+            ["mono", "stereo", "3.0", "3.0(back)", "quad(side)", "4.0", "5.0(side)", "5.1(side)"]
+        case .flacLossless:
+            [
+                "mono", "stereo", "3.0", "3.0(back)", "quad", "quad(side)", "4.0",
+                "5.0", "5.0(side)", "5.1", "5.1(side)", "6.1", "7.0", "7.1",
+                "7.1(wide)", "octagonal",
+            ]
+        }
+    }
+
+    private static let aacSampleRates: Set<Int> = [
+        8_000, 11_025, 12_000, 16_000, 22_050, 24_000, 32_000, 44_100, 48_000,
+    ]
+
+    private static let channelCounts: [String: Int] = [
+        "mono": 1,
+        "stereo": 2,
+        "3.0": 3,
+        "3.0(back)": 3,
+        "quad": 4,
+        "quad(side)": 4,
+        "4.0": 4,
+        "5.0": 5,
+        "5.0(side)": 5,
+        "5.1": 6,
+        "5.1(side)": 6,
+        "6.1": 7,
+        "7.0": 7,
+        "7.1": 8,
+        "7.1(wide)": 8,
+        "octagonal": 8,
+    ]
 }

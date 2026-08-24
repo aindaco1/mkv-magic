@@ -95,9 +95,9 @@ enum TrimPresentationPolicy {
         case .exact(let exact):
             let choice = exact.resolvedPlan.choice
             let audio =
-                choice.audioPolicy == .packetCopy
-                ? "all audio packet-copied"
-                : "\(exact.encodedAudioTrackIDs.count) audio track(s) encoded once to AAC"
+                choice.audioPolicy.transcodePreset.map {
+                    "\(exact.encodedAudioTrackIDs.count) audio track(s) encoded once to \($0.displayName)"
+                } ?? "all audio packet-copied"
             return "EXACT • 1 video encode • \(presetName(choice.videoPreset)) • "
                 + "\(encodingSummary(choice))\n"
                 + "Saved range: \(output) • \(audio)"
@@ -229,6 +229,20 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             $0 == .av1Quality || $0 == .hevcCompatibility
         }
     }
+    private var audioPresets: [AudioTranscodePreset] {
+        let audioTracks = source.tracks.filter { $0.kind == .audio }
+        guard !audioTracks.isEmpty else { return [] }
+        return capabilities.availableAudioPresets.filter { preset in
+            audioTracks.allSatisfy { track in
+                guard let channels = track.channels,
+                    let layout = track.channelLayout,
+                    let sampleRate = track.sampleRate
+                else { return false }
+                return preset.preserves(channelLayout: layout, channels: channels)
+                    && preset.outputSampleRate(forInput: sampleRate) != nil
+            }
+        }
+    }
 
     init(
         source: MediaAsset,
@@ -304,8 +318,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         presetPopup.target = self
         presetPopup.action = #selector(presetChanged)
         audioPopup.addItem(withTitle: "Preserve Audio Exactly (Packet Copy)")
-        if capabilities.aac == .verified {
-            audioPopup.addItem(withTitle: "Convert Audio Once to AAC (Keep Layout)")
+        for preset in audioPresets {
+            let sampleRateNote = preset == .opusQuality ? ", 48 kHz" : ""
+            audioPopup.addItem(
+                withTitle: "Convert Once to \(preset.displayName) (Keep Layout\(sampleRateNote))"
+            )
         }
         audioPopup.target = self
         audioPopup.action = #selector(inputChanged)
@@ -705,9 +722,14 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             videoPreset: preset,
             videoRateControl: rateControl,
             encoderTuning: encoderTuning,
-            audioPolicy: audioPopup.indexOfSelectedItem == 1
-                ? .aacPreserveLayout : .packetCopy
+            audioPolicy: selectedAudioPolicy()
         )
+    }
+
+    private func selectedAudioPolicy() -> ExactTrimAudioPolicy {
+        let presetIndex = audioPopup.indexOfSelectedItem - 1
+        guard audioPresets.indices.contains(presetIndex) else { return .packetCopy }
+        return ExactTrimAudioPolicy(preset: audioPresets[presetIndex])
     }
 
     private func configureQualityPopup(resetSelection: Bool) {

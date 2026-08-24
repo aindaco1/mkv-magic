@@ -1962,6 +1962,107 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testTrimOffersOnlyLayoutSafeProbedAudioFormatsAndBindsSelection() throws {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Audio Source.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 60_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "h264",
+                    dimensions: MediaDimensions(width: 1_920, height: 1_080),
+                    colorInfo: MediaColorInfo(
+                        range: "tv", primaries: "bt709", transfer: "bt709", matrix: "bt709"
+                    )
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    channels: 8,
+                    channelLayout: "7.1",
+                    sampleRate: 48_000
+                ),
+            ]
+        )
+        var reviewedRequest: TrimReviewRequest?
+        let controller = TrimWindowController(
+            source: source,
+            thumbnails: [],
+            capabilities: FFmpegEncodingCapabilities(
+                softwareAV1: .unavailable,
+                softwareAV1Encoder: nil,
+                hevc10VideoToolbox: .verified,
+                h264VideoToolbox: .verified,
+                proRes: .unavailable,
+                proResEncoder: nil,
+                aac: .verified,
+                aacEncoder: "aac_at",
+                availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters,
+                audioCapabilities: [
+                    .aacCompatibility: .init(status: .verified, encoder: "aac_at"),
+                    .opusQuality: .init(status: .verified, encoder: "libopus"),
+                    .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
+                    .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
+                    .flacLossless: .init(status: .verified, encoder: "flac"),
+                ]
+            ),
+            reviewProvider: { request in
+                reviewedRequest = request
+                throw NSError(domain: "AudioFormatReview", code: 1)
+            }
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let mode = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSSegmentedControl }.first
+        )
+        mode.selectedSegment = TrimMode.exact.rawValue
+        mode.sendAction(mode.action, to: mode.target)
+        let popups = descendants(in: content).compactMap { $0 as? NSPopUpButton }
+        let audio = try XCTUnwrap(
+            popups.first { popup in
+                popup.itemTitles.contains { $0.contains("Opus") }
+            })
+        XCTAssertEqual(
+            audio.itemTitles,
+            [
+                "Preserve Audio Exactly (Packet Copy)",
+                "Convert Once to Opus (Keep Layout, 48 kHz)",
+                "Convert Once to FLAC (Lossless) (Keep Layout)",
+            ]
+        )
+        XCTAssertFalse(audio.itemTitles.contains { $0.contains("AAC") })
+        XCTAssertFalse(audio.itemTitles.contains { $0.contains("AC-3") })
+        audio.selectItem(withTitle: "Convert Once to Opus (Keep Layout, 48 kHz)")
+        audio.sendAction(audio.action, to: audio.target)
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_TRIM_AUDIO_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(
+                window: try XCTUnwrap(controller.window),
+                content: content,
+                at: capturePath
+            )
+        }
+        let inField = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.isEditable && $0.stringValue == "00:00:00.000"
+            }
+        )
+        inField.stringValue = "00:00:01.000"
+        inField.delegate?.controlTextDidChange?(
+            Notification(name: NSControl.textDidChangeNotification, object: inField)
+        )
+        let review = try XCTUnwrap(buttons(in: content).first { $0.title == "Review Trim" })
+        XCTAssertTrue(review.isEnabled)
+        review.performClick(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertEqual(reviewedRequest?.exactChoice?.audioPolicy, .opusPreserveLayout)
+    }
+
+    @MainActor
     func testChapterStudioExposesNestedEditingAndExplicitFlatteningActions() throws {
         let sourceURL = URL(fileURLWithPath: "/tmp/Movie.mkv")
         let source = MediaAsset(
