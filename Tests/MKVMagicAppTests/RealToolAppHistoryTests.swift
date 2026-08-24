@@ -641,7 +641,16 @@ final class RealToolAppHistoryTests: XCTestCase {
         let externalSubtitle = fixtureRoot.appendingPathComponent("Movie.en.srt")
         let source = fixtureRoot.appendingPathComponent("Movie.mkv")
         let output = fixtureRoot.appendingPathComponent("Movie — Prepared.mkv")
+        let automaticOutput = fixtureRoot.appendingPathComponent(
+            "Movie — Automatically Prepared.mkv"
+        )
+        let tamperedOutput = fixtureRoot.appendingPathComponent(
+            "Movie — Must Need Review.mkv"
+        )
         let extractedOutputSubtitle = fixtureRoot.appendingPathComponent("Verified English.srt")
+        let extractedAutomaticSubtitle = fixtureRoot.appendingPathComponent(
+            "Verified Automatic English.srt"
+        )
         try Data(repeating: 0, count: 192_000).write(to: rawAudio)
         try Data(
             "1\n00:00:00,000 --> 00:00:01,000\nBonjour\n".utf8
@@ -694,6 +703,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         await model.addFiles([source])
         let asset = try XCTUnwrap(model.assets.first)
+        let reviewedSourceRevision = try XCTUnwrap(model.reviewedSourceRevision(for: asset))
         let subtitlePreview = try await model.previewSubtitleCleanup(at: externalSubtitle)
         let metadata = ExternalSubtitleTrackMetadata(
             language: "en",
@@ -727,14 +737,16 @@ final class RealToolAppHistoryTests: XCTestCase {
             compiled.plan.stages.map(\.mechanism),
             [.mkvMerge, .mkvPropEdit, .verify, .commit]
         )
+        let reviewedPayload = ExternalSubtitleMuxPayload.reviewedCleanup(
+            .subRip(subtitlePreview),
+            restoringIDs: []
+        )
         let outputAsset = try await model.runSavedWorkflow(
             compiled,
             recipe: workflow,
-            externalSubtitlePayload: .reviewedCleanup(
-                .subRip(subtitlePreview),
-                restoringIDs: []
-            ),
+            externalSubtitlePayload: reviewedPayload,
             sourceDisposition: .trashAfterVerifiedSuccess,
+            expectedSourceRevision: reviewedSourceRevision,
             in: asset,
             destinationURL: output
         )
@@ -788,7 +800,18 @@ final class RealToolAppHistoryTests: XCTestCase {
         let queue = try await queueStore.load()
         XCTAssertEqual(queue.jobs.count, 1)
         let queuedJob = try XCTUnwrap(queue.jobs.first)
-        XCTAssertEqual(queuedJob.workflow, .saved(workflow))
+        XCTAssertEqual(
+            queuedJob.workflow,
+            .savedWithExternalSubtitle(
+                workflow,
+                MediaQueueExternalSubtitleReview(
+                    format: .subRip,
+                    metadata: metadata,
+                    restoredCleanupChangeIDs: [],
+                    sourceSHA256: subtitlePreview.sourceSHA256
+                )
+            )
+        )
         XCTAssertEqual(queuedJob.inputs.map(\.displayName), ["Movie.mkv", "Movie.en.srt"])
         XCTAssertEqual(queuedJob.outputDisplayName, "Movie — Prepared.mkv")
         XCTAssertEqual(queuedJob.sourceDisposition, .trashAfterVerifiedSuccess)
@@ -829,6 +852,105 @@ final class RealToolAppHistoryTests: XCTestCase {
             ),
             fixtureRoot
         )
+
+        let waiting = try await model.enqueueSavedWorkflow(
+            compiled,
+            recipe: workflow,
+            externalSubtitlePayload: reviewedPayload,
+            expectedSourceRevision: reviewedSourceRevision,
+            in: asset,
+            destinationURL: automaticOutput
+        )
+        XCTAssertEqual(waiting.jobs.count, 2)
+        let waitingJob = try XCTUnwrap(waiting.jobs.last)
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(waitingJob))
+        XCTAssertEqual(waitingJob.inputs.map(\.displayName), ["Movie.mkv", "Movie.en.srt"])
+        XCTAssertEqual(waitingJob.events.map(\.state), [.waiting])
+        XCTAssertEqual(waitingJob.resourceClass, .lightweight)
+
+        let completedQueue = try await model.runAutomaticQueueCycle()
+
+        let automaticAsset = try XCTUnwrap(
+            model.assets.first { $0.sourceURL == automaticOutput }
+        )
+        XCTAssertEqual(automaticAsset.tracks.map(\.kind), [.audio, .subtitle])
+        XCTAssertEqual(automaticAsset.tracks.last?.title, "English")
+        XCTAssertNil(automaticAsset.metadata["title"])
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+        XCTAssertEqual(
+            SHA256.hash(data: try Data(contentsOf: externalSubtitle)),
+            externalSubtitleDigest
+        )
+        let automaticTrackID = try XCTUnwrap(automaticAsset.tracks.last?.id)
+        let automaticExtractResult = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvextract),
+                arguments: [
+                    "tracks", automaticOutput.path,
+                    "\(automaticTrackID):\(extractedAutomaticSubtitle.path)",
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(
+            automaticExtractResult.exitCode,
+            0,
+            automaticExtractResult.standardError.text
+        )
+        let automaticText = try String(
+            contentsOf: extractedAutomaticSubtitle,
+            encoding: .utf8
+        )
+        XCTAssertTrue(automaticText.contains("Hello"))
+        XCTAssertFalse(automaticText.contains("YTS.MX"))
+        let automaticJob = try XCTUnwrap(completedQueue.jobs.last)
+        XCTAssertEqual(automaticJob.events.map(\.state), [.waiting, .running, .succeeded])
+        XCTAssertEqual(automaticJob.attemptCount, 1)
+        let completedRecords = try await store.load()
+        XCTAssertEqual(completedRecords.count, 2)
+        XCTAssertEqual(completedRecords.last?.workflowID, workflow.id)
+        XCTAssertEqual(completedRecords.last?.events.last?.state, .succeeded)
+
+        let beforeTamper = try FileManager.default.attributesOfItem(
+            atPath: externalSubtitle.path
+        )
+        let waitingForTamper = try await model.enqueueSavedWorkflow(
+            compiled,
+            recipe: workflow,
+            externalSubtitlePayload: reviewedPayload,
+            expectedSourceRevision: reviewedSourceRevision,
+            in: asset,
+            destinationURL: tamperedOutput
+        )
+        let tamperJob = try XCTUnwrap(waitingForTamper.jobs.last)
+        let reviewedSidecarRevision = try XCTUnwrap(tamperJob.inputs.last?.reviewedRevision)
+        var tamperedData = try Data(contentsOf: externalSubtitle)
+        let helloRange = try XCTUnwrap(tamperedData.range(of: Data("Hello".utf8)))
+        tamperedData.replaceSubrange(helloRange, with: Data("Jello".utf8))
+        try tamperedData.write(to: externalSubtitle)
+        try FileManager.default.setAttributes(
+            [.modificationDate: try XCTUnwrap(beforeTamper[.modificationDate])],
+            ofItemAtPath: externalSubtitle.path
+        )
+        XCTAssertEqual(
+            try MediaFileRevisionReader().read(externalSubtitle).atMillisecondPrecision,
+            reviewedSidecarRevision
+        )
+        XCTAssertNotEqual(
+            SHA256.hash(data: try Data(contentsOf: externalSubtitle)),
+            externalSubtitleDigest
+        )
+
+        let refusedQueue = try await model.runAutomaticQueueCycle()
+
+        XCTAssertEqual(refusedQueue.jobs.last?.state, .needsReview)
+        XCTAssertEqual(
+            refusedQueue.jobs.last?.events.map(\.state),
+            [.waiting, .running, .needsReview]
+        )
+        XCTAssertFalse(FileManager.default.fileExists(atPath: tamperedOutput.path))
+        let refusedRecords = try await store.load()
+        XCTAssertEqual(refusedRecords.count, 2)
     }
 
     @MainActor

@@ -62,6 +62,13 @@ public enum ExternalSubtitleFilePreview: Equatable, Sendable {
         }
     }
 
+    public var sourceSHA256: Data {
+        switch self {
+        case .subRip(let preview): preview.sourceSHA256
+        case .advanced(let preview): preview.sourceSHA256
+        }
+    }
+
     public var cleanupChangeCount: Int {
         switch self {
         case .subRip(let preview): preview.cleanup.changes.count
@@ -101,8 +108,8 @@ public enum ExternalSubtitleFilePreview: Equatable, Sendable {
     }
 }
 
-/// The per-run subtitle payload chosen by the user. Saved workflows persist only the
-/// cleanup action; this review and its cue identifiers remain ephemeral.
+/// The per-run subtitle payload chosen by the user. Portable workflows persist only
+/// the cleanup action; a queued reviewed run may privately retain its bounded choices.
 public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
     case original(ExternalSubtitleFilePreview)
     case reviewedCleanup(ExternalSubtitleFilePreview, restoringIDs: Set<Int>)

@@ -91,13 +91,54 @@ public struct MediaQueueFileReference: Codable, Hashable, Identifiable, Sendable
     }
 }
 
+/// A reviewed sidecar choice is private queue state, not portable workflow intent.
+/// It deliberately contains no path, subtitle text, or parsed media identity.
+public struct MediaQueueExternalSubtitleReview: Codable, Hashable, Sendable {
+    public let format: ExternalTextSubtitleFormat
+    public let metadata: ExternalSubtitleTrackMetadata
+    public let restoredCleanupChangeIDs: [Int]?
+    public let sourceSHA256: Data
+
+    public init(
+        format: ExternalTextSubtitleFormat,
+        metadata: ExternalSubtitleTrackMetadata,
+        restoredCleanupChangeIDs: [Int]? = nil,
+        sourceSHA256: Data
+    ) {
+        self.format = format
+        self.metadata = metadata
+        self.restoredCleanupChangeIDs = restoredCleanupChangeIDs
+        self.sourceSHA256 = sourceSHA256
+    }
+
+    public var hasCanonicalStructure: Bool {
+        guard sourceSHA256.count == 32 else { return false }
+        let language = metadata.language.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !language.contains("\0"), (try? ChapterLanguage.canonical(language)) != nil else {
+            return false
+        }
+        if let name = metadata.name,
+            name.utf8.count > 4_096 || name.contains("\0")
+        {
+            return false
+        }
+        guard let restoredCleanupChangeIDs else { return true }
+        return restoredCleanupChangeIDs.count <= 1_000_000
+            && restoredCleanupChangeIDs.allSatisfy { $0 >= 0 }
+            && restoredCleanupChangeIDs == restoredCleanupChangeIDs.sorted()
+            && Set(restoredCleanupChangeIDs).count == restoredCleanupChangeIDs.count
+    }
+}
+
 public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
     case saved(SavedWorkflow)
+    case savedWithExternalSubtitle(SavedWorkflow, MediaQueueExternalSubtitleReview)
     case builtIn(id: UUID, name: String)
 
     public var id: UUID {
         switch self {
         case .saved(let workflow): workflow.id
+        case .savedWithExternalSubtitle(let workflow, _): workflow.id
         case .builtIn(let id, _): id
         }
     }
@@ -105,8 +146,21 @@ public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
     public var name: String {
         switch self {
         case .saved(let workflow): workflow.name
+        case .savedWithExternalSubtitle(let workflow, _): workflow.name
         case .builtIn(_, let name): name
         }
+    }
+
+    public var savedWorkflow: SavedWorkflow? {
+        switch self {
+        case .saved(let workflow), .savedWithExternalSubtitle(let workflow, _): workflow
+        case .builtIn: nil
+        }
+    }
+
+    public var externalSubtitleReview: MediaQueueExternalSubtitleReview? {
+        guard case .savedWithExternalSubtitle(_, let review) = self else { return nil }
+        return review
     }
 }
 
@@ -115,17 +169,29 @@ public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
 /// execution so the UI never promises automation the executor will reject.
 public enum MediaQueueAutomaticWorkflowPolicy {
     public static func supports(_ workflow: SavedWorkflow, inputCount: Int) -> Bool {
-        guard inputCount == 1 else { return false }
-        return !workflow.steps.contains { step in
-            step.isEnabled
-                && (step.action == .addExternalSubtitle
-                    || step.action == .cleanExternalSubtitleText)
+        let actions = Set(workflow.steps.filter(\.isEnabled).map(\.action))
+        let addsExternalSubtitle = actions.contains(.addExternalSubtitle)
+        guard !actions.contains(.cleanExternalSubtitleText) || addsExternalSubtitle else {
+            return false
         }
+        return inputCount == (addsExternalSubtitle ? 2 : 1)
     }
 
     public static func supports(_ job: MediaQueueJob) -> Bool {
-        guard case .saved(let workflow) = job.workflow else { return false }
-        return supports(workflow, inputCount: job.inputs.count)
+        switch job.workflow {
+        case .saved(let workflow):
+            return supports(workflow, inputCount: job.inputs.count)
+                && job.inputs.count == 1
+        case .savedWithExternalSubtitle(let workflow, let review):
+            let actions = Set(workflow.steps.filter(\.isEnabled).map(\.action))
+            return supports(workflow, inputCount: job.inputs.count)
+                && actions.contains(.addExternalSubtitle)
+                && actions.contains(.cleanExternalSubtitleText)
+                    == (review.restoredCleanupChangeIDs != nil)
+                && review.hasCanonicalStructure
+        case .builtIn:
+            return false
+        }
     }
 }
 

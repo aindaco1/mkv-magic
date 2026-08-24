@@ -1,5 +1,9 @@
 # M7 automatic saved-workflow queue slice
 
+> The one-input boundary recorded here was extended on 2026-08-24 to one
+> explicitly reviewed external SRT, ASS, or SSA input. See
+> [M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md](M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md).
+
 This slice connects the durable scheduler and fail-closed admission coordinator
 to one intentionally narrow production executor. A user can review a portable
 saved workflow, choose **Add to Queue**, and let MKV Magic start it when the

@@ -314,13 +314,14 @@ running or cancelling work becomes **Needs Review** after relaunch and is never
 silently restarted. Its pure scheduler starts at most one video-heavy job,
 bounds audio-heavy and zero-encode lightweight work separately, stops new starts
 under serious thermal pressure, and reduces battery operation to one lightweight
-job. After reviewing a saved workflow without an external subtitle, **Add to
-Queue** stores fresh, narrow security-scoped bookmarks and the exact reviewed
-plan as waiting work. MKV Magic takes a live macOS power and thermal snapshot on
-launch, after resume, and after queue authoring, then invokes the production
-admission coordinator. The coordinator combines the scheduler policy with an
-explicit workflow-capability check, unchanged input revisions, a writable
-destination, and an unused safe output before marking work **Running**.
+job. After reviewing a supported saved workflow, **Add to Queue** stores fresh,
+narrow security-scoped bookmarks and the exact reviewed plan as waiting work.
+That can be one primary media file or the primary plus one reviewed external
+SRT, ASS, or SSA subtitle. MKV Magic takes a live macOS power and thermal
+snapshot on launch, after resume, and after queue authoring, then invokes the
+production admission coordinator. The coordinator combines the scheduler policy
+with an explicit workflow-capability check, unchanged input revisions, a
+writable destination, and an unused safe output before marking work **Running**.
 
 Automatic execution re-inspects the current media file with the bundled tools and
 recompiles the portable recipe. The semantic plan must retain the same impact,
@@ -333,6 +334,14 @@ unsupported workflows, and unsafe destinations move to **Needs Review** without
 silently refreshing authority. Per-job cancellation reaches the supervised tool
 task. Saved-workflow **Verify & Run** remains a distinct immediate path even
 while automatic starts are paused.
+
+External-subtitle queue records remain private and path-free. They store only
+opaque bookmark authority, file revisions, the reviewed sidecar SHA-256, SRT or
+ASS/SSA format, track metadata, and sorted cleanup-restoration IDs—not subtitle
+text or a source path, and never inside an exported workflow. Admission parses a
+fresh sidecar preview, requires the original digest, reapplies the exact review,
+and recompiles the same plan before the existing verified mux executor runs.
+A changed sidecar moves to **Needs Review** and creates no output.
 
 Standalone audio recipes use this same path as audio-heavy work. If packet-copy
 or metadata preparation precedes a final video or audio conversion, the exact
@@ -360,12 +369,12 @@ pending follow-up. A source that has already disappeared is recorded as
 uncertain and is never falsely reported as successfully trashed; once any
 outcome is durable, later queue refreshes do not repeat the request.
 
-This is the first narrowly supported automatic production path, not a background
-daemon: built-in quick actions and workflows requiring ephemeral external-
-subtitle review are not automatically queued; there is no watched folder,
-scheduled wake, helper process, or continuous power-state monitor. A blocked
-queue is reconsidered at the next launch, resume, or **Add to Queue** action.
-Long queue soak and physical Intel acceptance remain open. See
+This is a narrowly supported automatic production path, not a background daemon:
+built-in quick actions, multiple or image-based subtitle inputs, and automatic
+sidecar discovery are not queued; there is no watched folder, scheduled wake,
+helper process, or continuous power-state monitor. A blocked queue is
+reconsidered at the next launch, resume, or **Add to Queue** action. Long queue
+soak and physical Intel acceptance remain open. See
 [docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md)
 and
 [docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md](docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md),
@@ -377,6 +386,8 @@ followed by the coordinator foundation in
 [docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md](docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md),
 and its app connection in
 [docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md),
+extended to reviewed external subtitle inputs in
+[docs/releases/M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md),
 followed by portable filename cleanup in
 [docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md).
 

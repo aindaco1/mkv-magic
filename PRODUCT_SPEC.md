@@ -565,6 +565,11 @@ action—not a path, subtitle text, metadata, cue/event selection, or review
 identifier—and current schema v9 preserves that boundary. v1-v8 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
+When the user explicitly adds this reviewed run to the production queue, its
+private queue record separately stores two narrow bookmarks and revisions plus
+the sidecar format, reviewed track metadata, 32-byte source digest, and restored
+cleanup-change identifiers. It never adds those file-specific facts to the
+portable workflow or stores subtitle text or a path.
 
 Schema v8 adds five standalone **Convert all audio** actions. The editor permits
 one without a video card and keeps it when a video card is removed or disabled.
@@ -1294,15 +1299,28 @@ so opening or refreshing the window cannot reclassify current work as
 interrupted.
 
 The first production automatic-execution subset is connected. After the user
-reviews a saved workflow with one supported input and no external-subtitle card,
-**Add to Queue** persists it in **Waiting** without forcing an immediate start. On app
-launch, queue resume, and queue authoring, a macOS system adapter reads the
-IOKit power-source state and `ProcessInfo` thermal state and invokes the
-admission coordinator. Unknown power or thermal facts fail conservatively. A
-supported job must still resolve unchanged bookmark authority, target an unused
-safe output, re-inspect through the bundled tools, and recompile to the same
-reviewed impact and ordered semantic stages. Random compilation-stage IDs are
-ignored; mechanism, summary, order, and encode impact must match.
+reviews a supported saved workflow, **Add to Queue** persists it in **Waiting**
+without forcing an immediate start. Supported inputs are either one primary
+media file or that file plus one explicitly reviewed external SRT, ASS, or SSA
+sidecar. On app launch, queue resume, and queue authoring, a macOS system adapter
+reads the IOKit power-source state and `ProcessInfo` thermal state and invokes
+the admission coordinator. Unknown power or thermal facts fail conservatively.
+A supported job must still resolve unchanged bookmark authority, target an
+unused safe output, re-inspect through the bundled tools, and recompile to the
+same reviewed impact and ordered semantic stages. Random compilation-stage IDs
+are ignored; mechanism, summary, order, and encode impact must match.
+
+For an external-subtitle job, admission also resolves the sidecar's read-only
+bookmark, requires its reviewed file revision, parses a fresh deterministic
+preview, requires the original reviewed SHA-256, reapplies the exact stored set
+of restored cleanup IDs, and reconstructs the track metadata. Cleanup remains
+optional: a nil selection means reviewed original text, while a present array
+means the cleanup card was reviewed. The compiler must reproduce the same plan,
+and the normal mux executor rechecks the sidecar digest and semantically audits
+the extracted subtitle before commit and after reopen. Any stale digest,
+malformed review, missing sidecar, changed plan, or unsupported pairing moves
+the job to **Needs Review** without creating an output. **Review Again** remains
+interactive and replaces every review-bound input and plan fact atomically.
 
 The executor retains the exact full-precision source revision from immediately
 before inspection and checks it again after compilation, around temporary-output
@@ -1325,8 +1343,9 @@ The queued recipe persists only schema-v9 intent; each admission resolves fresh
 stream and chapter facts, requires the same reviewed zero-encode plan, binds the
 exact original revision, and invokes the verified MKV remux executor directly.
 
-Built-in quick-action queueing, external-subtitle workflow reconstruction,
-watched folders, scheduled wakes, a background helper/daemon, continuous
+Built-in quick-action queueing, multiple or image-based external subtitles,
+automatic sidecar discovery, watched folders, scheduled wakes, a background
+helper/daemon, continuous
 power-state monitoring, long queue soak, and physical-Intel acceptance remain
 open. A thermally or power-blocked queue is reconsidered at launch, resume, or
 the next **Add to Queue** action.

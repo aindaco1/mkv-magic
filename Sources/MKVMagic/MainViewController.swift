@@ -14,6 +14,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let sourceDisposition: MediaQueueSourceDisposition
         let retryingQueueJobID: UUID?
         let expectedSourceRevision: MediaFileRevision
+
+        var queueInputCount: Int { externalSubtitlePayload == nil ? 1 : 2 }
     }
 
     private struct ReviewedExternalSubtitle {
@@ -2080,7 +2082,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     @objc private func addPendingWorkflowToQueue() {
         guard case .savedWorkflow(let prepared) = pendingChange,
-            MediaQueueAutomaticWorkflowPolicy.supports(prepared.recipe, inputCount: 1),
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                prepared.recipe,
+                inputCount: prepared.queueInputCount
+            ),
             let asset = selectedAsset,
             pendingAssetID == asset.id,
             let destination = chooseDestination(
@@ -2100,6 +2105,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 _ = try await model.enqueueSavedWorkflow(
                     prepared.compiled,
                     recipe: prepared.recipe,
+                    externalSubtitlePayload: prepared.externalSubtitlePayload,
                     sourceDisposition: destination.sourceDisposition,
                     retryingQueueJobID: prepared.retryingQueueJobID,
                     expectedSourceRevision: prepared.expectedSourceRevision,
@@ -2247,7 +2253,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func reviewQueueJob(_ job: MediaQueueJob) {
-        guard case .saved(let workflow) = job.workflow else {
+        guard let workflow = job.workflow.savedWorkflow else {
             statusLabel.stringValue = "This built-in queue job cannot be replanned yet."
             return
         }
@@ -2566,12 +2572,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func updateQueueButton() {
         guard case .savedWorkflow(let prepared) = pendingChange,
-            MediaQueueAutomaticWorkflowPolicy.supports(prepared.recipe, inputCount: 1)
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                prepared.recipe,
+                inputCount: prepared.queueInputCount
+            )
         else {
             queueButton.isEnabled = false
             if case .savedWorkflow? = pendingChange {
                 queueButton.toolTip =
-                    "Automatic queueing currently supports saved workflows without an external subtitle."
+                    "This workflow needs another interactive review before it can be queued."
             } else {
                 queueButton.toolTip = nil
             }

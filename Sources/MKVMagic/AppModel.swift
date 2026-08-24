@@ -1502,13 +1502,24 @@ final class AppModel {
     func enqueueSavedWorkflow(
         _ workflow: CompiledSavedWorkflow,
         recipe: SavedWorkflow,
+        externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil,
         expectedSourceRevision: MediaFileRevision? = nil,
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaQueueSnapshot {
-        guard workflow.externalSubtitleInput == nil else {
+        let externalSubtitleReview = try queuedExternalSubtitleReview(
+            workflow: workflow,
+            payload: externalSubtitlePayload
+        )
+        let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
+        guard
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                recipe,
+                inputCount: 1 + externalURLs.count
+            )
+        else {
             throw JobQueueStoreError.malformedQueue
         }
         if let expectedSourceRevision,
@@ -1519,7 +1530,8 @@ final class AppModel {
         let execution = try await prepareQueueExecution(
             recipe: recipe,
             plan: workflow.plan,
-            inputURLs: [asset.sourceURL],
+            inputURLs: [asset.sourceURL] + externalURLs,
+            externalSubtitleReview: externalSubtitleReview,
             destinationURL: destinationURL,
             sourceDisposition: sourceDisposition,
             retryingJobID: retryingQueueJobID
@@ -1553,11 +1565,16 @@ final class AppModel {
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaAsset {
+        let externalSubtitleReview = try queuedExternalSubtitleReview(
+            workflow: workflow,
+            payload: externalSubtitlePayload
+        )
         let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
         let queueExecution = try await beginQueueExecution(
             recipe: recipe,
             plan: workflow.plan,
             inputURLs: [asset.sourceURL] + externalURLs,
+            externalSubtitleReview: externalSubtitleReview,
             destinationURL: destinationURL,
             sourceDisposition: sourceDisposition,
             retryingJobID: retryingQueueJobID
@@ -1569,6 +1586,43 @@ final class AppModel {
             queueExecution: queueExecution,
             expectedSourceRevision: expectedSourceRevision
         )
+    }
+
+    private func queuedExternalSubtitleReview(
+        workflow: CompiledSavedWorkflow,
+        payload: ExternalSubtitleMuxPayload?
+    ) throws -> MediaQueueExternalSubtitleReview? {
+        guard let input = workflow.externalSubtitleInput else {
+            guard payload == nil else {
+                throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+            }
+            return nil
+        }
+        guard let payload,
+            payload.sourceURL.standardizedFileURL == input.sourceURL.standardizedFileURL,
+            payload.format == input.format,
+            payload.reviewedCleanupChangeCount == input.reviewedCleanupChangeCount
+        else {
+            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+        }
+        try payload.validateForReview()
+        let restoredCleanupChangeIDs: [Int]?
+        switch payload {
+        case .original:
+            restoredCleanupChangeIDs = nil
+        case .reviewedCleanup(_, let restoringIDs):
+            restoredCleanupChangeIDs = restoringIDs.sorted()
+        }
+        let review = MediaQueueExternalSubtitleReview(
+            format: input.format,
+            metadata: input.metadata,
+            restoredCleanupChangeIDs: restoredCleanupChangeIDs,
+            sourceSHA256: payload.preview.sourceSHA256
+        )
+        guard review.hasCanonicalStructure else {
+            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+        }
+        return review
     }
 
     @discardableResult
@@ -2048,6 +2102,7 @@ final class AppModel {
         recipe: SavedWorkflow,
         plan: ExecutionPlan,
         inputURLs: [URL],
+        externalSubtitleReview: MediaQueueExternalSubtitleReview?,
         destinationURL: URL,
         sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
@@ -2056,6 +2111,7 @@ final class AppModel {
             recipe: recipe,
             plan: plan,
             inputURLs: inputURLs,
+            externalSubtitleReview: externalSubtitleReview,
             destinationURL: destinationURL,
             sourceDisposition: sourceDisposition,
             retryingJobID: retryingJobID
@@ -2075,6 +2131,7 @@ final class AppModel {
         recipe: SavedWorkflow,
         plan: ExecutionPlan,
         inputURLs: [URL],
+        externalSubtitleReview: MediaQueueExternalSubtitleReview?,
         destinationURL: URL,
         sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
@@ -2093,11 +2150,17 @@ final class AppModel {
             access: .readWriteDirectory
         )
         let timestamp = Date()
+        let workflowIntent: MediaQueueWorkflowIntent =
+            if let externalSubtitleReview {
+                .savedWithExternalSubtitle(recipe, externalSubtitleReview)
+            } else {
+                .saved(recipe)
+            }
         let jobID: UUID
         if let retryingJobID {
             _ = try await recorder.approveReplan(
                 jobID: retryingJobID,
-                workflow: .saved(recipe),
+                workflow: workflowIntent,
                 inputs: inputs,
                 destinationDirectory: destinationDirectory,
                 outputDisplayName: destinationURL.lastPathComponent,
@@ -2109,7 +2172,7 @@ final class AppModel {
         } else {
             let job = MediaQueueJob(
                 createdAt: timestamp,
-                workflow: .saved(recipe),
+                workflow: workflowIntent,
                 inputs: inputs,
                 destinationDirectory: destinationDirectory,
                 outputDisplayName: destinationURL.lastPathComponent,
@@ -2332,9 +2395,9 @@ final class AppModel {
     private func executeAutomaticQueueAdmission(
         _ admission: MediaQueueAdmission
     ) async throws -> MediaQueueAutomaticExecutionOutcome {
-        guard case .saved(let workflow) = admission.job.workflow,
+        guard let workflow = admission.job.workflow.savedWorkflow,
+            MediaQueueAutomaticWorkflowPolicy.supports(admission.job),
             let sourceURL = admission.inputURLs.first,
-            admission.inputURLs.count == 1,
             let reviewedRevision = admission.job.inputs.first?.reviewedRevision
         else {
             return .needsReview
@@ -2357,6 +2420,24 @@ final class AppModel {
             runner: runner
         )
         let asset = try await inspector.inspect(sourceURL)
+        let resolvedExternalSubtitle:
+            (
+                input: SavedWorkflowExternalSubtitleInput,
+                payload: ExternalSubtitleMuxPayload
+            )?
+        if let review = admission.job.workflow.externalSubtitleReview {
+            guard admission.inputURLs.count == 2 else { return .needsReview }
+            do {
+                resolvedExternalSubtitle = try await automaticExternalSubtitle(
+                    review: review,
+                    sourceURL: admission.inputURLs[1]
+                )
+            } catch {
+                return .needsReview
+            }
+        } else {
+            resolvedExternalSubtitle = nil
+        }
         let availableVideoPresets: [VideoPreset]
         let availableAudioPresets: [AudioTranscodePreset]
         if SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset) {
@@ -2373,6 +2454,7 @@ final class AppModel {
                 workflow,
                 for: asset,
                 inputs: SavedWorkflowResolvedInputs(
+                    externalSubtitle: resolvedExternalSubtitle?.input,
                     availableVideoPresets: availableVideoPresets,
                     availableAudioPresets: availableAudioPresets
                 )
@@ -2380,18 +2462,68 @@ final class AppModel {
         } catch is SavedWorkflowCompilationError {
             return .needsReview
         }
-        guard compiled.plan.hasSameReviewedWork(as: admission.job.reviewedPlan),
-            (try? MediaFileRevisionReader().read(sourceURL)) == exactRevision
-        else {
+        guard compiled.plan.hasSameReviewedWork(as: admission.job.reviewedPlan) else {
+            return .needsReview
+        }
+        for (url, reference) in zip(admission.inputURLs, admission.job.inputs) {
+            guard let reviewedRevision = reference.reviewedRevision,
+                (try? MediaFileRevisionReader().read(url).atMillisecondPrecision)
+                    == reviewedRevision
+            else { return .needsReview }
+        }
+        guard (try? MediaFileRevisionReader().read(sourceURL)) == exactRevision else {
             return .needsReview
         }
         _ = try await executeVerifiedEdit(
             in: asset,
             destinationURL: admission.outputURL,
-            edit: .saved(compiled, nil),
+            edit: .saved(compiled, resolvedExternalSubtitle?.payload),
             expectedSourceRevision: exactRevision
         )
         return .verifiedSuccess
+    }
+
+    private func automaticExternalSubtitle(
+        review: MediaQueueExternalSubtitleReview,
+        sourceURL: URL
+    ) async throws -> (
+        input: SavedWorkflowExternalSubtitleInput,
+        payload: ExternalSubtitleMuxPayload
+    ) {
+        guard review.hasCanonicalStructure,
+            sourceURL.pathExtension.lowercased() == review.format.filenameExtension,
+            (try? TrackLanguageTag.canonical(review.metadata.language)) != nil
+        else {
+            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+        }
+        let preview: ExternalSubtitleFilePreview
+        switch review.format {
+        case .subRip:
+            preview = .subRip(try await SubtitleCleanupExecutor().preview(sourceURL: sourceURL))
+        case .ass, .ssa:
+            preview = .advanced(
+                try await AdvancedSubtitleCleanupExecutor().preview(sourceURL: sourceURL)
+            )
+        }
+        guard preview.sourceSHA256 == review.sourceSHA256 else {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
+        }
+        let payload: ExternalSubtitleMuxPayload =
+            if let restoredCleanupChangeIDs = review.restoredCleanupChangeIDs {
+                .reviewedCleanup(preview, restoringIDs: Set(restoredCleanupChangeIDs))
+            } else {
+                .original(preview)
+            }
+        try payload.validateForReview()
+        return (
+            SavedWorkflowExternalSubtitleInput(
+                sourceURL: sourceURL,
+                metadata: review.metadata,
+                format: review.format,
+                reviewedCleanupChangeCount: payload.reviewedCleanupChangeCount
+            ),
+            payload
+        )
     }
 
     private func beginHistory(

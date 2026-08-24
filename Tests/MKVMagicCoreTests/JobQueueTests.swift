@@ -95,6 +95,26 @@ final class JobQueueTests: XCTestCase {
         XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 0))
         XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 2))
 
+        let reviewedExternalSubtitle = SavedWorkflow(
+            name: "Clean and add English subtitles",
+            steps: [
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                reviewedExternalSubtitle,
+                inputCount: 1
+            )
+        )
+        XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                reviewedExternalSubtitle,
+                inputCount: 2
+            )
+        )
+
         let builtInJob = makeJob(id: id(20), createdAt: Date(timeIntervalSince1970: 0))
         let savedJob = MediaQueueJob(
             id: id(21),
@@ -107,6 +127,118 @@ final class JobQueueTests: XCTestCase {
         )
         XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(builtInJob))
         XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(savedJob))
+
+        let subtitleReference = MediaQueueFileReference(
+            id: id(22),
+            displayName: "Movie.en.srt",
+            securityScopedBookmark: Data([7, 8, 9])
+        )
+        let review = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: ExternalSubtitleTrackMetadata(
+                language: "en",
+                name: "English",
+                isDefault: true
+            ),
+            restoredCleanupChangeIDs: [2],
+            sourceSHA256: Data(repeating: 1, count: 32)
+        )
+        let reviewedExternalJob = MediaQueueJob(
+            id: id(23),
+            createdAt: builtInJob.createdAt,
+            workflow: .savedWithExternalSubtitle(reviewedExternalSubtitle, review),
+            inputs: builtInJob.inputs + [subtitleReference],
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(reviewedExternalJob))
+
+        let missingPrivateReviewJob = MediaQueueJob(
+            id: id(24),
+            createdAt: builtInJob.createdAt,
+            workflow: .saved(reviewedExternalSubtitle),
+            inputs: builtInJob.inputs + [subtitleReference],
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(missingPrivateReviewJob))
+
+        let missingCleanupSelection = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: review.metadata,
+            sourceSHA256: review.sourceSHA256
+        )
+        let mismatchedCleanupJob = MediaQueueJob(
+            id: id(25),
+            createdAt: builtInJob.createdAt,
+            workflow: .savedWithExternalSubtitle(
+                reviewedExternalSubtitle,
+                missingCleanupSelection
+            ),
+            inputs: builtInJob.inputs + [subtitleReference],
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(mismatchedCleanupJob))
+
+        let noncanonicalReview = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: review.metadata,
+            restoredCleanupChangeIDs: [2, 1],
+            sourceSHA256: review.sourceSHA256
+        )
+        let noncanonicalReviewJob = MediaQueueJob(
+            id: id(26),
+            createdAt: builtInJob.createdAt,
+            workflow: .savedWithExternalSubtitle(reviewedExternalSubtitle, noncanonicalReview),
+            inputs: builtInJob.inputs + [subtitleReference],
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(noncanonicalReviewJob))
+
+        let invalidDigestReview = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: review.metadata,
+            restoredCleanupChangeIDs: [2],
+            sourceSHA256: Data(repeating: 1, count: 31)
+        )
+        let invalidDigestJob = MediaQueueJob(
+            id: id(27),
+            createdAt: builtInJob.createdAt,
+            workflow: .savedWithExternalSubtitle(reviewedExternalSubtitle, invalidDigestReview),
+            inputs: builtInJob.inputs + [subtitleReference],
+            destinationDirectory: builtInJob.destinationDirectory,
+            outputDisplayName: builtInJob.outputDisplayName,
+            reviewedPlan: builtInJob.reviewedPlan
+        )
+        XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(invalidDigestJob))
+        for invalidReview in [
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: ExternalSubtitleTrackMetadata(language: "not valid!"),
+                restoredCleanupChangeIDs: [2],
+                sourceSHA256: review.sourceSHA256
+            ),
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: review.metadata,
+                restoredCleanupChangeIDs: [1, 1],
+                sourceSHA256: review.sourceSHA256
+            ),
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: review.metadata,
+                restoredCleanupChangeIDs: [-1],
+                sourceSHA256: review.sourceSHA256
+            ),
+        ] {
+            XCTAssertFalse(invalidReview.hasCanonicalStructure)
+        }
 
         for action in [
             SavedWorkflowAction.addExternalSubtitle,

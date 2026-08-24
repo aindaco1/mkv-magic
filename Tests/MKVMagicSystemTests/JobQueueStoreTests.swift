@@ -60,6 +60,69 @@ final class JobQueueStoreTests: XCTestCase {
         XCTAssertFalse(encoded.contains("/Users/"))
     }
 
+    func testRoundTripsPrivateExternalSubtitleReviewWithoutPortableSidecarData() async throws {
+        let store = try JSONJobQueueStore(fileURL: fileURL)
+        let workflow = SavedWorkflow(
+            name: "Clean and add English subtitles",
+            steps: [
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        let review = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: ExternalSubtitleTrackMetadata(
+                language: "en",
+                name: "English",
+                isDefault: true,
+                isHearingImpaired: true
+            ),
+            restoredCleanupChangeIDs: [0, 2],
+            sourceSHA256: Data(repeating: 0xAB, count: 32)
+        )
+        let job = makeJob(
+            id: id(2),
+            workflow: .savedWithExternalSubtitle(workflow, review),
+            inputs: [
+                MediaQueueFileReference(
+                    id: id(101),
+                    displayName: "Movie.mkv",
+                    securityScopedBookmark: Data([1, 2, 3]),
+                    reviewedRevision: MediaQueueFileRevision(
+                        fileSize: 10_000,
+                        modificationDate: base
+                    )
+                ),
+                MediaQueueFileReference(
+                    id: id(102),
+                    displayName: "Movie.en.srt",
+                    securityScopedBookmark: Data([7, 8, 9]),
+                    reviewedRevision: MediaQueueFileRevision(
+                        fileSize: 500,
+                        modificationDate: base
+                    )
+                ),
+            ]
+        )
+        let snapshot = MediaQueueSnapshot(jobs: [job], updatedAt: base)
+
+        try await store.save(snapshot)
+
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded, snapshot)
+        let encoded = try XCTUnwrap(String(data: Data(contentsOf: fileURL), encoding: .utf8))
+        XCTAssertTrue(encoded.contains("savedWithExternalSubtitle"))
+        XCTAssertTrue(encoded.contains("restoredCleanupChangeIDs"))
+        XCTAssertTrue(encoded.contains("sourceSHA256"))
+        XCTAssertTrue(encoded.contains("English"))
+        XCTAssertFalse(encoded.contains("/Users/Example/Movie.en.srt"))
+        XCTAssertFalse(encoded.contains("sourceURL"))
+        XCTAssertFalse(encoded.contains("subtitleText"))
+        XCTAssertFalse(encoded.contains("Downloaded from"))
+        XCTAssertFalse(encoded.contains("YTS.MX"))
+        XCTAssertTrue(encoded.contains("mkv-magic-job-queue-v1"))
+    }
+
     func testAtomicMutationsPersistPauseHoldReorderRetryAndCancel() async throws {
         let store = try JSONJobQueueStore(fileURL: fileURL)
         _ = try await store.append(makeJob(id: id(1)), at: base)
@@ -236,6 +299,46 @@ final class JobQueueStoreTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
         }
+
+        let externalWorkflow = SavedWorkflow(
+            name: "Clean and add subtitles",
+            steps: [
+                SavedWorkflowStep(action: .cleanExternalSubtitleText),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        let missingCleanupSelection = MediaQueueExternalSubtitleReview(
+            format: .subRip,
+            metadata: ExternalSubtitleTrackMetadata(language: "en"),
+            sourceSHA256: Data(repeating: 0xCD, count: 32)
+        )
+        let malformedExternalJob = makeJob(
+            id: id(6),
+            workflow: .savedWithExternalSubtitle(
+                externalWorkflow,
+                missingCleanupSelection
+            ),
+            inputs: [
+                MediaQueueFileReference(
+                    id: id(110),
+                    displayName: "Movie.mkv",
+                    securityScopedBookmark: Data([1])
+                ),
+                MediaQueueFileReference(
+                    id: id(111),
+                    displayName: "Movie.en.srt",
+                    securityScopedBookmark: Data([2])
+                ),
+            ]
+        )
+        do {
+            try await store.save(
+                MediaQueueSnapshot(jobs: [malformedExternalJob], updatedAt: base)
+            )
+            XCTFail("Expected external subtitle review mismatch refusal")
+        } catch {
+            XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
+        }
     }
 
     func testUnsafeOutputNamesAndForgedPlanImpactFailClosed() async throws {
@@ -285,6 +388,8 @@ final class JobQueueStoreTests: XCTestCase {
 
     private func makeJob(
         id: UUID,
+        workflow: MediaQueueWorkflowIntent? = nil,
+        inputs: [MediaQueueFileReference]? = nil,
         inputBookmark: Data = Data([1, 2, 3]),
         attemptCount: Int = 0,
         outputDisplayName: String = "Input — Edited.mkv",
@@ -301,8 +406,8 @@ final class JobQueueStoreTests: XCTestCase {
         MediaQueueJob(
             id: id,
             createdAt: base,
-            workflow: .builtIn(id: self.id(90), name: "Remove tracks"),
-            inputs: [
+            workflow: workflow ?? .builtIn(id: self.id(90), name: "Remove tracks"),
+            inputs: inputs ?? [
                 MediaQueueFileReference(
                     id: self.id(91),
                     displayName: "Input.mkv",

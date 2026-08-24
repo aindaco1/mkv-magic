@@ -354,7 +354,12 @@ public actor JSONJobQueueStore: JobQueueManaging {
             else {
                 throw JobQueueStoreError.malformedQueue
             }
-            if case .saved(let workflow) = job.workflow {
+            if case .savedWithExternalSubtitle = job.workflow,
+                !MediaQueueAutomaticWorkflowPolicy.supports(job)
+            {
+                throw JobQueueStoreError.malformedQueue
+            }
+            if let workflow = job.workflow.savedWorkflow {
                 do {
                     let migrated = try SavedWorkflowMigrator().migrate(workflow)
                     guard migrated == workflow else {

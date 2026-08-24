@@ -165,3 +165,9 @@ semantic versioning; public release tags are immutable and signed.
   permit filename cleanup without another media pass, skip files already in
   MKV, and reject unsafe card combinations. Run the same exact packet/chapter
   verifier through immediate execution or the lightweight automatic queue.
+- Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
+  automatic queue. Keep portable recipes path- and review-free while a private
+  queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track
+  metadata, format, and cleanup-restoration IDs. Reparse and recompile at
+  admission, reuse one verified remux, and move stale or malformed sidecars to
+  **Needs Review** without creating an output.
