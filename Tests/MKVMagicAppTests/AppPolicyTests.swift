@@ -344,6 +344,53 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(text.contains("Signed Fixture"))
     }
 
+    func testNativeReleaseVerificationReportIsConsistentAndPathFree() throws {
+        let baseline = AppBaselineSample(
+            architecture: "x86_64",
+            operatingSystem: AppBaselineOperatingSystem(
+                OperatingSystemVersion(majorVersion: 13, minorVersion: 7, patchVersion: 1)
+            ),
+            activeProcessorCount: 4,
+            mainViewReadyNanoseconds: 20_000_000,
+            residentMemoryBytes: 32_000_000,
+            windowCount: 0,
+            rootSubviewCount: 1
+        )
+        let fixture = BundledFixtureSmokeReport(
+            architecture: "x86_64",
+            sourceBytes: 12_000,
+            outputBytes: 12_100,
+            extractedTrackBytes: 8_000,
+            trackCount: 1,
+            originalPreserved: true
+        )
+        let report = try NativeReleaseVerificationReport(
+            appVersion: "1.2.3",
+            appBuild: "42",
+            baseline: baseline,
+            bundledToolCount: 5,
+            fixture: fixture
+        )
+        let encoded = try JSONEncoder().encode(report)
+        let text = String(decoding: encoded, as: UTF8.self)
+
+        XCTAssertEqual(report.schema, "mkv-magic-native-release-verification-v1")
+        XCTAssertEqual(report.architecture, "x86_64")
+        XCTAssertEqual(report.bundledToolCount, 5)
+        XCTAssertTrue(report.fixture.originalPreserved)
+        XCTAssertFalse(text.contains("/"))
+        XCTAssertFalse(text.contains("source.mkv"))
+        XCTAssertThrowsError(
+            try NativeReleaseVerificationReport(
+                appVersion: "1.2.3",
+                appBuild: "42",
+                baseline: baseline,
+                bundledToolCount: 4,
+                fixture: fixture
+            )
+        )
+    }
+
     func testFirstInspectedAssetIsSelectedAutomatically() {
         XCTAssertEqual(AssetSelectionPolicy.rowToSelect(currentRow: -1, assetCount: 1), 0)
         XCTAssertNil(AssetSelectionPolicy.rowToSelect(currentRow: 0, assetCount: 2))

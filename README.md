@@ -450,6 +450,13 @@ exact candidate DMG digest before publication, then redownloads and reverifies
 the public assets. See
 [docs/releases/M9_TWO_PHASE_PUBLICATION_SLICE.md](docs/releases/M9_TWO_PHASE_PUBLICATION_SLICE.md).
 
+The packaged app also exposes a path-free native release-verification command
+for clean-account testing. It constructs the real main view, records bounded
+startup memory facts, launches all five bundled tools, and completes the
+verified-output fixture from the currently selected architecture without
+reading user media. See
+[docs/releases/M9_NATIVE_RELEASE_VERIFICATION_SLICE.md](docs/releases/M9_NATIVE_RELEASE_VERIFICATION_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

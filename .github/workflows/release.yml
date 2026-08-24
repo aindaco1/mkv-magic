@@ -150,8 +150,7 @@ jobs:
             "$dmg" "$NOTARY_KEY_PATH" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER_ID" \
             "$MKV_MAGIC_RELEASE_ROOT/NOTARIZATION-DMG.json"
           MKV_MAGIC_REQUIRE_DISTRIBUTION=1 \
-          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
-          MKV_MAGIC_VERIFY_BUNDLED_FIXTURE=1 \
+          MKV_MAGIC_VERIFY_NATIVE_RELEASE=1 \
             ./scripts/release/verify-dmg.sh "$dmg"
 
       - name: Bundle corresponding source

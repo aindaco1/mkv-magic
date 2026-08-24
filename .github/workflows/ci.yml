@@ -97,8 +97,7 @@ jobs:
           ./scripts/release/sign-app.sh \
             "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" - none
           ./scripts/release/package.sh
-          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
-          MKV_MAGIC_VERIFY_BUNDLED_FIXTURE=1 \
+          MKV_MAGIC_VERIFY_NATIVE_RELEASE=1 \
             ./scripts/release/verify-dmg.sh \
               "$MKV_MAGIC_RELEASE_ROOT/MKV-Magic-0.0.0-universal.dmg"
 

@@ -37,8 +37,7 @@ while IFS= read -r artifact; do
 done < <(mkv_magic_attested_release_asset_names "$version")
 
 MKV_MAGIC_REQUIRE_DISTRIBUTION=1 \
-MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
-MKV_MAGIC_VERIFY_BUNDLED_FIXTURE=1 \
+MKV_MAGIC_VERIFY_NATIVE_RELEASE=1 \
     "$repo_root/scripts/release/verify-dmg.sh" \
         "$download_root/MKV-Magic-$version-universal.dmg"
 
