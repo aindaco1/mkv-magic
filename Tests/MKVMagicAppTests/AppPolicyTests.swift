@@ -1599,7 +1599,34 @@ final class AppPolicyTests: XCTestCase {
         for _ in 0..<10 { await Task.yield() }
 
         let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
-        XCTAssertTrue(labels.contains("Queue update failed: simulated persistence failure"))
+        XCTAssertTrue(
+            labels.contains {
+                $0.contains("Could not update the queue.")
+                    && $0.contains("The last confirmed queue remains shown")
+                    && $0.contains("Details: simulated persistence failure")
+            }
+        )
+    }
+
+    func testUserFacingErrorPresentationIsActionableSingleLineAndBounded() {
+        struct NoisyFailure: LocalizedError {
+            var errorDescription: String? {
+                "first line\nsecond\tline " + String(repeating: "x", count: 500)
+            }
+        }
+        let message = UserFacingErrorPresentation.message(
+            failure: "Could not finish the action.",
+            recovery: "The original is unchanged; try again.",
+            error: NoisyFailure()
+        )
+        let detail = message.components(separatedBy: "Details: ").last ?? ""
+
+        XCTAssertTrue(message.hasPrefix("Could not finish the action."))
+        XCTAssertTrue(message.contains("The original is unchanged; try again."))
+        XCTAssertFalse(message.contains("\n"))
+        XCTAssertFalse(message.contains("\t"))
+        XCTAssertLessThanOrEqual(detail.count, UserFacingErrorPresentation.maximumDetailCharacters)
+        XCTAssertTrue(detail.hasSuffix("…"))
     }
 
     @MainActor

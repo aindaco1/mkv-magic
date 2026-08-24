@@ -479,7 +479,11 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
                     statusLabel.stringValue = "Saved. Inspect a Matroska file to preview it."
                 }
             } catch {
-                statusLabel.stringValue = "Could not save: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not save workflows.",
+                    recovery: "Unsaved changes remain open; try Save again.",
+                    error: error
+                )
                 setEditingEnabled(true)
             }
         }
@@ -508,7 +512,11 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
                 statusLabel.stringValue = "Imported. Save to keep it."
             }
         } catch {
-            statusLabel.stringValue = "Could not import: \(error.localizedDescription)"
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not import that workflow.",
+                recovery: "Nothing was added; choose another MKV Magic workflow file.",
+                error: error
+            )
         }
     }
 
@@ -526,7 +534,11 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             try JSONSavedWorkflowStore.writePortableFile(workflow, to: url)
             statusLabel.stringValue = "Exported \(url.lastPathComponent)."
         } catch {
-            statusLabel.stringValue = "Could not export: \(error.localizedDescription)"
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not export the workflow.",
+                recovery: "The saved workflow is unchanged; choose another destination.",
+                error: error
+            )
         }
     }
 

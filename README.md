@@ -338,6 +338,12 @@ commit. These native AppKit regressions are a baseline, not a claimed manual
 keyboard-only or VoiceOver walkthrough. See
 [docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
 
+Central workflow, Queue, and History failures now use one bounded message
+contract: what failed, what remains safe or last-confirmed, how to retry, and a
+single-line technical detail capped at 240 characters. This is the first M8
+error-language slice, not a claimed every-window wording pass. See
+[docs/releases/M8_ERROR_LANGUAGE_FOUNDATION_SLICE.md](docs/releases/M8_ERROR_LANGUAGE_FOUNDATION_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

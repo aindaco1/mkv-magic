@@ -201,7 +201,11 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
                     try await onExport(destinationURL)
                     self.exportStatus.stringValue = "Privacy-safe report exported."
                 } catch {
-                    self.exportStatus.stringValue = "Export failed: \(error.localizedDescription)"
+                    self.exportStatus.stringValue = UserFacingErrorPresentation.message(
+                        failure: "Could not export the report.",
+                        recovery: "History is unchanged; choose another destination.",
+                        error: error
+                    )
                 }
                 self.exportButton.isEnabled = true
             }

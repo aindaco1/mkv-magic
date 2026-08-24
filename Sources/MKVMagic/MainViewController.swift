@@ -495,7 +495,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 controller.window?.makeKeyAndOrderFront(nil)
                 statusLabel.stringValue = records.isEmpty ? "No history yet" : "History loaded"
             } catch {
-                statusLabel.stringValue = "Could not load history: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not load History.",
+                    recovery: "Media work is unchanged; close and reopen History to retry.",
+                    error: error
+                )
             }
         }
     }
@@ -548,7 +552,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue =
                     snapshot.jobs.isEmpty ? "Queue is empty" : "Queue loaded"
             } catch {
-                statusLabel.stringValue = "Could not load queue: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not load Queue.",
+                    recovery: "Media work is unchanged; close and reopen Queue to retry.",
+                    error: error
+                )
             }
         }
     }
@@ -616,7 +624,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     ? "Create your first portable workflow"
                     : "Workflows loaded"
             } catch {
-                statusLabel.stringValue = "Could not load workflows: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not load workflows.",
+                    recovery: "No workflow was changed; close and reopen Workflows to retry.",
+                    error: error
+                )
             }
         }
     }

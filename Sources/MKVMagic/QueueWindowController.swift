@@ -291,7 +291,11 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
                 }
                 statusMessage = QueuePresentation.summary(self.snapshot)
             } catch {
-                statusMessage = "Queue update failed: \(error.localizedDescription)"
+                statusMessage = UserFacingErrorPresentation.message(
+                    failure: "Could not update the queue.",
+                    recovery: "The last confirmed queue remains shown; try the action again.",
+                    error: error
+                )
             }
             self.refreshSelection()
             self.statusLabel.stringValue = statusMessage

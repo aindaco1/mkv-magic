@@ -1274,6 +1274,13 @@ notifications, and explicit atomic-commit cancellation closure. These checks
 are not manual VoiceOver, keyboard-only, contrast, reduced-motion, localization,
 or every-window acceptance; those broader passes remain open.
 
+The first error-language slice centralizes workflow save/import/export, Queue
+mutation, History report export, and main-window History/Queue/workflow load
+failures. Each migrated message names the failed action, safe or last-confirmed
+state, concrete recovery, and a whitespace-normalized detail capped at 240
+characters. This is a bounded foundation, not the complete contextual wording,
+VoiceOver-announcement, localization, or representative-failure acceptance pass.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1
