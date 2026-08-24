@@ -58,7 +58,9 @@ final class EncodingBenchmarkWindowController: NSWindowController, NSWindowDeleg
         window.setContentSize(NSSize(width: 610, height: 500))
         window.minSize = NSSize(width: 540, height: 440)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = content.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: content.preferredInitialFirstResponder
+        )
         super.init(window: window)
         window.delegate = self
         window.center()

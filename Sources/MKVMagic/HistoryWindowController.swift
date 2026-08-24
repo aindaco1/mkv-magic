@@ -14,7 +14,9 @@ final class HistoryWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 760, height: 560))
         window.minSize = NSSize(width: 620, height: 420)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = content.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: content.preferredInitialFirstResponder
+        )
         super.init(window: window)
         window.center()
     }

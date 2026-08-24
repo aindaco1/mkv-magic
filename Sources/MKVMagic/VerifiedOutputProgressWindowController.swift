@@ -67,7 +67,7 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
             progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
             buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
-        window.initialFirstResponder = cancelButton
+        window.configureMKVMagicKeyboardNavigation(startingAt: cancelButton)
     }
 
     @available(*, unavailable)

@@ -25,6 +25,20 @@ private struct FixedAppQueueEnvironmentReader: MediaQueueSchedulingEnvironmentRe
 
 final class AppPolicyTests: XCTestCase {
     @MainActor
+    func testKeyboardNavigationPolicyEnablesAutomaticRecalculationAndKeepsInitialResponder() {
+        let content = NSViewController()
+        let firstResponder = NSButton(title: "Start here", target: nil, action: nil)
+        content.view.addSubview(firstResponder)
+        let window = NSWindow(contentViewController: content)
+        window.autorecalculatesKeyViewLoop = false
+
+        window.configureMKVMagicKeyboardNavigation(startingAt: firstResponder)
+
+        XCTAssertTrue(window.autorecalculatesKeyViewLoop)
+        XCTAssertTrue(window.initialFirstResponder === firstResponder)
+    }
+
+    @MainActor
     func testAppDelegateAcceptsNarrowUpdateAdapter() {
         let checker = FakeUpdateChecker()
         _ = AppDelegate(updateController: checker)

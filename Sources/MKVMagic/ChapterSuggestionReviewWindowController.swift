@@ -13,7 +13,9 @@ final class ChapterSuggestionReviewWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 680, height: 520))
         window.minSize = NSSize(width: 560, height: 400)
-        window.initialFirstResponder = reviewViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: reviewViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         reviewViewController.onCancel = { [weak self] in self?.finish(with: []) }
         reviewViewController.onAdd = { [weak self] suggestions in

@@ -147,7 +147,9 @@ final class TrimWindowController: NSWindowController {
         window.styleMask = [.titled, .resizable]
         window.setContentSize(NSSize(width: 840, height: 650))
         window.minSize = NSSize(width: 700, height: 570)
-        window.initialFirstResponder = trimViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: trimViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         trimViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         trimViewController.onContinue = { [weak self] preview in

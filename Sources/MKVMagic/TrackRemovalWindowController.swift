@@ -41,7 +41,9 @@ final class TrackRemovalWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 620, height: 480))
         window.minSize = NSSize(width: 540, height: 420)
-        window.initialFirstResponder = removalViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: removalViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         removalViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         removalViewController.onPreview = { [weak self] removal in

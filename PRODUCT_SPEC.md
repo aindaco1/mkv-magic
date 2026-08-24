@@ -1329,6 +1329,17 @@ target, modifier, and shortcut, plus restoration of a hidden main window. This
 improves discoverable keyboard reachability but does not claim a complete Full
 Keyboard Access traversal of every control.
 
+The dynamic key-view-loop continuation puts the main window and all 18
+implemented window-controller surfaces on one policy: each asks AppKit to own
+automatic key-view-loop recalculation while preserving the intentional initial
+keyboard target already assigned to the window. This covers surfaces with
+dynamic Queue actions, encoding-test cancellation, workflow editing, trim,
+join, track, subtitle, and chapter controls without maintaining a brittle
+hand-linked responder chain. A live AppKit regression proves both policy
+properties, and the auto-discovered source gate rejects future windows that
+bypass it. Explicit Tab/Shift-Tab ordering with Full Keyboard Access on and off
+remains manual M8 acceptance.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

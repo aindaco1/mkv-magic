@@ -382,6 +382,13 @@ and Encoding Test. Standard Minimize, Zoom, and Bring All to Front commands are
 present too. See
 [docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md](docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md).
 
+The main window and all 18 implemented auxiliary windows now share one native
+keyboard-navigation policy: each keeps an intentional starting control and asks
+AppKit to own automatic key-view-loop recalculation as each window's contents
+evolve. A source gate keeps future windows on that policy. This is automated
+AppKit coverage, not a claimed manual Full Keyboard Access traversal. See
+[docs/releases/M8_DYNAMIC_KEY_VIEW_LOOP_SLICE.md](docs/releases/M8_DYNAMIC_KEY_VIEW_LOOP_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

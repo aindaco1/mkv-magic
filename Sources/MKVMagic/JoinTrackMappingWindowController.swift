@@ -17,7 +17,9 @@ final class JoinTrackMappingWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 920, height: 520))
         window.minSize = NSSize(width: 700, height: 420)
-        window.initialFirstResponder = mappingViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: mappingViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         mappingViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         mappingViewController.onUseMapping = { [weak self] mapping in

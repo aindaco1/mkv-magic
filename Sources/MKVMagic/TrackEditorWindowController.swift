@@ -14,7 +14,9 @@ final class TrackEditorWindowController: NSWindowController {
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 560, height: 510))
         window.minSize = NSSize(width: 520, height: 480)
-        window.initialFirstResponder = editorViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: editorViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         editorViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         editorViewController.onPreview = { [weak self] edit in self?.finish(with: edit) }

@@ -591,7 +591,9 @@ final class LosslessJoinWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 860, height: 650))
         window.minSize = NSSize(width: 720, height: 560)
-        window.initialFirstResponder = joinViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: joinViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         joinViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         joinViewController.onContinue = { [weak self] selection in

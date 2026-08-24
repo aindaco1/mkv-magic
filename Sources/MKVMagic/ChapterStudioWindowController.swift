@@ -32,7 +32,9 @@ final class ChapterStudioWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 980, height: 680))
         window.minSize = NSSize(width: 820, height: 580)
-        window.initialFirstResponder = studioViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: studioViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         studioViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         studioViewController.onUseChanges = { [weak self] document in

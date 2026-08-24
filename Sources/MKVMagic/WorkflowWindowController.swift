@@ -25,7 +25,9 @@ final class WorkflowWindowController: NSWindowController {
         window.minSize = NSSize(width: 680, height: 480)
         window.styleMask.insert(.resizable)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = viewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: viewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
     }
 

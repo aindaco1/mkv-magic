@@ -41,7 +41,9 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 620, height: 530))
         window.minSize = NSSize(width: 560, height: 500)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = muxViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: muxViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         muxViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         muxViewController.onContinue = { [weak self] metadata in

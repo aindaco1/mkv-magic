@@ -27,7 +27,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.minSize = NSSize(width: 820, height: 520)
         window.center()
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = content.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: content.preferredInitialFirstResponder
+        )
         let controller = NSWindowController(window: window)
         windowController = controller
         controller.showWindow(nil)

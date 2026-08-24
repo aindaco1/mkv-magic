@@ -6,8 +6,8 @@ cd "$repo_root"
 
 failure=0
 while IFS= read -r controller; do
-    if ! rg -q 'initialFirstResponder' "$controller"; then
-        echo "window controller lacks an intentional initial responder: $controller" >&2
+    if ! rg -q 'configureMKVMagicKeyboardNavigation' "$controller"; then
+        echo "window controller lacks the shared keyboard navigation policy: $controller" >&2
         failure=1
     fi
     if ! rg -q 'setAccessibility(Label|Help)|accessibilityDescription' "$controller"; then
@@ -15,6 +15,11 @@ while IFS= read -r controller; do
         failure=1
     fi
 done < <(find Sources/MKVMagic -maxdepth 1 -type f -name '*WindowController.swift' | sort)
+
+if ! rg -q 'configureMKVMagicKeyboardNavigation' Sources/MKVMagic/AppDelegate.swift; then
+    echo "main window lacks the shared keyboard navigation policy" >&2
+    failure=1
+fi
 
 custom_motion_pattern='NSAnimationContext|\.animator\(\)|CABasicAnimation|CAKeyframeAnimation|NSViewAnimation'
 if rg -n "$custom_motion_pattern" Sources/MKVMagic --glob '*.swift' >&2; then

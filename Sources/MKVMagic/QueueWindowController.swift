@@ -28,7 +28,9 @@ final class QueueWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 840, height: 520))
         window.minSize = NSSize(width: 700, height: 420)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = content.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: content.preferredInitialFirstResponder
+        )
         super.init(window: window)
         window.center()
     }

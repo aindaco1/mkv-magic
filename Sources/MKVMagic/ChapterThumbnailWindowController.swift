@@ -20,7 +20,9 @@ final class ChapterThumbnailWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 720, height: 350))
         window.minSize = NSSize(width: 560, height: 300)
-        window.initialFirstResponder = chooser.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: chooser.preferredInitialFirstResponder
+        )
         super.init(window: window)
         chooser.onCancel = { [weak self] in self?.finish(with: nil) }
         chooser.onChoose = { [weak self] time in self?.finish(with: time) }

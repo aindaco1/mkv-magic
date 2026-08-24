@@ -14,7 +14,9 @@ final class EmbeddedSubtitleTrackPickerWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 620, height: 280))
         window.minSize = NSSize(width: 540, height: 260)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = pickerViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: pickerViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         pickerViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         pickerViewController.onContinue = { [weak self] trackUID in

@@ -374,7 +374,9 @@ final class CommonFormatJoinWindowController: NSWindowController {
             width: 620,
             height: hasVideoTarget ? 610 : (hasAudioTarget ? 520 : 460)
         )
-        window.initialFirstResponder = choiceViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: choiceViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
         choiceViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         choiceViewController.onContinue = { [weak self] plan in self?.finish(with: plan) }

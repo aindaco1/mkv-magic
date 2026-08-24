@@ -193,7 +193,9 @@ final class SubtitleCleanupWindowController: NSWindowController {
         window.minSize = NSSize(width: 640, height: 480)
         window.styleMask.insert(.resizable)
         window.tabbingMode = .disallowed
-        window.initialFirstResponder = cleanupViewController.preferredInitialFirstResponder
+        window.configureMKVMagicKeyboardNavigation(
+            startingAt: cleanupViewController.preferredInitialFirstResponder
+        )
         super.init(window: window)
     }
 
