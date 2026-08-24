@@ -3464,6 +3464,10 @@ final class AppPolicyTests: XCTestCase {
             window.initialFirstResponder?.accessibilityLabel(),
             "Video format"
         )
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.contains("subtitle tracks and nested chapters are preserved") }
+        )
         let visibleButtons = buttons(in: content).filter { !$0.isHiddenOrHasHiddenAncestor }
         XCTAssertFalse(visibleButtons.contains { $0.title == "Set In" || $0.title == "Set Out" })
         let review = try XCTUnwrap(

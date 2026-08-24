@@ -119,10 +119,14 @@ enum TrimPresentationPolicy {
                 choice.audioPolicy.transcodePreset.map {
                     "\(exact.encodedAudioTrackIDs.count) audio track(s) encoded once to \($0.displayName)"
                 } ?? "all audio packet-copied"
+            let subtitles =
+                exact.copiedSubtitleTrackIDs.isEmpty
+                ? "no subtitle tracks"
+                : "\(exact.copiedSubtitleTrackIDs.count) subtitle track(s) packet-copied"
             if exact.resolvedPlan.operation == .transcode {
                 return "CONVERT • 1 video encode • \(presetName(choice.videoPreset)) • "
                     + "\(encodingSummary(choice))\n"
-                    + "Complete file • original nested chapters preserved • \(audio)"
+                    + "Complete file • original nested chapters preserved • \(audio) • \(subtitles)"
             }
             return "EXACT • 1 video encode • \(presetName(choice.videoPreset)) • "
                 + "\(encodingSummary(choice))\nSaved range: \(output) • \(audio)"
@@ -316,7 +320,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         let explanation = NSTextField(
             wrappingLabelWithString:
                 operation == .transcode
-                ? "Convert the complete video once into a new MKV. Audio is preserved exactly unless you choose a conversion; nested chapters and the original file stay unchanged."
+                ? "Convert the complete video once into a new MKV. Audio is preserved exactly unless you choose a conversion; subtitle tracks and nested chapters are preserved, and the original file stays unchanged."
                 : "Set exact numeric in and out points. Fast Trim may move them forward to keyframes; Exact Trim keeps them and encodes video once. The original is never replaced."
         )
         explanation.textColor = .secondaryLabelColor
@@ -751,7 +755,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             inputMessage.textColor = .secondaryLabelColor
             inputMessage.stringValue =
                 operation == .transcode
-                ? "Video will be encoded once; audio and nested chapters follow the reviewed choices."
+                ? "Video will be encoded once; audio, subtitle tracks, and nested chapters follow the reviewed choices."
                 : request.mode == .fast
                     ? "Fast Trim copies every stream; review will disclose keyframe adjustments."
                     : "Exact Trim encodes video once; audio is preserved according to your choice."

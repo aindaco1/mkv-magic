@@ -37,6 +37,62 @@ final class ExactTrimPlannerTests: XCTestCase {
         XCTAssertEqual(transcode.range, fullRange)
         XCTAssertEqual(transcode.videoEncodeCount, 1)
         XCTAssertEqual(transcode.audioEncodeCount, 0)
+        XCTAssertThrowsError(
+            try ExactTrimPlanner().resolve(
+                source: source,
+                range: range(1, 9),
+                choice: choice,
+                operation: .transcode,
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .invalidRange) }
+    }
+
+    func testCompleteFileTranscodePacketCopiesSubtitlesButDataStillFailsClosed() throws {
+        let subtitle = MediaTrack(
+            id: 2,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            language: "en",
+            title: "English",
+            isDefault: true
+        )
+        let source = makeSource(extraTrack: subtitle)
+        let choice = ExactTrimChoice(
+            videoPreset: .hevcCompatibility,
+            videoRateControl: .averageBitrate(2_000_000)
+        )
+        let plan = try ExactTrimPlanner().resolve(
+            source: source,
+            range: MediaTrimRange(start: .zero, end: try XCTUnwrap(source.duration)),
+            choice: choice,
+            operation: .transcode,
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+
+        XCTAssertEqual(plan.subtitleTrackIDs, [2])
+        XCTAssertEqual(plan.trackIDsInOutputOrder, [0, 1, 2])
+        XCTAssertEqual(plan.videoEncodeCount, 1)
+
+        let dataSource = makeSource(
+            extraTrack: MediaTrack(id: 2, kind: .data, codec: "bin_data")
+        )
+        XCTAssertThrowsError(
+            try ExactTrimPlanner().resolve(
+                source: dataSource,
+                range: MediaTrimRange(
+                    start: .zero,
+                    end: try XCTUnwrap(dataSource.duration)
+                ),
+                choice: choice,
+                operation: .transcode,
+                availableVideoPresets: [.hevcCompatibility],
+                aacAvailable: true
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedTracks) }
     }
 
     func testResolvesOneVideoGenerationWithExplicitCopiedOrAACAudio() throws {

@@ -6,26 +6,30 @@ import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
-private actor ExactTrimToolRunner: CommandRunning {
+private actor ExactTrimToolRunner: CommandRunning, CommandLineDigesting {
     private let sourceURL: URL
     private let sourceChapters: Data
     private let failingTool: String?
     private let wrongOutputChapters: Bool
+    private let wrongPacketCopies: Bool
     private let sourceToMutate: URL?
     private var outputChapters: Data?
     private var requests = [CommandRequest]()
+    private var keyedDigestCalls = 0
 
     init(
         sourceURL: URL,
         sourceChapters: Data,
         failingTool: String? = nil,
         wrongOutputChapters: Bool = false,
+        wrongPacketCopies: Bool = false,
         sourceToMutate: URL? = nil
     ) {
         self.sourceURL = sourceURL
         self.sourceChapters = sourceChapters
         self.failingTool = failingTool
         self.wrongOutputChapters = wrongOutputChapters
+        self.wrongPacketCopies = wrongPacketCopies
         self.sourceToMutate = sourceToMutate
     }
 
@@ -79,6 +83,38 @@ private actor ExactTrimToolRunner: CommandRunning {
     }
 
     func capturedRequests() -> [CommandRequest] { requests }
+
+    func digestLines(
+        _ requests: [CommandRequest],
+        policy: CommandLineDigestPolicy
+    ) async throws -> CommandLineDigest {
+        CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 1)
+    }
+
+    func digestTrailingHexLines(
+        _ requests: [CommandRequest],
+        policy: CommandTrailingHexDigestPolicy
+    ) async throws -> CommandLineDigest {
+        CommandLineDigest(sha256: Data(repeating: 7, count: 32), lineCount: 1)
+    }
+
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        keyedDigestCalls += 1
+        let digestByte: UInt8 =
+            wrongPacketCopies && keyedDigestCalls.isMultiple(of: 2)
+            ? 8 : 7
+        let keys = Set(requests.flatMap { $0.emittedKeyToDigestKey.values })
+        return Dictionary(
+            uniqueKeysWithValues: keys.map {
+                (
+                    $0,
+                    CommandLineDigest(sha256: Data(repeating: digestByte, count: 32), lineCount: 1)
+                )
+            })
+    }
 
     private func value(after flag: String, in arguments: [String]) -> String? {
         guard let index = arguments.firstIndex(of: flag), arguments.indices.contains(index + 1)
@@ -215,12 +251,45 @@ final class ExactTrimExecutorTests: XCTestCase {
         let ffmpeg = try XCTUnwrap(
             requests.first { $0.executableURL.lastPathComponent == "ffmpeg" }
         )
-        XCTAssertEqual(value(after: "-ss", in: ffmpeg.arguments), "0.000000000")
-        XCTAssertEqual(value(after: "-t", in: ffmpeg.arguments), "10.000000000")
+        XCTAssertFalse(ffmpeg.arguments.contains("-ss"))
+        XCTAssertFalse(ffmpeg.arguments.contains("-t"))
         XCTAssertEqual(
             requests.filter { $0.executableURL.lastPathComponent == "ffmpeg" }.count,
             1
         )
+    }
+
+    func testWholeFileTranscodePacketAuditFailureNeverCommits() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let runner = ExactTrimToolRunner(
+            sourceURL: fixture.source.sourceURL,
+            sourceChapters: fixture.chapterData,
+            wrongPacketCopies: true
+        )
+        let executor = makeExecutor(
+            runner: runner,
+            inspector: ExactTrimInspector(source: fixture.source, behavior: .fullDuration)
+        )
+        let preview = try await executor.preview(
+            source: fixture.source,
+            range: MediaTrimRange(
+                start: .zero,
+                end: try XCTUnwrap(fixture.source.duration)
+            ),
+            choice: choice(),
+            operation: .transcode,
+            capabilities: capabilities()
+        )
+        let destination = fixture.root.appendingPathComponent("Packet mismatch.mkv")
+
+        await exactAssertThrows(
+            try await executor.execute(preview: preview, destinationURL: destination)
+        ) { error in
+            guard case .copiedTrackVerificationFailed = error as? ExactTrimExecutionError
+            else { return XCTFail("Unexpected error: \(error)") }
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     func testExecutesOneVideoGenerationCopiesAudioAndAuditsExactChaptersTwice() async throws {
@@ -468,6 +537,7 @@ final class ExactTrimExecutorTests: XCTestCase {
     ) -> ExactTrimExecutor<ExactTrimToolRunner, ExactTrimInspector> {
         ExactTrimExecutor(
             ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
             mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
             mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
             runner: runner,

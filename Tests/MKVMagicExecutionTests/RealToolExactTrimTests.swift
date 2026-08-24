@@ -65,6 +65,7 @@ final class RealToolExactTrimTests: XCTestCase {
             )
             let executor = ExactTrimExecutor(
                 ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
@@ -219,6 +220,7 @@ final class RealToolExactTrimTests: XCTestCase {
             let sourceAudio = try XCTUnwrap(source.tracks.first { $0.kind == .audio })
             let executor = ExactTrimExecutor(
                 ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
@@ -310,6 +312,7 @@ final class RealToolExactTrimTests: XCTestCase {
             )
             let executor = ExactTrimExecutor(
                 ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
@@ -340,11 +343,94 @@ final class RealToolExactTrimTests: XCTestCase {
         }
     }
 
+    func testBundledToolsCompleteConversionPacketCopiesEmbeddedTextSubtitle() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("The bundled H.264 fixture encoder is unavailable")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-convert-subtitle"
+        ) { root in
+            let sourceURL = try await makeFixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                includeSubtitle: true
+            )
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            XCTAssertEqual(source.tracks.map(\.kind), [.video, .audio, .subtitle])
+            let sourceSubtitle = try XCTUnwrap(
+                source.tracks.first { $0.kind == .subtitle }
+            )
+            let executor = ExactTrimExecutor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try await executor.preview(
+                source: source,
+                range: MediaTrimRange(
+                    start: .zero,
+                    end: try XCTUnwrap(source.duration)
+                ),
+                choice: ExactTrimChoice(
+                    videoPreset: .h264Compatibility,
+                    videoRateControl: .averageBitrate(500_000),
+                    audioPolicy: .packetCopy
+                ),
+                operation: .transcode,
+                capabilities: capabilities
+            )
+            XCTAssertEqual(preview.copiedSubtitleTrackIDs, [sourceSubtitle.id])
+            let destination = root.appendingPathComponent("Converted with Subtitles.mkv")
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: destination
+            )
+
+            let outputSubtitle = try XCTUnwrap(
+                output.tracks.first { $0.kind == .subtitle }
+            )
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+            XCTAssertEqual(outputSubtitle.codec, sourceSubtitle.codec)
+            XCTAssertEqual(outputSubtitle.language, sourceSubtitle.language)
+            XCTAssertEqual(outputSubtitle.title, sourceSubtitle.title)
+            XCTAssertEqual(outputSubtitle.isForced, sourceSubtitle.isForced)
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+        }
+    }
+
     private func makeFixture(
         root: URL,
         ffmpegURL: URL,
         mkvpropeditURL: URL,
-        runner: FoundationCommandRunner
+        runner: FoundationCommandRunner,
+        includeSubtitle: Bool = false
     ) async throws -> URL {
         let rawVideoURL = root.appendingPathComponent("frames.yuv")
         let rawAudioURL = root.appendingPathComponent("audio.pcm")
@@ -360,31 +446,57 @@ final class RealToolExactTrimTests: XCTestCase {
         }
         try video.write(to: rawVideoURL)
         try Data(repeating: 0, count: 48_000 * 2 * 2 * 10).write(to: rawAudioURL)
+        let subtitleURL = root.appendingPathComponent("english.srt")
+        if includeSubtitle {
+            try Data(
+                "1\n00:00:01,000 --> 00:00:02,000\nFirst cue\n\n"
+                    .appending("2\n00:00:06,000 --> 00:00:07,000\nSecond cue\n")
+                    .utf8
+            ).write(to: subtitleURL)
+        }
 
+        var arguments = [
+            "-hide_banner", "-nostdin", "-loglevel", "error",
+            "-f", "rawvideo", "-pixel_format", "yuv420p",
+            "-video_size", "\(width)x\(height)", "-framerate", "10",
+            "-i", rawVideoURL.path,
+            "-f", "s16le", "-ar", "48000", "-ac", "2",
+            "-i", rawAudioURL.path,
+        ]
+        if includeSubtitle {
+            arguments.append(contentsOf: ["-f", "srt", "-i", subtitleURL.path])
+        }
+        arguments.append(contentsOf: ["-map", "0:v:0", "-map", "1:a:0"])
+        if includeSubtitle {
+            arguments.append(contentsOf: ["-map", "2:s:0"])
+        }
+        arguments.append(contentsOf: [
+            "-frames:v", "\(frameCount)",
+            "-c:v", "h264_videotoolbox", "-profile:v", "high",
+            "-g", "20", "-bf", "0", "-b:v", "500000",
+            "-color_primaries", "bt709", "-color_trc", "bt709",
+            "-colorspace", "bt709", "-color_range", "tv",
+            "-bsf:v",
+            "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+            "-c:a", "aac", "-b:a", "192000",
+            "-c:s", "srt",
+            "-metadata", "title=Exact Trim Fixture",
+            "-metadata:s:a:0", "language=eng",
+            "-metadata:s:a:0", "title=Original Mix",
+            "-disposition:a:0", "default",
+        ])
+        if includeSubtitle {
+            arguments.append(contentsOf: [
+                "-metadata:s:s:0", "language=eng",
+                "-metadata:s:s:0", "title=English Full",
+                "-disposition:s:0", "forced",
+            ])
+        }
+        arguments.append(sourceURL.path)
         let encode = try await runner.run(
             CommandRequest(
                 executableURL: ffmpegURL,
-                arguments: [
-                    "-hide_banner", "-nostdin", "-loglevel", "error",
-                    "-f", "rawvideo", "-pixel_format", "yuv420p",
-                    "-video_size", "\(width)x\(height)", "-framerate", "10",
-                    "-i", rawVideoURL.path,
-                    "-f", "s16le", "-ar", "48000", "-ac", "2",
-                    "-i", rawAudioURL.path,
-                    "-frames:v", "\(frameCount)",
-                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
-                    "-g", "20", "-bf", "0", "-b:v", "500000",
-                    "-color_primaries", "bt709", "-color_trc", "bt709",
-                    "-colorspace", "bt709", "-color_range", "tv",
-                    "-bsf:v",
-                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
-                    "-c:a", "aac", "-b:a", "192000",
-                    "-metadata", "title=Exact Trim Fixture",
-                    "-metadata:s:a:0", "language=eng",
-                    "-metadata:s:a:0", "title=Original Mix",
-                    "-disposition:a:0", "default",
-                    sourceURL.path,
-                ],
+                arguments: arguments,
                 timeout: 120
             )
         )

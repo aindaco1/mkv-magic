@@ -6,7 +6,17 @@ import XCTest
 
 final class ExactTrimCommandBuilderTests: XCTestCase {
     func testBuildsReviewedWholeFileTranscodeWithOneGeneration() throws {
-        let fixture = try makeFixture()
+        let fixture = try makeFixture(
+            extraTrack: MediaTrack(
+                id: 2,
+                kind: .subtitle,
+                codec: "subrip",
+                codecID: "S_TEXT/UTF8",
+                language: "en",
+                title: "English",
+                isDefault: true
+            )
+        )
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let plan = try ExactTrimPlanner().resolve(
             source: fixture.source,
@@ -29,10 +39,16 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
             outputURL: fixture.root.appendingPathComponent("Converted.mkv")
         )
 
-        XCTAssertEqual(value(after: "-ss", in: command.arguments), "0.000000000")
-        XCTAssertEqual(value(after: "-t", in: command.arguments), "10.000000000")
+        XCTAssertFalse(command.arguments.contains("-ss"))
+        XCTAssertFalse(command.arguments.contains("-t"))
+        XCTAssertFalse(command.arguments.contains("-avoid_negative_ts"))
         XCTAssertEqual(command.encodedVideoTrackID, 0)
         XCTAssertEqual(command.copiedAudioTrackIDs, [1])
+        XCTAssertEqual(command.copiedSubtitleTrackIDs, [2])
+        XCTAssertEqual(
+            values(afterEach: "-map", in: command.arguments),
+            ["0:0", "0:1", "0:2"]
+        )
     }
 
     func testBuildsOneExactVideoGenerationAndPacketCopiesAudio() throws {
@@ -255,7 +271,10 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         let source: MediaAsset
     }
 
-    private func makeFixture(hdr10: Bool = false) throws -> Fixture {
+    private func makeFixture(
+        hdr10: Bool = false,
+        extraTrack: MediaTrack? = nil
+    ) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-exact-command-\(UUID().uuidString)",
             isDirectory: true
@@ -263,6 +282,8 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         let sourceURL = root.appendingPathComponent("Source.mkv")
         try Data([1]).write(to: sourceURL)
+        var tracks = [videoTrack(hdr10: hdr10), audioTrack()]
+        if let extraTrack { tracks.append(extraTrack) }
         return Fixture(
             root: root,
             source: MediaAsset(
@@ -270,7 +291,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
                 container: "matroska,webm",
                 duration: MediaTime(nanoseconds: 10_000_000_000),
                 fileSize: 1,
-                tracks: [videoTrack(hdr10: hdr10), audioTrack()],
+                tracks: tracks,
                 metadata: ["title": "Feature"],
                 chapterEntryCount: 0,
                 globalTagCount: 0,

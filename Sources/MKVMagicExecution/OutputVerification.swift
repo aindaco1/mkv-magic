@@ -489,6 +489,7 @@ public enum ExactTrimVerificationError: Error, Equatable, Sendable {
     case wrongTrackOrder
     case videoMismatch
     case audioMismatch(trackID: Int)
+    case subtitleMismatch(trackID: Int)
     case trackMetadataMismatch(trackID: Int)
     case attachmentsChanged
     case metadataChanged
@@ -507,6 +508,8 @@ extension ExactTrimVerificationError: LocalizedError {
         case .videoMismatch: "The processed video does not match its encoding choice."
         case .audioMismatch(let trackID):
             "The processed audio for source track \(trackID) changed unexpectedly."
+        case .subtitleMismatch(let trackID):
+            "The processed subtitle for source track \(trackID) changed unexpectedly."
         case .trackMetadataMismatch(let trackID):
             "Track \(trackID) lost reviewed language, name, or disposition metadata."
         case .attachmentsChanged: "Video processing did not preserve every attachment."
@@ -583,6 +586,15 @@ public struct ExactTrimOutputVerifier: Sendable {
                     )
                 else {
                     throw ExactTrimVerificationError.audioMismatch(trackID: sourceTrack.id)
+                }
+            case .subtitle:
+                guard resolvedPlan.operation == .transcode,
+                    ExactTrimCopiedSubtitleSnapshot(outputTrack)
+                        == ExactTrimCopiedSubtitleSnapshot(sourceTrack)
+                else {
+                    throw ExactTrimVerificationError.subtitleMismatch(
+                        trackID: sourceTrack.id
+                    )
                 }
             default:
                 throw ExactTrimVerificationError.wrongTrackOrder
@@ -1261,6 +1273,18 @@ private struct ExactTrimCopiedAudioSnapshot: Equatable {
         channelLayout = track.channelLayout?.lowercased()
         sampleRate = track.sampleRate
         bitDepth = track.bitDepth
+    }
+}
+
+private struct ExactTrimCopiedSubtitleSnapshot: Equatable {
+    let codec: String
+    let codecID: String?
+    let profile: String?
+
+    init(_ track: MediaTrack) {
+        codec = track.codec.lowercased()
+        codecID = track.codecID?.lowercased()
+        profile = track.profile
     }
 }
 

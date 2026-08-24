@@ -106,6 +106,52 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         lanes: [JoinPacketAuditLane]
     ) async throws {
         let boundaries = try boundaryWindows(sources: sources)
+        let outputTracks = try validatePacketCopyInputs(
+            sources: sources,
+            output: output,
+            lanes: lanes
+        )
+        try await decodeBoundaries(
+            boundaries,
+            outputURL: output.sourceURL,
+            trackIDs: output.tracks.filter { $0.kind == .video || $0.kind == .audio }
+                .map(\.id)
+        )
+        try await auditPacketCopies(
+            sources: sources,
+            outputURL: output.sourceURL,
+            outputTracks: outputTracks,
+            lanes: lanes
+        )
+    }
+
+    /// Verifies copied packet payloads without requiring a multi-source join
+    /// boundary. Complete-file conversion uses this to prove copied audio and
+    /// subtitle streams still contain the exact reviewed ordered packets.
+    public func auditPacketCopies(
+        sources: [MediaAsset],
+        output: MediaAsset,
+        lanes: [JoinPacketAuditLane]
+    ) async throws {
+        let outputTracks = try validatePacketCopyInputs(
+            sources: sources,
+            output: output,
+            lanes: lanes
+        )
+        try await auditPacketCopies(
+            sources: sources,
+            outputURL: output.sourceURL,
+            outputTracks: outputTracks,
+            lanes: lanes
+        )
+    }
+
+    private func validatePacketCopyInputs(
+        sources: [MediaAsset],
+        output: MediaAsset,
+        lanes: [JoinPacketAuditLane]
+    ) throws -> [Int: MediaTrack] {
+        guard !sources.isEmpty else { throw JoinOutputAuditError.invalidLanePlan }
         guard safeRegularFile(output.sourceURL),
             lanes.flatMap(\.expectedInputs).allSatisfy({ safeRegularFile($0.fileURL) })
         else {
@@ -135,13 +181,15 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         guard lanes.allSatisfy({ outputTracks[$0.outputTrackID]?.kind == $0.kind }) else {
             throw JoinOutputAuditError.invalidLanePlan
         }
+        return outputTracks
+    }
 
-        try await decodeBoundaries(
-            boundaries,
-            outputURL: output.sourceURL,
-            trackIDs: output.tracks.filter { $0.kind == .video || $0.kind == .audio }
-                .map(\.id)
-        )
+    private func auditPacketCopies(
+        sources: [MediaAsset],
+        outputURL: URL,
+        outputTracks: [Int: MediaTrack],
+        lanes: [JoinPacketAuditLane]
+    ) async throws {
         let sortedLanes = lanes.sorted(by: { $0.laneIndex < $1.laneIndex })
         var canonicalVideoLanes = [JoinPacketAuditLane]()
         var exactPacketLanes = [JoinPacketAuditLane]()
@@ -156,13 +204,13 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         }
         try await auditCanonicalVideoLanes(
             canonicalVideoLanes,
-            outputURL: output.sourceURL,
+            outputURL: outputURL,
             outputTracks: outputTracks
         )
         try await auditExactPacketLanes(
             exactPacketLanes,
             sources: sources,
-            outputURL: output.sourceURL
+            outputURL: outputURL
         )
     }
 

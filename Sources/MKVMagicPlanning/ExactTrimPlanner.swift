@@ -110,7 +110,7 @@ extension ExactTrimPlanningError: LocalizedError {
         case .invalidRange: "The reviewed range must be positive and inside the source."
         case .noChange: "The requested range keeps the complete source."
         case .unsupportedTracks:
-            "One-generation video processing currently supports one video plus audio; subtitle and data tracks need a later timing-safe path."
+            "Complete-file conversion supports packet-copied subtitles; exact trimming of subtitles and data tracks needs a later timing-safe path."
         case .unsupportedTags:
             "Video processing cannot yet prove preservation of this source's Matroska tags."
         case .unsupportedDynamicRange:
@@ -138,6 +138,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
     public let videoDynamicRange: JoinVideoDynamicRangeTarget
     public let hdr10Signal: MediaHDR10Signal?
     public let audioTrackIDs: [Int]
+    public let subtitleTrackIDs: [Int]
     public let trackIDsInOutputOrder: [Int]
 
     fileprivate init(
@@ -149,6 +150,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         videoDynamicRange: JoinVideoDynamicRangeTarget,
         hdr10Signal: MediaHDR10Signal?,
         audioTrackIDs: [Int],
+        subtitleTrackIDs: [Int],
         trackIDsInOutputOrder: [Int]
     ) {
         self.operation = operation
@@ -159,6 +161,7 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         self.videoDynamicRange = videoDynamicRange
         self.hdr10Signal = hdr10Signal
         self.audioTrackIDs = audioTrackIDs
+        self.subtitleTrackIDs = subtitleTrackIDs
         self.trackIDsInOutputOrder = trackIDsInOutputOrder
     }
 
@@ -226,13 +229,19 @@ public struct ExactTrimPlanner: Sendable {
         guard range.start >= .zero, range.end > range.start, range.end <= duration else {
             throw ExactTrimPlanningError.invalidRange
         }
+        guard operation == .trim || (range.start == .zero && range.end == duration) else {
+            throw ExactTrimPlanningError.invalidRange
+        }
         guard operation == .transcode || range.start != .zero || range.end != duration else {
             throw ExactTrimPlanningError.noChange
         }
         let videos = source.tracks.filter { $0.kind == .video }
         let audios = source.tracks.filter { $0.kind == .audio }
+        let subtitles = source.tracks.filter { $0.kind == .subtitle }
+        let supportedTrackCount = videos.count + audios.count + subtitles.count
         guard videos.count == 1,
-            source.tracks.count == videos.count + audios.count,
+            source.tracks.count == supportedTrackCount,
+            operation == .transcode || subtitles.isEmpty,
             Set(source.tracks.map(\.id)).count == source.tracks.count
         else {
             throw ExactTrimPlanningError.unsupportedTracks
@@ -297,6 +306,7 @@ public struct ExactTrimPlanner: Sendable {
             videoDynamicRange: videoDynamicRange,
             hdr10Signal: hdr10Signal,
             audioTrackIDs: audios.map(\.id),
+            subtitleTrackIDs: subtitles.map(\.id),
             trackIDsInOutputOrder: source.tracks.map(\.id)
         )
     }

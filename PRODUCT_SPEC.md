@@ -337,15 +337,18 @@ Full transcoding is included in v1 but remains the last planning resort.
 
 Current implementation: **Convert Video…** provides a reviewed, full-file
 Matroska-to-Matroska transcode for eligible inspected MKVs with one video track
-plus audio. It reuses the Exact Trim encoder compiler and verified-output
-transaction, so the selected video is encoded exactly once, audio is copied by
-default, attachments and track metadata are preserved, and the original nested
-chapter document is reinstalled and canonically verified without trim-time
-retiming. The compact native sheet defaults to the locally recommended verified
-AV1/HEVC/H.264/ProRes choice, keeps every compatible verified alternative, and
-uses a deterministic `— Converted.mkv` destination. Subtitle/data tracks,
-multiple video tracks, source tags, unsupported or incomplete HDR/color facts,
-non-MKV inputs, and non-MKV outputs fail closed in this first standalone slice.
+plus any audio and subtitle tracks. It reuses the Exact Trim encoder compiler
+and verified-output transaction, so the selected video is encoded exactly once,
+audio and subtitles are copied by default, attachments and track metadata are
+preserved, and the original nested chapter document is reinstalled and
+canonically verified without trim-time retiming. Complete conversion emits no
+seek or duration cap and compares streaming ordered packet hashes for copied
+audio and subtitles before commit and after reopen. The compact native sheet
+defaults to the locally recommended verified AV1/HEVC/H.264/ProRes choice, keeps
+every compatible verified alternative, and uses a deterministic
+`— Converted.mkv` destination. Data tracks, multiple video tracks, source tags,
+unsupported or incomplete HDR/color facts, non-MKV inputs, and non-MKV outputs
+fail closed in this first standalone slice.
 
 #### Video presets
 
@@ -1045,11 +1048,16 @@ chapters. Both routes use shared cancellable verified-output progress, add the
 reopened result to inspection, and persist a sanitized History lifecycle. The
 native **Convert Video…** route invokes the same exact planner for the complete
 duration under an explicit transcode operation. Unlike Trim, a zero-to-duration
-range is valid; the executor preserves the original canonical nested chapter
-document rather than clipping or regenerating chapter identities. The review,
-one FFmpeg video generation, optional per-track audio encodes, private temporary
-output, semantic/chapter verification, atomic commit, reopen audit, and sanitized
-History lifecycle remain shared rather than duplicated.
+range is required; the executor preserves the original canonical nested chapter
+document rather than clipping or regenerating chapter identities. Audio and
+subtitle tracks are packet-copied by default. The complete-file command omits
+trim seeking and duration truncation, and the executor compares their streaming
+ordered packet hashes before commit and after reopen. The review, one FFmpeg
+video generation, optional per-track audio encodes, private temporary output,
+semantic/chapter verification, atomic commit, reopen audit, and sanitized History
+lifecycle remain shared rather than duplicated. Exact Trim continues to fail
+closed for subtitle timing, and standalone conversion continues to fail closed
+for data tracks.
 native common-format Join route now enables only after the active capability
 probe and the same fail-closed source-metadata policy used by final assembly.
 It presents the exact resolved SDR or uniform static HDR10 video and AAC audio targets, packet-copy lanes,

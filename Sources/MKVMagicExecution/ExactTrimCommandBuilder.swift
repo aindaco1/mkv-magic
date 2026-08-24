@@ -34,19 +34,22 @@ public struct ExactTrimFFmpegCommand: Equatable, Sendable {
     public let encodedVideoTrackID: Int
     public let encodedAudioTrackIDs: [Int]
     public let copiedAudioTrackIDs: [Int]
+    public let copiedSubtitleTrackIDs: [Int]
 
     public init(
         arguments: [String],
         outputURL: URL,
         encodedVideoTrackID: Int,
         encodedAudioTrackIDs: [Int],
-        copiedAudioTrackIDs: [Int]
+        copiedAudioTrackIDs: [Int],
+        copiedSubtitleTrackIDs: [Int]
     ) {
         self.arguments = arguments
         self.outputURL = outputURL
         self.encodedVideoTrackID = encodedVideoTrackID
         self.encodedAudioTrackIDs = encodedAudioTrackIDs
         self.copiedAudioTrackIDs = copiedAudioTrackIDs
+        self.copiedSubtitleTrackIDs = copiedSubtitleTrackIDs
     }
 }
 
@@ -122,12 +125,14 @@ public struct ExactTrimCommandBuilder: Sendable {
                 )
             )
         }
-        arguments.append(contentsOf: [
-            "-i", sourceURL.path,
-            // Output-side seeking discards every stream before the reviewed in-point.
-            // Input-side accurate seeking cannot discard early packets on copied audio.
-            "-ss", decimalSeconds(resolvedPlan.range.start),
-        ])
+        arguments.append(contentsOf: ["-i", sourceURL.path])
+        if resolvedPlan.operation == .trim {
+            arguments.append(contentsOf: [
+                // Output-side seeking discards every stream before the reviewed in-point.
+                // Input-side accurate seeking cannot discard early packets on copied audio.
+                "-ss", decimalSeconds(resolvedPlan.range.start),
+            ])
+        }
         for trackID in resolvedPlan.trackIDsInOutputOrder {
             arguments.append(contentsOf: ["-map", "0:\(trackID)"])
         }
@@ -195,11 +200,16 @@ public struct ExactTrimCommandBuilder: Sendable {
         } else {
             throw ExactTrimCommandError.inconsistentPlan
         }
+        arguments.append(contentsOf: ["-map_metadata", "0", "-map_chapters", "-1"])
+        if resolvedPlan.operation == .trim {
+            arguments.append(
+                contentsOf: [
+                    "-t", decimalSeconds(MediaTime(nanoseconds: duration.partialValue)),
+                    "-avoid_negative_ts", "make_zero",
+                ]
+            )
+        }
         arguments.append(contentsOf: [
-            "-map_metadata", "0",
-            "-map_chapters", "-1",
-            "-t", decimalSeconds(MediaTime(nanoseconds: duration.partialValue)),
-            "-avoid_negative_ts", "make_zero",
             "-max_muxing_queue_size", "4096",
             "-f", "matroska",
             outputURL.path,
@@ -213,7 +223,8 @@ public struct ExactTrimCommandBuilder: Sendable {
             outputURL: outputURL,
             encodedVideoTrackID: resolvedPlan.videoTrackID,
             encodedAudioTrackIDs: encodedAudioTrackIDs,
-            copiedAudioTrackIDs: copiedAudioTrackIDs
+            copiedAudioTrackIDs: copiedAudioTrackIDs,
+            copiedSubtitleTrackIDs: resolvedPlan.subtitleTrackIDs
         )
     }
 

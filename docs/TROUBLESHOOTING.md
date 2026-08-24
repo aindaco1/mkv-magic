@@ -38,8 +38,9 @@ control. The most common prerequisites are:
 - track edits need stable Matroska track UIDs;
 - track removal needs at least two stable tracks;
 - Trim needs one video track and a known duration;
-- Convert Video needs an MKV with one video track plus audio, complete reviewed
-  color/layout facts, no subtitle/data tracks, and no source tags;
+- Convert Video needs an MKV with one video track plus any audio and subtitle
+  tracks, complete reviewed color/layout facts, no data tracks, and no source
+  tags;
 - compatible Join needs at least two inspected Matroska files; and
 - text cleanup supports SRT and editable ASS/SSA text. PGS and VobSub can be
   preserved, extracted, removed, or muxed unchanged, but image-to-text OCR is
@@ -83,8 +84,9 @@ control. The most common prerequisites are:
   or another offered format instead of forcing an unverified conversion.
 - HDR10 preservation requires a validated static BT.2020/PQ signal. Dolby
   Vision, HDR10+, HLG, and SDR-to-HDR conversion are outside the v1 contract.
-- Convert Video always creates a new MKV in this beta. MP4/MOV/WebM output and
-  general subtitle-bearing transcodes are not silently substituted.
+- Convert Video always creates a new MKV in this beta. Embedded subtitles are
+  packet-copied and verified; MP4/MOV/WebM output and subtitle conversion are
+  not silently substituted.
 
 ## Subtitle, chapter, trim, or join results are refused
 

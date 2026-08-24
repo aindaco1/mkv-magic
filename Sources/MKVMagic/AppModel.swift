@@ -998,6 +998,7 @@ final class AppModel {
             case .exact(let exact):
                 output = try await ExactTrimExecutor(
                     ffmpegURL: try catalog.url(for: .ffmpeg),
+                    ffprobeURL: try catalog.url(for: .ffprobe),
                     mkvextractURL: try catalog.url(for: .mkvextract),
                     mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                     runner: runner,
@@ -1130,6 +1131,7 @@ final class AppModel {
                 preview = .exact(
                     try await ExactTrimExecutor(
                         ffmpegURL: try catalog.url(for: .ffmpeg),
+                        ffprobeURL: try catalog.url(for: .ffprobe),
                         mkvextractURL: try catalog.url(for: .mkvextract),
                         mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                         runner: runner,

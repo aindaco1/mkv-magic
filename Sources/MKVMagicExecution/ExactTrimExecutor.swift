@@ -10,6 +10,7 @@ public enum ExactTrimExecutionError: Error, Equatable, Sendable {
     case unsafeSource
     case staleSource
     case inconsistentCommand
+    case copiedTrackVerificationFailed(reason: String)
     case unsafeChapterOutput
     case chapterVerificationFailed
     case toolFailed(tool: String, exitCode: Int32, message: String)
@@ -24,6 +25,8 @@ extension ExactTrimExecutionError: LocalizedError {
         case .staleSource: "The source or its chapters changed after review."
         case .inconsistentCommand:
             "The video command no longer matches its reviewed encode/copy plan."
+        case .copiedTrackVerificationFailed(let reason):
+            "A packet-copied audio or subtitle track did not match the reviewed source: \(reason)"
         case .unsafeChapterOutput:
             "mkvextract did not create a safe, bounded chapter document."
         case .chapterVerificationFailed:
@@ -47,6 +50,7 @@ public struct ExactTrimPreview: Equatable, Sendable {
     public let encodedVideoTrackID: Int
     public let encodedAudioTrackIDs: [Int]
     public let copiedAudioTrackIDs: [Int]
+    public let copiedSubtitleTrackIDs: [Int]
 
     init(
         resolvedPlan: ResolvedExactTrimPlan,
@@ -57,7 +61,8 @@ public struct ExactTrimPreview: Equatable, Sendable {
         sourceChapterSHA256: Data,
         encodedVideoTrackID: Int,
         encodedAudioTrackIDs: [Int],
-        copiedAudioTrackIDs: [Int]
+        copiedAudioTrackIDs: [Int],
+        copiedSubtitleTrackIDs: [Int]
     ) {
         self.resolvedPlan = resolvedPlan
         self.capabilities = capabilities
@@ -68,11 +73,16 @@ public struct ExactTrimPreview: Equatable, Sendable {
         self.encodedVideoTrackID = encodedVideoTrackID
         self.encodedAudioTrackIDs = encodedAudioTrackIDs
         self.copiedAudioTrackIDs = copiedAudioTrackIDs
+        self.copiedSubtitleTrackIDs = copiedSubtitleTrackIDs
     }
 }
 
-public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
+public struct ExactTrimExecutor<
+    Runner: CommandRunning & CommandLineDigesting,
+    Inspector: MediaInspecting
+>: Sendable {
     private let ffmpegURL: URL
+    private let ffprobeURL: URL
     private let mkvpropeditURL: URL
     private let runner: Runner
     private let inspector: Inspector
@@ -84,12 +94,14 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
 
     public init(
         ffmpegURL: URL,
+        ffprobeURL: URL,
         mkvextractURL: URL,
         mkvpropeditURL: URL,
         runner: Runner,
         inspector: Inspector
     ) {
         self.ffmpegURL = ffmpegURL
+        self.ffprobeURL = ffprobeURL
         self.mkvpropeditURL = mkvpropeditURL
         self.runner = runner
         self.inspector = inspector
@@ -163,7 +175,8 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
             sourceChapterSHA256: digest(extracted.canonicalData),
             encodedVideoTrackID: command.encodedVideoTrackID,
             encodedAudioTrackIDs: command.encodedAudioTrackIDs,
-            copiedAudioTrackIDs: command.copiedAudioTrackIDs
+            copiedAudioTrackIDs: command.copiedAudioTrackIDs,
+            copiedSubtitleTrackIDs: command.copiedSubtitleTrackIDs
         )
     }
 
@@ -193,7 +206,8 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
                 )
                 guard command.encodedVideoTrackID == preview.encodedVideoTrackID,
                     command.encodedAudioTrackIDs == preview.encodedAudioTrackIDs,
-                    command.copiedAudioTrackIDs == preview.copiedAudioTrackIDs
+                    command.copiedAudioTrackIDs == preview.copiedAudioTrackIDs,
+                    command.copiedSubtitleTrackIDs == preview.copiedSubtitleTrackIDs
                 else {
                     throw ExactTrimExecutionError.inconsistentCommand
                 }
@@ -224,6 +238,7 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
                     chapters: preview.trimmedChapters,
                     output: output
                 )
+                try await verifyCompleteFilePacketCopies(preview: preview, output: output)
                 try await verifyChapters(
                     in: output.sourceURL,
                     expectedCanonical: expectedChapters
@@ -333,6 +348,76 @@ public struct ExactTrimExecutor<Runner: CommandRunning, Inspector: MediaInspecti
                 exitCode: result.exitCode,
                 message: conciseMessage(result)
             )
+        }
+    }
+
+    private func verifyCompleteFilePacketCopies(
+        preview: ExactTrimPreview,
+        output: MediaAsset
+    ) async throws {
+        guard preview.resolvedPlan.operation == .transcode else { return }
+        let source = preview.resolvedPlan.source
+        let copiedTrackIDs = Set(
+            preview.copiedAudioTrackIDs + preview.copiedSubtitleTrackIDs
+        )
+        guard !copiedTrackIDs.isEmpty else { return }
+        let sourceTracks = source.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard sourceTracks.count == outputTracks.count else {
+            throw ExactTrimExecutionError.copiedTrackVerificationFailed(
+                reason: "the media-track count changed"
+            )
+        }
+        let lanes = zip(sourceTracks, outputTracks).enumerated().compactMap {
+            laneIndex, pair -> JoinPacketAuditLane? in
+            guard copiedTrackIDs.contains(pair.0.id) else { return nil }
+            return JoinPacketAuditLane(
+                laneIndex: laneIndex,
+                kind: pair.0.kind,
+                outputTrackID: pair.1.id,
+                expectedInputs: [
+                    JoinPacketFingerprintInput(
+                        fileURL: source.sourceURL,
+                        trackID: pair.0.id
+                    )
+                ]
+            )
+        }
+        guard lanes.count == copiedTrackIDs.count else {
+            throw ExactTrimExecutionError.copiedTrackVerificationFailed(
+                reason: "the copied-track map changed"
+            )
+        }
+        do {
+            try await JoinOutputAuditor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: ffprobeURL,
+                runner: runner
+            ).auditPacketCopies(sources: [source], output: output, lanes: lanes)
+        } catch {
+            throw ExactTrimExecutionError.copiedTrackVerificationFailed(
+                reason: packetCopyFailureReason(error)
+            )
+        }
+    }
+
+    private func packetCopyFailureReason(_ error: Error) -> String {
+        guard let error = error as? JoinOutputAuditError else {
+            return "packet verification failed"
+        }
+        switch error {
+        case .invalidTimeline, .invalidLanePlan:
+            return "the reviewed packet map changed"
+        case .unsafeInput:
+            return "a source or output file was no longer safe"
+        case .decodeFailed, .truncatedDecodeDiagnostics:
+            return "the output decode audit failed"
+        case .packetFingerprintFailed, .packetFingerprintBatchFailed:
+            return "the packet fingerprint command failed"
+        case .packetCountChanged:
+            return "the copied packet count changed"
+        case .packetPayloadChanged:
+            return "a copied packet payload changed"
         }
     }
 

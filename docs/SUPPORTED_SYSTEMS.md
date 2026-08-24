@@ -47,10 +47,12 @@ transcoding remain unavailable.
 
 **Convert Video…** supports the same validated BT.709 SDR and static-HDR10
 one-generation contract for the complete duration of an eligible Matroska MKV.
-It currently requires one video track plus audio, preserves audio by default,
-preserves attachments and the unchanged nested chapter tree, and creates MKV.
-Subtitle/data tracks, multiple video tracks, source tags, non-MKV input/output,
-and unsupported HDR families are refused before encoding.
+It currently requires one video track plus any audio and subtitle tracks,
+packet-copies audio and subtitles by default, preserves attachments and the
+unchanged nested chapter tree, and creates MKV. Copied audio and subtitle packet
+payloads are fingerprinted before commit and after reopen. Data tracks, multiple
+video tracks, source tags, non-MKV input/output, and unsupported HDR families are
+refused before encoding.
 
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app

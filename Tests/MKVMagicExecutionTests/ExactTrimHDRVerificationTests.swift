@@ -5,6 +5,48 @@ import MKVMagicPlanning
 import XCTest
 
 final class ExactTrimHDRVerificationTests: XCTestCase {
+    func testCompleteFileConversionRequiresCopiedSubtitleIdentity() throws {
+        let source = subtitleConversionAsset(videoCodec: "h264", subtitleCodec: "subrip")
+        let resolved = try ExactTrimPlanner().resolve(
+            source: source,
+            range: MediaTrimRange(start: .zero, end: try XCTUnwrap(source.duration)),
+            choice: ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000)
+            ),
+            operation: .transcode,
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+        let verifier = ExactTrimOutputVerifier()
+
+        try verifier.verify(
+            resolvedPlan: resolved,
+            chapters: MatroskaChapterDocument(),
+            output: subtitleConversionAsset(
+                videoCodec: "hevc",
+                subtitleCodec: "subrip",
+                output: true
+            )
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                resolvedPlan: resolved,
+                chapters: MatroskaChapterDocument(),
+                output: subtitleConversionAsset(
+                    videoCodec: "hevc",
+                    subtitleCodec: "ass",
+                    output: true
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? ExactTrimVerificationError,
+                .subtitleMismatch(trackID: 2)
+            )
+        }
+    }
+
     func testRequiresExactReviewedHDR10Signal() throws {
         let source = MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/HDR Feature.mkv"),
@@ -68,6 +110,71 @@ final class ExactTrimHDRVerificationTests: XCTestCase {
             globalTagCount: 0,
             trackTagCount: 0,
             segmentUID: "OUTPUT"
+        )
+    }
+
+    private func subtitleConversionAsset(
+        videoCodec: String,
+        subtitleCodec: String,
+        output: Bool = false
+    ) -> MediaAsset {
+        MediaAsset(
+            sourceURL: URL(
+                fileURLWithPath: output
+                    ? "/output/Subtitle Feature.mkv" : "/media/Subtitle Feature.mkv"
+            ),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            fileSize: 1_000,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: videoCodec,
+                    codecID: videoCodec == "hevc"
+                        ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
+                    profile: videoCodec == "hevc" ? "Main 10" : "High",
+                    uid: output ? 500 : 100,
+                    isDefault: true,
+                    dimensions: MediaDimensions(width: 160, height: 90),
+                    pixelFormat: videoCodec == "hevc" ? "p010le" : "yuv420p",
+                    bitDepth: videoCodec == "hevc" ? 10 : 8,
+                    frameRate: "24/1",
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    codecID: "A_AAC",
+                    profile: "LC",
+                    uid: output ? 501 : 101,
+                    language: "en",
+                    isDefault: true,
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: subtitleCodec,
+                    codecID: subtitleCodec == "subrip" ? "S_TEXT/UTF8" : "S_TEXT/ASS",
+                    uid: output ? 502 : 102,
+                    language: "en",
+                    title: "English",
+                    isForced: true
+                ),
+            ],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: output ? "OUTPUT" : "SOURCE"
         )
     }
 
