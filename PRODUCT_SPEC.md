@@ -1366,6 +1366,14 @@ telemetry, or LLM. Live app-launch coverage invokes the real menu command and
 checks the visible window, initial accessible focus, minimum layout, and core
 safety language.
 
+The source-coverage continuation turns the hosted coverage artifact into a
+regression gate. A dependency-free Swift/Foundation parser sums only files
+inside the repository's production `Sources` tree, reports line, function, and
+region coverage, and fails below conservative 65%, 68%, and 58% floors. Tests,
+generated runners, Sparkle, and other dependencies cannot inflate the result.
+The floors are tripwires against material erosion, not a claim that coverage
+percentage alone establishes correctness or UX acceptance.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

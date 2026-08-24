@@ -20,7 +20,7 @@ if [[ "${#shell_files[@]}" -gt 0 ]]; then
 fi
 
 swift format lint --strict --configuration .swift-format --recursive \
-    Package.swift Sources Tests
+    Package.swift Sources Tests scripts/ci/check-coverage.swift
 
 resolved_before="$(shasum -a 256 Package.resolved | awk '{print $1}')"
 swift package resolve

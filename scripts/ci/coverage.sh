@@ -9,4 +9,5 @@ if [[ ! -f "$report_path" || -L "$report_path" ]]; then
     echo "Swift coverage report was not produced" >&2
     exit 1
 fi
+swift scripts/ci/check-coverage.swift "$report_path" "$repo_root/Sources"
 echo "$report_path"

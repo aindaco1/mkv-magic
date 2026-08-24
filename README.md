@@ -406,6 +406,11 @@ output-safety, no-transcode, workflow, queue, keyboard, and privacy guidance
 available offline inside the app. See
 [docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md](docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md).
 
+The coverage workflow now measures repository production sources only and
+fails below conservative line, function, or region floors; tests, generated
+runners, Sparkle, and other dependencies cannot inflate the gate. See
+[docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
