@@ -3,6 +3,7 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/release/dmg-layout.sh"
+source "$repo_root/scripts/release/dmg-verification.sh"
 release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
 app_path="$release_root/MKV Magic.app"
 if [[ ! -d "$app_path" || -L "$app_path" ]]; then
@@ -43,7 +44,7 @@ COPYFILE_DISABLE=1 ditto --norsrc --noextattr -c -k --keepParent \
     --zlibCompressionLevel 9 "$app_path" "$archive_path"
 hdiutil create -quiet -volname "MKV Magic" -srcfolder "$staging" \
     -ov -format UDZO "$dmg_path"
-hdiutil verify "$dmg_path"
+verify_mkv_magic_dmg_checksum "$dmg_path"
 
 "$repo_root/scripts/release/write-build-metadata.sh"
 "$repo_root/scripts/release/generate-sbom.sh"

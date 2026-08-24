@@ -1136,8 +1136,20 @@ interrupted.
 Automatic executor admission remains open. The current explicit **Verify & Run**
 path starts immediately and is intentionally distinguished in the UI from the
 persisted pause for future automatic starts. Built-in quick actions, unattended
-batch startup, battery and thermal adapters, the Trash-after-verified-success
-queue option, and soak/physical-Intel acceptance also remain open.
+batch startup, battery and thermal adapters, and soak/physical-Intel acceptance
+also remain open.
+
+The saved-workflow Save panel now exposes **Move original video file to Trash
+after verified success** as an off-by-default option. Selecting it grants write
+authority only to the primary media bookmark, not supplemental subtitle inputs.
+The app moves the source only after the new output has been committed, reopened,
+audited, and durably marked **Succeeded** in the queue. Failure to record queue
+success prevents the move. Failure to move the source preserves the verified
+output, leaves the original in place when macOS reports it still exists, and
+surfaces a warning rather than misclassifying the media work as failed. Durable
+recovery of the conservative crash window between queue success and the Trash
+request remains open; that window can leave the original in place, not expose an
+unverified deletion path.
 
 Deliverables:
 

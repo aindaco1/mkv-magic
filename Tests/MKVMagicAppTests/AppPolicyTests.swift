@@ -1379,6 +1379,108 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(labels.contains("Queue update failed: simulated persistence failure"))
     }
 
+    @MainActor
+    func testSavedWorkflowTrashOptionIsExplicitAndOptIn() throws {
+        let off = SourceDispositionPresentation.makeAccessory(selected: false)
+        XCTAssertEqual(off.checkbox.title, SourceDispositionPresentation.checkboxTitle)
+        XCTAssertEqual(
+            SourceDispositionPresentation.disposition(for: off.checkbox),
+            .keepOriginal
+        )
+        XCTAssertTrue(
+            SourceDispositionPresentation.explanation.contains(
+                "Only after verified success"
+            )
+        )
+        XCTAssertTrue(
+            SourceDispositionPresentation.explanation.contains(
+                "new output stays safe"
+            )
+        )
+        XCTAssertTrue(SourceDispositionPresentation.explanation.contains("checks the original"))
+
+        let on = SourceDispositionPresentation.makeAccessory(selected: true)
+        XCTAssertEqual(
+            SourceDispositionPresentation.disposition(for: on.checkbox),
+            .trashAfterVerifiedSuccess
+        )
+        let labels = descendants(in: on.view).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains(SourceDispositionPresentation.explanation))
+        on.view.layoutSubtreeIfNeeded()
+        for control in descendants(in: on.view) where !control.isHidden {
+            let frame = control.convert(control.bounds, to: on.view)
+            XCTAssertGreaterThanOrEqual(frame.minX, on.view.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, on.view.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, on.view.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, on.view.bounds.maxY + 1)
+        }
+
+        XCTAssertFalse(
+            SourceDispositionCommitPolicy.shouldApply(
+                .trashAfterVerifiedSuccess,
+                afterQueueRecordedSuccess: false
+            )
+        )
+        XCTAssertFalse(
+            SourceDispositionCommitPolicy.shouldApply(
+                .keepOriginal,
+                afterQueueRecordedSuccess: true
+            )
+        )
+        XCTAssertTrue(
+            SourceDispositionCommitPolicy.shouldApply(
+                .trashAfterVerifiedSuccess,
+                afterQueueRecordedSuccess: true
+            )
+        )
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_TRASH_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            let desiredSize = on.view.frame.size
+            let window = NSWindow(contentViewController: NSViewController())
+            window.title = "Save Verified MKV Copy"
+            window.contentView = on.view
+            window.setContentSize(desiredSize)
+            try captureWindow(window: window, content: on.view, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testVerifiedTrashFailureNeverClaimsAnUnobservedSourceOutcome() throws {
+        struct ExpectedFailure: Error {}
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-trash-warning-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Movie.mkv")
+        let destination = root.appendingPathComponent("Movie — Verified.mkv")
+        try Data([1]).write(to: source)
+
+        let unchanged = AppModel(trashSource: { _ in throw ExpectedFailure() })
+        unchanged.applyVerifiedTrash(sourceURL: source, destinationURL: destination)
+        XCTAssertEqual(
+            unchanged.state,
+            .completedWithWarnings(
+                "Created Movie — Verified.mkv and recorded verified success, but could not move the original to Trash, so it remains unchanged."
+            )
+        )
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+
+        let uncertain = AppModel(trashSource: { url in
+            try FileManager.default.removeItem(at: url)
+            throw ExpectedFailure()
+        })
+        uncertain.applyVerifiedTrash(sourceURL: source, destinationURL: destination)
+        XCTAssertEqual(
+            uncertain.state,
+            .completedWithWarnings(
+                "Created Movie — Verified.mkv and recorded verified success, but could not confirm where macOS moved the original. Check Trash before continuing."
+            )
+        )
+    }
+
     func testEncodingBenchmarkLocationSharesPrivateAppSupportDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-encoding-test-\(UUID().uuidString)",

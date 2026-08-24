@@ -252,11 +252,22 @@ attempts; it offers hold/resume, pending reorder, cancel, review-again retry, an
 a persistent pause for future automatic starts. Opening the window refreshes
 current work without treating it as a relaunch interruption.
 
+Saved workflows also offer an opt-in **Move original video file to Trash after
+verified success** checkbox in the Save panel. It is off by default. Only the
+primary media bookmark receives write authority when selected; supplemental
+subtitle bookmarks remain read-only. MKV Magic first commits and reopens the
+new output, records durable queue success, and only then asks macOS to move the
+original to Trash. A Trash error never turns a verified output into a failed
+encode or deletes it; the verified output remains, and the app checks whether
+the original still exists before reporting a precise warning.
+
 This is a user-operable execution bridge, not the completed automatic production
 scheduler: an explicit **Verify & Run** starts immediately even while automatic
 starts are paused, built-in quick actions are not queued yet, and battery/thermal
 admission plus unattended batch startup remain open. See
-[docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md).
+[docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md)
+and
+[docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md](docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md).
 
 ## Design promises
 

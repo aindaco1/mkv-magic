@@ -7,6 +7,7 @@ if [[ $# -ne 1 || "$1" != /* ]]; then
 fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/release/dmg-layout.sh"
+source "$repo_root/scripts/release/dmg-verification.sh"
 dmg_path="$1"
 if [[ ! "${dmg_path##*/}" =~ ^MKV-Magic-[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]+)?-universal\.dmg$ || \
       ! -f "$dmg_path" || -L "$dmg_path" || ! -s "$dmg_path" ]]; then
@@ -14,7 +15,7 @@ if [[ ! "${dmg_path##*/}" =~ ^MKV-Magic-[0-9]+\.[0-9]+\.[0-9]+([.-][0-9A-Za-z.-]
     exit 1
 fi
 
-hdiutil verify "$dmg_path"
+verify_mkv_magic_dmg_checksum "$dmg_path"
 if [[ "${MKV_MAGIC_REQUIRE_DISTRIBUTION:-0}" == 1 ]]; then
     codesign --verify --strict --verbose=2 "$dmg_path"
     xcrun stapler validate "$dmg_path"

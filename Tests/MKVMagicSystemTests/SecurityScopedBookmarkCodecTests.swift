@@ -22,6 +22,7 @@ final class SecurityScopedBookmarkCodecTests: XCTestCase {
     func testCreatesAndResolvesNarrowFileAndDirectoryBookmarks() throws {
         let codec = SecurityScopedBookmarkCodec()
         let input = try codec.makeReference(for: fileURL, access: .readOnlyFile)
+        let writableInput = try codec.makeReference(for: fileURL, access: .readWriteFile)
         let destination = try codec.makeReference(
             for: rootURL,
             access: .readWriteDirectory
@@ -31,6 +32,10 @@ final class SecurityScopedBookmarkCodecTests: XCTestCase {
         XCTAssertFalse(input.securityScopedBookmark.isEmpty)
         XCTAssertEqual(
             try codec.resolve(input, access: .readOnlyFile),
+            fileURL.standardizedFileURL
+        )
+        XCTAssertEqual(
+            try codec.resolve(writableInput, access: .readWriteFile),
             fileURL.standardizedFileURL
         )
         XCTAssertEqual(

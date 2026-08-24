@@ -135,9 +135,11 @@ final class RealToolAppHistoryTests: XCTestCase {
         let queueStore = try AppHistoryLocation.makeQueueStore(
             applicationSupportURL: applicationSupport
         )
+        var trashedSources = [URL]()
         let model = AppModel(
             historyRecorderFactory: { store },
-            queueStoreFactory: { queueStore }
+            queueStoreFactory: { queueStore },
+            trashSource: { trashedSources.append($0) }
         )
         await model.addFiles([source])
         let asset = try XCTUnwrap(model.assets.first)
@@ -181,6 +183,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                 .subRip(subtitlePreview),
                 restoringIDs: []
             ),
+            sourceDisposition: .trashAfterVerifiedSuccess,
             in: asset,
             destinationURL: output
         )
@@ -237,15 +240,22 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(queuedJob.workflow, .saved(workflow))
         XCTAssertEqual(queuedJob.inputs.map(\.displayName), ["Movie.mkv", "Movie.en.srt"])
         XCTAssertEqual(queuedJob.outputDisplayName, "Movie — Prepared.mkv")
-        XCTAssertEqual(queuedJob.sourceDisposition, .keepOriginal)
+        XCTAssertEqual(queuedJob.sourceDisposition, .trashAfterVerifiedSuccess)
         XCTAssertEqual(queuedJob.reviewedPlan, compiled.plan)
         XCTAssertEqual(queuedJob.resourceClass, .lightweight)
         XCTAssertEqual(queuedJob.attemptCount, 1)
         XCTAssertEqual(queuedJob.events.map(\.state), [.waiting, .running, .succeeded])
         XCTAssertEqual(model.activeQueueJobID, nil)
+        XCTAssertEqual(trashedSources, [source])
+        XCTAssertEqual(
+            model.state,
+            .completed(
+                "Created Movie — Prepared.mkv; moved the original to Trash after verified success."
+            )
+        )
         let bookmarkCodec = SecurityScopedBookmarkCodec()
         XCTAssertEqual(
-            try bookmarkCodec.resolve(queuedJob.inputs[0], access: .readOnlyFile),
+            try bookmarkCodec.resolve(queuedJob.inputs[0], access: .readWriteFile),
             source
         )
         XCTAssertEqual(

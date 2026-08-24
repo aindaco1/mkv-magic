@@ -15,6 +15,7 @@ final class AppModel {
     private struct QueueExecution: Sendable {
         let recorder: any JobQueueManaging
         let jobID: UUID
+        let sourceDisposition: MediaQueueSourceDisposition
     }
 
     private enum VerifiedEdit {
@@ -123,6 +124,7 @@ final class AppModel {
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
     private let queueStoreFactory: @Sendable () throws -> any JobQueueManaging
+    private let trashSource: (URL) throws -> Void
     private var queueStore: (any JobQueueManaging)?
     private var queueRecoveryStarted = false
     private let encodingBenchmarkStoreFactory:
@@ -138,6 +140,9 @@ final class AppModel {
         queueStoreFactory: @escaping @Sendable () throws -> any JobQueueManaging = {
             try AppHistoryLocation.makeQueueStore()
         },
+        trashSource: @escaping (URL) throws -> Void = { sourceURL in
+            _ = try FileManager.default.trashItem(at: sourceURL, resultingItemURL: nil)
+        },
         encodingBenchmarkStoreFactory:
             @escaping @Sendable () throws -> any EncodingBenchmarkPersisting = {
                 try AppHistoryLocation.makeEncodingBenchmarkStore()
@@ -146,6 +151,7 @@ final class AppModel {
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
         self.queueStoreFactory = queueStoreFactory
+        self.trashSource = trashSource
         self.encodingBenchmarkStoreFactory = encodingBenchmarkStoreFactory
     }
 
@@ -252,7 +258,10 @@ final class AppModel {
         guard let input = job.inputs.first else {
             throw JobQueueStoreError.malformedQueue
         }
-        return try SecurityScopedBookmarkCodec().resolve(input, access: .readOnlyFile)
+        let access: SecurityScopedBookmarkAccess =
+            job.sourceDisposition == .trashAfterVerifiedSuccess
+            ? .readWriteFile : .readOnlyFile
+        return try SecurityScopedBookmarkCodec().resolve(input, access: access)
     }
 
     func exportPrivacySafeSupportReport(
@@ -1226,6 +1235,7 @@ final class AppModel {
         _ workflow: CompiledSavedWorkflow,
         recipe: SavedWorkflow,
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil,
         in asset: MediaAsset,
         destinationURL: URL
@@ -1236,6 +1246,7 @@ final class AppModel {
             plan: workflow.plan,
             inputURLs: [asset.sourceURL] + externalURLs,
             destinationURL: destinationURL,
+            sourceDisposition: sourceDisposition,
             retryingJobID: retryingQueueJobID
         )
         return try await executeVerifiedEdit(
@@ -1592,7 +1603,20 @@ final class AppModel {
                 destinationURL: destinationURL,
                 successMessage: "Verified output committed and reopened."
             )
-            await finishQueue(queueExecution, destinationURL: destinationURL)
+            let queueRecorded = await finishQueue(
+                queueExecution,
+                destinationURL: destinationURL
+            )
+            if SourceDispositionCommitPolicy.shouldApply(
+                queueExecution?.sourceDisposition ?? .keepOriginal,
+                afterQueueRecordedSuccess: queueRecorded
+            ) {
+                applySourceDisposition(
+                    queueExecution,
+                    sourceURL: asset.sourceURL,
+                    destinationURL: destinationURL
+                )
+            }
             return output
         } catch {
             await failQueue(queueExecution, error: error)
@@ -1610,13 +1634,17 @@ final class AppModel {
         plan: ExecutionPlan,
         inputURLs: [URL],
         destinationURL: URL,
+        sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
     ) async throws -> QueueExecution {
         _ = try await loadQueue()
         let recorder = try queueRecorder()
         let codec = SecurityScopedBookmarkCodec()
-        let inputs = try inputURLs.map {
-            try codec.makeReference(for: $0, access: .readOnlyFile)
+        let inputs = try inputURLs.enumerated().map { index, inputURL in
+            let access: SecurityScopedBookmarkAccess =
+                index == 0 && sourceDisposition == .trashAfterVerifiedSuccess
+                ? .readWriteFile : .readOnlyFile
+            return try codec.makeReference(for: inputURL, access: access)
         }
         let destinationDirectory = try codec.makeReference(
             for: destinationURL.deletingLastPathComponent(),
@@ -1631,7 +1659,7 @@ final class AppModel {
                 inputs: inputs,
                 destinationDirectory: destinationDirectory,
                 outputDisplayName: destinationURL.lastPathComponent,
-                sourceDisposition: .keepOriginal,
+                sourceDisposition: sourceDisposition,
                 reviewedPlan: plan,
                 at: timestamp
             )
@@ -1643,6 +1671,7 @@ final class AppModel {
                 inputs: inputs,
                 destinationDirectory: destinationDirectory,
                 outputDisplayName: destinationURL.lastPathComponent,
+                sourceDisposition: sourceDisposition,
                 reviewedPlan: plan
             )
             _ = try await recorder.append(job, at: timestamp)
@@ -1656,11 +1685,15 @@ final class AppModel {
         )
         activeQueueJobID = jobID
         queueDidChange?()
-        return QueueExecution(recorder: recorder, jobID: jobID)
+        return QueueExecution(
+            recorder: recorder,
+            jobID: jobID,
+            sourceDisposition: sourceDisposition
+        )
     }
 
-    private func finishQueue(_ execution: QueueExecution?, destinationURL: URL) async {
-        guard let execution else { return }
+    private func finishQueue(_ execution: QueueExecution?, destinationURL: URL) async -> Bool {
+        guard let execution else { return true }
         defer {
             if activeQueueJobID == execution.jobID { activeQueueJobID = nil }
             queueDidChange?()
@@ -1672,12 +1705,44 @@ final class AppModel {
                 at: Date(),
                 reason: nil
             )
+            return true
         } catch {
             state = .completedWithWarnings(
                 "Created \(destinationURL.lastPathComponent); original unchanged, but the queue could not record completion."
             )
             didChange?()
+            return false
         }
+    }
+
+    private func applySourceDisposition(
+        _ execution: QueueExecution?,
+        sourceURL: URL,
+        destinationURL: URL
+    ) {
+        guard execution?.sourceDisposition == .trashAfterVerifiedSuccess else { return }
+        applyVerifiedTrash(sourceURL: sourceURL, destinationURL: destinationURL)
+    }
+
+    func applyVerifiedTrash(sourceURL: URL, destinationURL: URL) {
+        do {
+            try trashSource(sourceURL)
+            assets.removeAll { $0.sourceURL == sourceURL }
+            state = .completed(
+                "Created \(destinationURL.lastPathComponent); moved the original to Trash after verified success."
+            )
+        } catch {
+            if FileManager.default.fileExists(atPath: sourceURL.path) {
+                state = .completedWithWarnings(
+                    "Created \(destinationURL.lastPathComponent) and recorded verified success, but could not move the original to Trash, so it remains unchanged."
+                )
+            } else {
+                state = .completedWithWarnings(
+                    "Created \(destinationURL.lastPathComponent) and recorded verified success, but could not confirm where macOS moved the original. Check Trash before continuing."
+                )
+            }
+        }
+        didChange?()
     }
 
     private func failQueue(_ execution: QueueExecution?, error: Error) async {
@@ -1961,5 +2026,14 @@ final class AppModel {
             throw ToolCatalogError.unsafeRoot
         }
         return resourceURL.appendingPathComponent("Tools", isDirectory: true)
+    }
+}
+
+enum SourceDispositionCommitPolicy {
+    static func shouldApply(
+        _ disposition: MediaQueueSourceDisposition,
+        afterQueueRecordedSuccess queueRecordedSuccess: Bool
+    ) -> Bool {
+        queueRecordedSuccess && disposition == .trashAfterVerifiedSuccess
     }
 }

@@ -5,6 +5,10 @@ durable production queue. It connects the existing reviewed workflow pipeline to
 real sandbox bookmarks and a compact native Queue window without claiming the
 later unattended scheduler.
 
+The later
+[Trash-after-verified-success slice](M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md)
+adds the opt-in source disposition while preserving this slice's commit boundary.
+
 ## Verified execution boundary
 
 - **Verify & Run** creates the queue job and transitions it to **Running** before

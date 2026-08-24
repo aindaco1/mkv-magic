@@ -3,6 +3,7 @@ import MKVMagicCore
 
 public enum SecurityScopedBookmarkAccess: Equatable, Sendable {
     case readOnlyFile
+    case readWriteFile
     case readWriteDirectory
 }
 
@@ -68,7 +69,7 @@ public struct SecurityScopedBookmarkCodec: Sendable {
             throw SecurityScopedBookmarkError.unsafeURL
         }
         switch access {
-        case .readOnlyFile:
+        case .readOnlyFile, .readWriteFile:
             guard values.isRegularFile == true else {
                 throw SecurityScopedBookmarkError.wrongResourceType
             }

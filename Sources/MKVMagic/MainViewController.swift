@@ -10,6 +10,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let recipe: SavedWorkflow
         let compiled: CompiledSavedWorkflow
         let externalSubtitlePayload: ExternalSubtitleMuxPayload?
+        let sourceDisposition: MediaQueueSourceDisposition
         let retryingQueueJobID: UUID?
     }
 
@@ -934,6 +935,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func previewSavedWorkflow(
         _ workflow: SavedWorkflow,
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil
     ) {
         guard let asset = selectedAsset, let parentWindow = view.window else {
@@ -952,6 +954,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 asset: asset,
                 parentWindow: parentWindow,
                 externalSubtitle: nil,
+                sourceDisposition: sourceDisposition,
                 retryingQueueJobID: retryingQueueJobID
             )
             return
@@ -975,6 +978,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 asset: asset,
                 parentWindow: parentWindow,
                 externalSubtitle: reviewed,
+                sourceDisposition: sourceDisposition,
                 retryingQueueJobID: retryingQueueJobID
             )
         }
@@ -985,6 +989,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         asset: MediaAsset,
         parentWindow: NSWindow,
         externalSubtitle: ReviewedExternalSubtitle?,
+        sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?
     ) {
         do {
@@ -1026,6 +1031,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     recipe: workflow,
                     compiled,
                     externalSubtitlePayload: externalSubtitle?.payload,
+                    sourceDisposition: sourceDisposition,
                     retryingQueueJobID: retryingQueueJobID,
                     assetID: asset.id
                 )
@@ -1041,6 +1047,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         recipe: SavedWorkflow,
         _ compiled: CompiledSavedWorkflow,
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
+        sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?,
         assetID: UUID
     ) {
@@ -1051,6 +1058,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 recipe: recipe,
                 compiled: compiled,
                 externalSubtitlePayload: externalSubtitlePayload,
+                sourceDisposition: sourceDisposition,
                 retryingQueueJobID: retryingQueueJobID
             )
         )
@@ -1683,6 +1691,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
+        var sourceDispositionCheckbox: NSButton?
+        if case .savedWorkflow(let prepared) = pendingChange {
+            let accessory = SourceDispositionPresentation.makeAccessory(
+                selected: prepared.sourceDisposition == .trashAfterVerifiedSuccess
+            )
+            panel.accessoryView = accessory.view
+            sourceDispositionCheckbox = accessory.checkbox
+        }
         guard panel.runModal() == .OK, let destinationURL = panel.url else { return }
 
         previewButton.isEnabled = false
@@ -1727,10 +1743,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         ).sourceURL
                     }
                 case .savedWorkflow(let prepared):
+                    let sourceDisposition = SourceDispositionPresentation.disposition(
+                        for: sourceDispositionCheckbox
+                    )
                     outputURL = try await model.runSavedWorkflow(
                         prepared.compiled,
                         recipe: prepared.recipe,
                         externalSubtitlePayload: prepared.externalSubtitlePayload,
+                        sourceDisposition: sourceDisposition,
                         retryingQueueJobID: prepared.retryingQueueJobID,
                         in: asset,
                         destinationURL: destinationURL
@@ -1809,7 +1829,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 }
                 preferredSelectionURL = sourceURL
                 refresh()
-                previewSavedWorkflow(workflow, retryingQueueJobID: job.id)
+                previewSavedWorkflow(
+                    workflow,
+                    sourceDisposition: job.sourceDisposition,
+                    retryingQueueJobID: job.id
+                )
             } catch {
                 statusLabel.stringValue =
                     "Could not restore queued input: \(error.localizedDescription)"
@@ -2093,6 +2117,43 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private static func canAddExternalSubtitle(to asset: MediaAsset) -> Bool {
         MatroskaEditingPolicy.supports(asset)
             && asset.tracks.contains { $0.kind == .video }
+    }
+}
+
+@MainActor
+enum SourceDispositionPresentation {
+    static let checkboxTitle = "Move original video file to Trash after verified success"
+    static let explanation =
+        "Only after verified success. If Trash fails, the new output stays safe; MKV Magic checks the original before warning you."
+
+    static func makeAccessory(selected: Bool) -> (view: NSView, checkbox: NSButton) {
+        let checkbox = NSButton(checkboxWithTitle: checkboxTitle, target: nil, action: nil)
+        checkbox.state = selected ? .on : .off
+        let detail = NSTextField(wrappingLabelWithString: explanation)
+        detail.textColor = .secondaryLabelColor
+        detail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        let stack = NSStackView(views: [checkbox, detail])
+        stack.orientation = .vertical
+        stack.alignment = .leading
+        stack.spacing = 4
+        stack.translatesAutoresizingMaskIntoConstraints = false
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 448, height: 70))
+        container.addSubview(stack)
+        NSLayoutConstraint.activate([
+            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 4),
+            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -4),
+            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 2),
+            stack.bottomAnchor.constraint(
+                lessThanOrEqualTo: container.bottomAnchor,
+                constant: -2
+            ),
+            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
+        ])
+        return (container, checkbox)
+    }
+
+    static func disposition(for checkbox: NSButton?) -> MediaQueueSourceDisposition {
+        checkbox?.state == .on ? .trashAfterVerifiedSuccess : .keepOriginal
     }
 }
 

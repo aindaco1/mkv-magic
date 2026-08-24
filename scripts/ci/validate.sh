@@ -7,6 +7,7 @@ cd "$repo_root"
 ./scripts/ci/check-local-only.sh
 ./scripts/ci/scan-secrets.sh
 ./scripts/ci/verify-actions-pinning.sh
+./scripts/ci/test-dmg-verification.sh
 
 shell_files=()
 while IFS= read -r -d '' shell_file; do
