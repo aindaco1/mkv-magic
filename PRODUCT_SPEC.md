@@ -1410,6 +1410,15 @@ provenance bound to the release workflow, tag, repository, hosted runner, and
 commit. The public release is downloaded into a new directory and reverified;
 successful draft readback alone is not release acceptance.
 
+Corresponding-source readback is part of that same boundary. The verifier opens
+the source bundle, binds the Git archive commit to binary build metadata,
+requires the exact eight checksum-matching dependency sources, validates the
+shared source policy and safe archive layout, and proves the archived build
+script contains every runtime version and checksum pin. The source bundler also
+refuses a checkout whose commit or tree differs from binary build metadata.
+Outer checksums and attestations cannot substitute for semantic source
+contents.
+
 The bundled-runtime layout continuation closes the copy boundary around the
 manifest-backed tool tree. Unsigned trees have exactly four root entries;
 signed trees may add only a structurally matching pre-sign build manifest per

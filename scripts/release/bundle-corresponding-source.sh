@@ -6,6 +6,7 @@ if [[ $# -ne 1 || "$1" != /* ]]; then
     exit 64
 fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/release/corresponding-source-verification.sh"
 tool_root="$1"
 release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
 cache_root="${MKV_MAGIC_TOOL_CACHE:-$repo_root/.build/tool-sources}"
@@ -21,6 +22,15 @@ fi
 
 version="$(plutil -extract CFBundleShortVersionString raw -o - \
     "$app_path/Contents/Info.plist")"
+metadata="$release_root/BUILD-METADATA.txt"
+validate_mkv_magic_build_metadata "$metadata" "$version"
+metadata_commit="$(mkv_magic_build_metadata_value "$metadata" 'Source commit')"
+metadata_tree="$(mkv_magic_build_metadata_value "$metadata" 'Source tree')"
+if [[ "$metadata_commit" != "$(git -C "$repo_root" rev-parse HEAD)" || \
+      "$metadata_tree" != "$(git -C "$repo_root" rev-parse 'HEAD^{tree}')" ]]; then
+    echo "corresponding source checkout does not match BUILD-METADATA.txt" >&2
+    exit 1
+fi
 archive="$release_root/MKV-Magic-$version-corresponding-source.zip"
 if [[ -e "$archive" ]]; then
     echo "refusing to replace source bundle: $archive" >&2

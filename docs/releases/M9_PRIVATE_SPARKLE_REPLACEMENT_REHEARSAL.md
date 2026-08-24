@@ -58,6 +58,13 @@ were not logged or copied into the repository. The two owner-only temporary
 credential copies were overwritten and unlinked at completion; a follow-up
 check found no remaining rehearsal credential directory.
 
+A later release-readback continuation paired this exact candidate with a
+98,978,866-byte corresponding-source archive from the same `7a1fd82` commit and
+the checksum-verified dependency cache. The resulting 14-asset local readback
+passed semantic source validation. See
+`M9_CORRESPONDING_SOURCE_READBACK_SLICE.md` for its separate evidence and
+digest; app, update ZIP, DMG, and appcast bytes did not change.
+
 ## Observed replacement
 
 The pinned Sparkle 2.9.5 external updater revalidated the notarized prior app
@@ -76,8 +83,9 @@ fixture result. The installed prior app was never modified.
   readback is untested.
 - Rosetta verifies the Intel slice on Apple Silicon, but this is not a physical
   Intel Mac run or a clean-account result.
-- The private rehearsal set intentionally has no corresponding-source archive
-  and is not a publishable GPL release set.
+- The private rehearsal now has corresponding source, but it was not generated
+  from a final signed semantic-version tag, published, downloaded, or verified
+  with GitHub attestation, so it is still not a public GPL release set.
 - Final release acceptance must use the final semantic version and exact final
   tag, include corresponding source, repeat downloaded-draft verification,
   pass clean-account Apple Silicon and physical Intel checks, repeat updater

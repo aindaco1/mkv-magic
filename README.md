@@ -427,6 +427,13 @@ verifier to both the downloaded draft candidate and a fresh download of the
 published release. See
 [docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md](docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md).
 
+Corresponding source is now read back semantically instead of trusted as an
+opaque checksummed filename. Verification binds the source tar's Git commit to
+the binary build metadata and proves the exact eight dependency archives,
+hashes, build pins, safe layout, license, package locks, and build entry points.
+See
+[docs/releases/M9_CORRESPONDING_SOURCE_READBACK_SLICE.md](docs/releases/M9_CORRESPONDING_SOURCE_READBACK_SLICE.md).
+
 The bundled media runtime now has an exact fail-closed layout contract before
 copying and after signing/resealing; unrelated build caches or extra payloads
 cannot ride inside the app. A real pinned-runtime DMG rehearsal passed both

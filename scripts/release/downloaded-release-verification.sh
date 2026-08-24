@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 
+downloaded_release_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$downloaded_release_repo_root/scripts/release/corresponding-source-verification.sh"
+
 mkv_magic_release_asset_names() {
     local version="$1"
     printf '%s\n' \
@@ -154,4 +157,8 @@ validate_mkv_magic_downloaded_release() {
             return 1
         fi
     done
+
+    validate_mkv_magic_corresponding_source \
+        "$release_root/MKV-Magic-$version-corresponding-source.zip" \
+        "$version" "$release_root/BUILD-METADATA.txt"
 }
