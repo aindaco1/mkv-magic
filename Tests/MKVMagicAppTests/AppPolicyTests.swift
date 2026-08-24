@@ -298,6 +298,53 @@ final class AppPolicyTests: XCTestCase {
         }
     }
 
+    func testCommonFormatJoinReviewExplainsUniformStaticHDR10Preservation() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .unavailable,
+            proResEncoder: nil,
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: losslessJoinHDR10VideoOption(
+                        part: 1,
+                        width: 1_920,
+                        height: 1_080
+                    ),
+                    editionID: nil
+                ),
+                LosslessJoinSourceSelection(
+                    option: losslessJoinHDR10VideoOption(
+                        part: 2,
+                        width: 1_280,
+                        height: 720
+                    ),
+                    editionID: nil
+                ),
+            ],
+            encodingCapabilities: capabilities
+        )
+
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        XCTAssertTrue(snapshot.isReady, "\(snapshot.blockerSummaries)")
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        XCTAssertEqual(resolved.choices.videoTargetsByLane[0]?.dynamicRange, .hdr10)
+        XCTAssertEqual(resolved.choices.videoTargetsByLane[0]?.preset, .hevcCompatibility)
+        XCTAssertTrue(
+            CommonFormatJoinChoicePolicy.summaries(
+                for: candidate,
+                resolvedPlan: resolved
+            ).contains { $0.contains("HDR10 with static metadata preserved") }
+        )
+    }
+
     @MainActor
     func testJoinWindowOffersCommonFormatReviewWhenCapabilitiesAreVerified() throws {
         let capabilities = FFmpegEncodingCapabilities(
@@ -1881,6 +1928,71 @@ final class AppPolicyTests: XCTestCase {
                         transfer: "bt709",
                         matrix: "bt709"
                     )
+                )
+            ],
+            globalTagCount: 0,
+            trackTagCount: 0
+        )
+        return LosslessJoinSourceOption(
+            chapterPreview: ChapterEditPreview(
+                source: source,
+                original: MatroskaChapterDocument(editions: []),
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 1)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
+    }
+
+    private func losslessJoinHDR10VideoOption(
+        part: Int,
+        width: Int,
+        height: Int
+    ) -> LosslessJoinSourceOption {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/HDR Part \(part).mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "hevc",
+                    codecID: "V_MPEGH/ISO/HEVC",
+                    profile: "Main 10",
+                    level: 153,
+                    uid: UInt64(part),
+                    isDefault: true,
+                    dimensions: MediaDimensions(width: width, height: height),
+                    displayDimensions: MediaDimensions(width: width, height: height),
+                    pixelFormat: "yuv420p10le",
+                    bitDepth: 10,
+                    frameRate: "24000/1001",
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt2020",
+                        transfer: "smpte2084",
+                        matrix: "bt2020nc"
+                    ),
+                    masteringDisplayMetadata: MediaMasteringDisplayMetadata(
+                        redX: 34_000,
+                        redY: 16_000,
+                        greenX: 13_250,
+                        greenY: 34_500,
+                        blueX: 7_500,
+                        blueY: 3_000,
+                        whitePointX: 15_635,
+                        whitePointY: 16_450,
+                        maxLuminance: 10_000_000,
+                        minLuminance: 50
+                    ),
+                    contentLightLevelMetadata: MediaContentLightLevelMetadata(
+                        maxContentLightLevel: 1_000,
+                        maxFrameAverageLightLevel: 400
+                    ),
+                    hdrFormats: ["HDR10 metadata"]
                 )
             ],
             globalTagCount: 0,

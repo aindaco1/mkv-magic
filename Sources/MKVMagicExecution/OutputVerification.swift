@@ -498,7 +498,9 @@ public struct ExactTrimOutputVerifier: Sendable {
                     videoMatches(
                         outputTrack,
                         source: sourceTrack,
-                        preset: resolvedPlan.choice.videoPreset
+                        preset: resolvedPlan.choice.videoPreset,
+                        dynamicRange: resolvedPlan.videoDynamicRange,
+                        hdr10Signal: resolvedPlan.hdr10Signal
                     )
                 else {
                     throw ExactTrimVerificationError.videoMismatch
@@ -542,7 +544,9 @@ public struct ExactTrimOutputVerifier: Sendable {
     private func videoMatches(
         _ actual: MediaTrack,
         source: MediaTrack,
-        preset: VideoPreset
+        preset: VideoPreset,
+        dynamicRange: JoinVideoDynamicRangeTarget,
+        hdr10Signal: MediaHDR10Signal?
     ) -> Bool {
         let expectedCodec: String
         let expectedBitDepth: Int
@@ -560,11 +564,20 @@ public struct ExactTrimOutputVerifier: Sendable {
             expectedCodec = "prores"
             expectedBitDepth = 10
         }
-        return normalized(actual.codec) == expectedCodec
-            && actual.dimensions == source.dimensions
-            && actual.bitDepth == expectedBitDepth
-            && actual.hdrFormats.isEmpty
-            && isBT709SDR(actual)
+        guard
+            normalized(actual.codec) == expectedCodec
+                && actual.dimensions == source.dimensions
+                && actual.bitDepth == expectedBitDepth
+        else {
+            return false
+        }
+        switch dynamicRange {
+        case .sdr:
+            return hdr10Signal == nil && MediaHDR10Signal.isBT709SDR(actual)
+        case .hdr10:
+            guard let hdr10Signal else { return false }
+            return MediaHDR10Signal(track: actual) == hdr10Signal
+        }
     }
 
     private func audioMatches(
@@ -620,14 +633,6 @@ public struct ExactTrimOutputVerifier: Sendable {
         guard unmatched.isEmpty else {
             throw ExactTrimVerificationError.attachmentsChanged
         }
-    }
-
-    private func isBT709SDR(_ track: MediaTrack) -> Bool {
-        guard let color = track.colorInfo else { return false }
-        return normalized(color.range) == "tv"
-            && normalized(color.primaries) == "bt709"
-            && normalized(color.transfer) == "bt709"
-            && normalized(color.matrix) == "bt709"
     }
 
     private func normalized(_ value: String?) -> String {
@@ -1024,6 +1029,8 @@ private struct TrackTechnicalSnapshot: Equatable {
     let bitDepth: Int?
     let frameRate: String?
     let colorInfo: MediaColorInfo?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
     let hdrFormats: [String]
     let tags: [String: String]
 
@@ -1046,6 +1053,8 @@ private struct TrackTechnicalSnapshot: Equatable {
         bitDepth = track.bitDepth
         frameRate = track.frameRate
         colorInfo = track.colorInfo
+        masteringDisplayMetadata = track.masteringDisplayMetadata
+        contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
         tags = track.tags.removingEditableTrackMetadata
     }
@@ -1067,6 +1076,8 @@ private struct JoinFinalTrackTechnicalSnapshot: Equatable {
     let bitDepth: Int?
     let frameRate: String?
     let colorInfo: MediaColorInfo?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
     let hdrFormats: [String]
 
     init(_ track: MediaTrack) {
@@ -1085,6 +1096,8 @@ private struct JoinFinalTrackTechnicalSnapshot: Equatable {
         bitDepth = track.bitDepth
         frameRate = track.frameRate
         colorInfo = track.colorInfo
+        masteringDisplayMetadata = track.masteringDisplayMetadata
+        contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats.map { $0.lowercased() }
     }
 }
@@ -1116,6 +1129,8 @@ private struct RemuxTrackSnapshot: Equatable {
     let bitDepth: Int?
     let frameRate: String?
     let colorInfo: MediaColorInfo?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
     let hdrFormats: [String]
     let tags: [String: String]
 
@@ -1146,6 +1161,8 @@ private struct RemuxTrackSnapshot: Equatable {
         bitDepth = track.bitDepth
         frameRate = track.frameRate
         colorInfo = track.colorInfo
+        masteringDisplayMetadata = track.masteringDisplayMetadata
+        contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
         tags = track.tags.removingTrackRemuxProvenance
     }

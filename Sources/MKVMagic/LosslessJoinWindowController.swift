@@ -396,6 +396,7 @@ enum LosslessJoinReviewBuilder {
         for lane in proposal.videoLanes
         where lane.encodesVideo
             && lane.dynamicRangeChoices != [.sdr]
+            && lane.dynamicRangeChoices != [.hdr10]
         {
             let message =
                 "Video lane \(lane.laneIndex + 1) needs HDR/color conversion that is not executable yet."

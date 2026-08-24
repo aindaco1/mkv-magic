@@ -469,6 +469,65 @@ final class JoinNormalizationExecutorTests: XCTestCase {
         }
     }
 
+    func testVerifierRequiresExactReviewedHDR10Signal() throws {
+        let sources = [
+            MediaAsset(
+                sourceURL: URL(fileURLWithPath: "/media/hdr-part-1.mkv"),
+                container: "matroska,webm",
+                duration: MediaTime(nanoseconds: 1_000_000_000),
+                tracks: [hdr10Video(dimensions: MediaDimensions(width: 64, height: 48))]
+            ),
+            MediaAsset(
+                sourceURL: URL(fileURLWithPath: "/media/hdr-part-2.mkv"),
+                container: "matroska,webm",
+                duration: MediaTime(nanoseconds: 1_000_000_000),
+                tracks: [hdr10Video(dimensions: MediaDimensions(width: 80, height: 64))]
+            ),
+        ]
+        let mapping = JoinTrackMapping(lanes: [
+            JoinTrackLane(kind: .video, trackIDsBySource: [0, 0])
+        ])
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: mapping,
+            preferredVideoPreset: .hevcCompatibility
+        )
+        let lane = try XCTUnwrap(proposal.videoLanes.first)
+        let choice = JoinVideoTargetChoice(
+            preset: .hevcCompatibility,
+            canvas: try XCTUnwrap(lane.recommendedCanvas),
+            frameRatePolicy: .preserveSourceTiming,
+            dynamicRange: .hdr10,
+            rateControl: .averageBitrate(500_000)
+        )
+        let resolved = try JoinNormalizationChoiceResolver().resolve(
+            sources: sources,
+            proposal: proposal,
+            choices: JoinNormalizationChoices(videoTargetsByLane: [0: choice]),
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+        let verifier = JoinNormalizationOutputVerifier()
+
+        try verifier.verify(
+            sources: sources,
+            resolvedPlan: resolved,
+            output: hdr10Output(maxContentLightLevel: 1_000)
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                sources: sources,
+                resolvedPlan: resolved,
+                output: hdr10Output(maxContentLightLevel: 999)
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? JoinNormalizationVerificationError,
+                .videoMismatch(laneIndex: 0)
+            )
+        }
+    }
+
     private struct Fixture {
         let directory: URL
         let sources: [MediaAsset]
@@ -588,6 +647,63 @@ final class JoinNormalizationExecutorTests: XCTestCase {
                 transfer: "bt709",
                 matrix: "bt709"
             )
+        )
+    }
+
+    private func hdr10Video(
+        dimensions: MediaDimensions,
+        maxContentLightLevel: Int = 1_000
+    ) -> MediaTrack {
+        MediaTrack(
+            id: 0,
+            kind: .video,
+            codec: "hevc",
+            codecID: "V_MPEGH/ISO/HEVC",
+            profile: "Main 10",
+            dimensions: dimensions,
+            displayDimensions: dimensions,
+            pixelFormat: "p010le",
+            bitDepth: 10,
+            frameRate: "24/1",
+            colorInfo: MediaColorInfo(
+                range: "tv",
+                primaries: "bt2020",
+                transfer: "smpte2084",
+                matrix: "bt2020nc"
+            ),
+            masteringDisplayMetadata: MediaMasteringDisplayMetadata(
+                redX: 34_000,
+                redY: 16_000,
+                greenX: 13_250,
+                greenY: 34_500,
+                blueX: 7_500,
+                blueY: 3_000,
+                whitePointX: 15_635,
+                whitePointY: 16_450,
+                maxLuminance: 10_000_000,
+                minLuminance: 50
+            ),
+            contentLightLevelMetadata: MediaContentLightLevelMetadata(
+                maxContentLightLevel: maxContentLightLevel,
+                maxFrameAverageLightLevel: 400
+            ),
+            hdrFormats: ["HDR10 metadata"]
+        )
+    }
+
+    private func hdr10Output(maxContentLightLevel: Int) -> MediaAsset {
+        MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/output/hdr10.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 2_000_000_000),
+            fileSize: 1,
+            tracks: [
+                hdr10Video(
+                    dimensions: MediaDimensions(width: 80, height: 64),
+                    maxContentLightLevel: maxContentLightLevel
+                )
+            ],
+            chapterEntryCount: 0
         )
     }
 }

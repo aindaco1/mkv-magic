@@ -685,6 +685,11 @@ public struct JoinCompatibilityAnalyzer: Sendable {
         if normalizedSet(reference.hdrFormats) != normalizedSet(candidate.hdrFormats) {
             reasons.append((.normalizationRequired, .hdr))
         }
+        if reference.masteringDisplayMetadata != candidate.masteringDisplayMetadata
+            || reference.contentLightLevelMetadata != candidate.contentLightLevelMetadata
+        {
+            reasons.append((.normalizationRequired, .hdr))
+        }
     }
 
     private func compareAudio(
@@ -851,6 +856,8 @@ private enum JoinTrackPolicy {
             color: track.colorInfo.map {
                 [$0.range, $0.primaries, $0.transfer, $0.matrix].map(normalized)
             },
+            masteringDisplayMetadata: track.masteringDisplayMetadata,
+            contentLightLevelMetadata: track.contentLightLevelMetadata,
             hdrFormats: Set(track.hdrFormats.map(normalized).filter { !$0.isEmpty })
         )
     }
@@ -909,6 +916,8 @@ private struct JoinTrackFullFingerprint: Hashable {
     let bitDepth: Int?
     let frameRate: String
     let color: [String]?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
     let hdrFormats: Set<String>
 }
 

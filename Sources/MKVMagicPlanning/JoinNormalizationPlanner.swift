@@ -448,6 +448,25 @@ public struct JoinNormalizationPlanner: Sendable {
         } else if Set(dynamicRanges) == [.hdr10] {
             recommendedDynamicRange = .hdr10
             dynamicRangeChoices = [.hdr10]
+            let signals = presentTracks.compactMap(MediaHDR10Signal.init(track:))
+            if signals.count != presentTracks.count || Set(signals).count != 1 {
+                blockers.append(
+                    JoinNormalizationBlocker(
+                        laneIndex: laneIndex,
+                        summary:
+                            "Video lane \(laneIndex + 1) has differing or incomplete static HDR10 metadata that cannot be preserved as one joined signal."
+                    )
+                )
+            }
+            if preferredPreset != .av1Quality && preferredPreset != .hevcCompatibility {
+                blockers.append(
+                    JoinNormalizationBlocker(
+                        laneIndex: laneIndex,
+                        summary:
+                            "Video lane \(laneIndex + 1) needs an AV1 or HEVC 10-bit target to preserve HDR10."
+                    )
+                )
+            }
         } else if Set(dynamicRanges) == [.sdr] {
             recommendedDynamicRange = .sdr
             dynamicRangeChoices = [.sdr]
@@ -743,14 +762,10 @@ public struct JoinNormalizationPlanner: Sendable {
         }) {
             return .otherHDR
         }
-        let transfer = normalized(track.colorInfo?.transfer)
-        if formats.contains(where: { $0.contains("hdr10") })
-            || transfer.contains("smpte2084") || transfer == "pq"
-        {
-            return .hdr10
-        }
+        if MediaHDR10Signal(track: track) != nil { return .hdr10 }
         if !formats.isEmpty { return .otherHDR }
-        if track.colorInfo != nil, !transfer.isEmpty { return .sdr }
+        if MediaHDR10Signal.isBT709SDR(track) { return .sdr }
+        if track.colorInfo != nil { return .otherHDR }
         return .unknown
     }
 

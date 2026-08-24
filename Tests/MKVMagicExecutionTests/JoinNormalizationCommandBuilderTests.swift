@@ -140,7 +140,7 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         }
     }
 
-    func testRejectsHDRUntilExactColorPipelineIsExecutable() throws {
+    func testRejectsMixedSDRAndHDRUntilToneMappingIsExecutable() throws {
         let sources = [
             asset(part: 1, tracks: [video(id: 0)]),
             asset(part: 2, tracks: [hdr10Video(id: 0)]),
@@ -178,6 +178,53 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
                 .unsupportedDynamicRange(laneIndex: 0)
             )
         }
+    }
+
+    func testBuildsUniformHDR10AV1JoinWithExactStaticMetadata() throws {
+        let sources = [
+            asset(
+                part: 1,
+                tracks: [hdr10Video(id: 0, width: 1_920, height: 1_080)]
+            ),
+            asset(
+                part: 2,
+                tracks: [hdr10Video(id: 0, width: 1_280, height: 720)]
+            ),
+        ]
+        let resolved = try resolve(
+            sources: sources,
+            mapping: mapping(video: [0, 0]),
+            preset: .av1Quality,
+            rateControl: .constantQuality(30)
+        )
+
+        let command = try JoinNormalizationCommandBuilder().build(
+            sources: sources,
+            resolvedPlan: resolved,
+            capabilities: capabilities(),
+            outputURL: URL(fileURLWithPath: "/output/hdr10-av1.mkv")
+        )
+
+        XCTAssertEqual(command.arguments.filter { $0 == "-mastering_display:0" }.count, 2)
+        XCTAssertEqual(command.arguments.filter { $0 == "-content_light:0" }.count, 2)
+        XCTAssertEqual(value(after: "-color_primaries:v:0", in: command.arguments), "9")
+        XCTAssertEqual(value(after: "-color_trc:v:0", in: command.arguments), "16")
+        XCTAssertEqual(value(after: "-colorspace:v:0", in: command.arguments), "9")
+        XCTAssertEqual(value(after: "-color_range:v:0", in: command.arguments), "1")
+        XCTAssertEqual(
+            value(after: "-svtav1-params:v:0", in: command.arguments),
+            "color-primaries=bt2020:transfer-characteristics=smpte2084:"
+                + "matrix-coefficients=bt2020-ncl:color-range=studio"
+        )
+        let graph = try XCTUnwrap(value(after: "-filter_complex", in: command.arguments))
+        XCTAssertEqual(
+            graph.components(
+                separatedBy:
+                    "setparams=range=limited:color_primaries=bt2020:"
+                    + "color_trc=smpte2084:colorspace=bt2020nc"
+            ).count - 1,
+            2
+        )
     }
 
     func testRejectsCapabilityRegressionMissingFilterAndExistingOutput() throws {
@@ -389,7 +436,11 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         )
     }
 
-    private func hdr10Video(id: Int) -> MediaTrack {
+    private func hdr10Video(
+        id: Int,
+        width: Int = 3_840,
+        height: Int = 2_160
+    ) -> MediaTrack {
         MediaTrack(
             id: id,
             kind: .video,
@@ -397,8 +448,8 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
             codecID: "V_MPEGH/ISO/HEVC",
             profile: "Main 10",
             level: 153,
-            dimensions: MediaDimensions(width: 3_840, height: 2_160),
-            displayDimensions: MediaDimensions(width: 3_840, height: 2_160),
+            dimensions: MediaDimensions(width: width, height: height),
+            displayDimensions: MediaDimensions(width: width, height: height),
             pixelFormat: "yuv420p10le",
             bitDepth: 10,
             frameRate: "24/1",
@@ -408,7 +459,31 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
                 transfer: "smpte2084",
                 matrix: "bt2020nc"
             ),
-            hdrFormats: ["HDR10"]
+            masteringDisplayMetadata: hdrMasteringDisplay,
+            contentLightLevelMetadata: hdrContentLight,
+            hdrFormats: ["HDR10 metadata"]
+        )
+    }
+
+    private var hdrMasteringDisplay: MediaMasteringDisplayMetadata {
+        MediaMasteringDisplayMetadata(
+            redX: 34_000,
+            redY: 16_000,
+            greenX: 13_250,
+            greenY: 34_500,
+            blueX: 7_500,
+            blueY: 3_000,
+            whitePointX: 15_635,
+            whitePointY: 16_450,
+            maxLuminance: 10_000_000,
+            minLuminance: 50
+        )
+    }
+
+    private var hdrContentLight: MediaContentLightLevelMetadata {
+        MediaContentLightLevelMetadata(
+            maxContentLightLevel: 1_000,
+            maxFrameAverageLightLevel: 400
         )
     }
 

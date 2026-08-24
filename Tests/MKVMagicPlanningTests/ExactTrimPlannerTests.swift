@@ -20,6 +20,8 @@ final class ExactTrimPlannerTests: XCTestCase {
         )
 
         XCTAssertEqual(copy.videoTrackID, 0)
+        XCTAssertEqual(copy.videoDynamicRange, .sdr)
+        XCTAssertNil(copy.hdr10Signal)
         XCTAssertEqual(copy.audioTrackIDs, [1])
         XCTAssertEqual(copy.trackIDsInOutputOrder, [0, 1])
         XCTAssertEqual(copy.videoEncodeCount, 1)
@@ -58,6 +60,43 @@ final class ExactTrimPlannerTests: XCTestCase {
             )
         )
         XCTAssertEqual(hevc.videoRateControl, .averageBitrate(500_000))
+
+        let hdr = try XCTUnwrap(
+            planner.recommendedChoice(
+                for: makeSource(hdr10: true),
+                availableVideoPresets: [.h264Compatibility, .hevcCompatibility]
+            )
+        )
+        XCTAssertEqual(hdr.videoPreset, .hevcCompatibility)
+    }
+
+    func testResolvesStaticHDR10ForAV1OrHEVCOnly() throws {
+        let source = makeSource(hdr10: true)
+        let plan = try ExactTrimPlanner().resolve(
+            source: source,
+            range: range(2, 8),
+            choice: ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000)
+            ),
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: true
+        )
+        XCTAssertEqual(plan.videoDynamicRange, .hdr10)
+        XCTAssertEqual(plan.hdr10Signal, MediaHDR10Signal(track: source.tracks[0]))
+
+        XCTAssertThrowsError(
+            try ExactTrimPlanner().resolve(
+                source: source,
+                range: range(2, 8),
+                choice: ExactTrimChoice(
+                    videoPreset: .h264Compatibility,
+                    videoRateControl: .averageBitrate(2_000_000)
+                ),
+                availableVideoPresets: [.h264Compatibility],
+                aacAvailable: true
+            )
+        ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .unsupportedDynamicRange) }
     }
 
     func testFailsClosedForUnsupportedTracksTagsHDRCapabilitiesAndAACFacts() throws {
@@ -150,28 +189,31 @@ final class ExactTrimPlannerTests: XCTestCase {
         extraTrack: MediaTrack? = nil,
         globalTagCount: Int = 0,
         hdrFormats: [String] = [],
+        hdr10: Bool = false,
         audioLayout: String? = "stereo"
     ) -> MediaAsset {
         var tracks = [
             MediaTrack(
                 id: 0,
                 kind: .video,
-                codec: "h264",
-                codecID: "V_MPEG4/ISO/AVC",
-                profile: "High",
+                codec: hdr10 ? "hevc" : "h264",
+                codecID: hdr10 ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
+                profile: hdr10 ? "Main 10" : "High",
                 uid: 100,
                 isDefault: true,
                 dimensions: MediaDimensions(width: 160, height: 90),
-                pixelFormat: "yuv420p",
-                bitDepth: 8,
+                pixelFormat: hdr10 ? "yuv420p10le" : "yuv420p",
+                bitDepth: hdr10 ? 10 : 8,
                 frameRate: "24/1",
                 colorInfo: MediaColorInfo(
                     range: "tv",
-                    primaries: "bt709",
-                    transfer: "bt709",
-                    matrix: "bt709"
+                    primaries: hdr10 ? "bt2020" : "bt709",
+                    transfer: hdr10 ? "smpte2084" : "bt709",
+                    matrix: hdr10 ? "bt2020nc" : "bt709"
                 ),
-                hdrFormats: hdrFormats
+                masteringDisplayMetadata: hdr10 ? masteringDisplay : nil,
+                contentLightLevelMetadata: hdr10 ? contentLight : nil,
+                hdrFormats: hdr10 ? ["HDR10 metadata"] : hdrFormats
             ),
             MediaTrack(
                 id: 1,
@@ -210,3 +252,21 @@ final class ExactTrimPlannerTests: XCTestCase {
         )
     }
 }
+
+private let masteringDisplay = MediaMasteringDisplayMetadata(
+    redX: 34_000,
+    redY: 16_000,
+    greenX: 13_250,
+    greenY: 34_500,
+    blueX: 7_500,
+    blueY: 3_000,
+    whitePointX: 15_635,
+    whitePointY: 16_450,
+    maxLuminance: 10_000_000,
+    minLuminance: 50
+)
+
+private let contentLight = MediaContentLightLevelMetadata(
+    maxContentLightLevel: 1_000,
+    maxFrameAverageLightLevel: 400
+)

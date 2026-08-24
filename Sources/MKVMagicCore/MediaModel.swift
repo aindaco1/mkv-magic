@@ -38,6 +38,57 @@ public struct MediaColorInfo: Codable, Hashable, Sendable {
     }
 }
 
+/// Static SMPTE ST 2086 mastering-display values normalized to FFmpeg's
+/// integer input units: chromaticity coordinates use a 50,000 denominator and
+/// luminance values use a 10,000 denominator (cd/m²).
+public struct MediaMasteringDisplayMetadata: Codable, Hashable, Sendable {
+    public let redX: Int64
+    public let redY: Int64
+    public let greenX: Int64
+    public let greenY: Int64
+    public let blueX: Int64
+    public let blueY: Int64
+    public let whitePointX: Int64
+    public let whitePointY: Int64
+    public let maxLuminance: Int64
+    public let minLuminance: Int64
+
+    public init(
+        redX: Int64,
+        redY: Int64,
+        greenX: Int64,
+        greenY: Int64,
+        blueX: Int64,
+        blueY: Int64,
+        whitePointX: Int64,
+        whitePointY: Int64,
+        maxLuminance: Int64,
+        minLuminance: Int64
+    ) {
+        self.redX = redX
+        self.redY = redY
+        self.greenX = greenX
+        self.greenY = greenY
+        self.blueX = blueX
+        self.blueY = blueY
+        self.whitePointX = whitePointX
+        self.whitePointY = whitePointY
+        self.maxLuminance = maxLuminance
+        self.minLuminance = minLuminance
+    }
+}
+
+/// Static CTA-861.3 light-level values in whole cd/m².
+public struct MediaContentLightLevelMetadata: Codable, Hashable, Sendable {
+    public let maxContentLightLevel: Int
+    public let maxFrameAverageLightLevel: Int
+
+    public init(maxContentLightLevel: Int, maxFrameAverageLightLevel: Int) {
+        self.maxContentLightLevel = maxContentLightLevel
+        self.maxFrameAverageLightLevel = maxFrameAverageLightLevel
+    }
+}
+
 public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public let id: Int
     public let kind: MediaTrackKind
@@ -67,6 +118,8 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public let bitDepth: Int?
     public let frameRate: String?
     public let colorInfo: MediaColorInfo?
+    public let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    public let contentLightLevelMetadata: MediaContentLightLevelMetadata?
     public let hdrFormats: [String]
     public let tags: [String: String]
 
@@ -99,6 +152,8 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         bitDepth: Int? = nil,
         frameRate: String? = nil,
         colorInfo: MediaColorInfo? = nil,
+        masteringDisplayMetadata: MediaMasteringDisplayMetadata? = nil,
+        contentLightLevelMetadata: MediaContentLightLevelMetadata? = nil,
         hdrFormats: [String] = [],
         tags: [String: String] = [:]
     ) {
@@ -130,6 +185,8 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         self.bitDepth = bitDepth
         self.frameRate = frameRate
         self.colorInfo = colorInfo
+        self.masteringDisplayMetadata = masteringDisplayMetadata
+        self.contentLightLevelMetadata = contentLightLevelMetadata
         self.hdrFormats = hdrFormats
         self.tags = tags
     }

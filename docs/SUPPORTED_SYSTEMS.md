@@ -29,6 +29,14 @@ estimated 1080p AV1 speed below `0.5×` real time recommends verified HEVC as th
 initial selection while leaving AV1 available. Physical Intel performance
 acceptance remains required before the first public release.
 
+Exact Trim and common-format Join can transcode a validated static HDR10 signal
+through verified 10-bit AV1 or HEVC. They preserve BT.2020/PQ limited-range color,
+matrix, mastering-display, and content-light metadata and reject output drift.
+All HDR sources in one joined video lane must carry the same static metadata.
+AV1 preserves the signal in its encoded stream and MKV; HEVC VideoToolbox is
+guaranteed only for the MKV container metadata. Mixed SDR/HDR conversion,
+HDR10+, HLG, and Dolby Vision transcoding remain unavailable.
+
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app
 must also be installed and exercised on physical Intel and Apple Silicon Macs.

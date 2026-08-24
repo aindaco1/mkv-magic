@@ -67,6 +67,8 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
     public let range: MediaTrimRange
     public let choice: ExactTrimChoice
     public let videoTrackID: Int
+    public let videoDynamicRange: JoinVideoDynamicRangeTarget
+    public let hdr10Signal: MediaHDR10Signal?
     public let audioTrackIDs: [Int]
     public let trackIDsInOutputOrder: [Int]
 
@@ -75,6 +77,8 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         range: MediaTrimRange,
         choice: ExactTrimChoice,
         videoTrackID: Int,
+        videoDynamicRange: JoinVideoDynamicRangeTarget,
+        hdr10Signal: MediaHDR10Signal?,
         audioTrackIDs: [Int],
         trackIDsInOutputOrder: [Int]
     ) {
@@ -82,6 +86,8 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         self.range = range
         self.choice = choice
         self.videoTrackID = videoTrackID
+        self.videoDynamicRange = videoDynamicRange
+        self.hdr10Signal = hdr10Signal
         self.audioTrackIDs = audioTrackIDs
         self.trackIDsInOutputOrder = trackIDsInOutputOrder
     }
@@ -99,9 +105,15 @@ public struct ExactTrimPlanner: Sendable {
         for source: MediaAsset,
         availableVideoPresets: [VideoPreset]
     ) -> ExactTrimChoice? {
-        guard let preset = availableVideoPresets.first,
-            let video = source.tracks.first(where: { $0.kind == .video })
+        guard let video = source.tracks.first(where: { $0.kind == .video })
         else { return nil }
+        let compatiblePresets =
+            MediaHDR10Signal(track: video) == nil
+            ? availableVideoPresets
+            : availableVideoPresets.filter {
+                $0 == .av1Quality || $0 == .hevcCompatibility
+            }
+        guard let preset = compatiblePresets.first else { return nil }
         let rateControl: JoinVideoRateControl
         switch preset {
         case .av1Quality:
@@ -154,7 +166,18 @@ public struct ExactTrimPlanner: Sendable {
             throw ExactTrimPlanningError.unsupportedTags
         }
         let video = videos[0]
-        guard video.hdrFormats.isEmpty, isBT709SDR(video) else {
+        let hdr10Signal = MediaHDR10Signal(track: video)
+        let videoDynamicRange: JoinVideoDynamicRangeTarget
+        if MediaHDR10Signal.isBT709SDR(video) {
+            videoDynamicRange = .sdr
+        } else if hdr10Signal != nil {
+            videoDynamicRange = .hdr10
+        } else {
+            throw ExactTrimPlanningError.unsupportedDynamicRange
+        }
+        if videoDynamicRange == .hdr10,
+            choice.videoPreset != .av1Quality && choice.videoPreset != .hevcCompatibility
+        {
             throw ExactTrimPlanningError.unsupportedDynamicRange
         }
         guard let dimensions = video.dimensions,
@@ -185,6 +208,8 @@ public struct ExactTrimPlanner: Sendable {
             range: range,
             choice: choice,
             videoTrackID: video.id,
+            videoDynamicRange: videoDynamicRange,
+            hdr10Signal: hdr10Signal,
             audioTrackIDs: audios.map(\.id),
             trackIDsInOutputOrder: source.tracks.map(\.id)
         )
@@ -208,13 +233,6 @@ public struct ExactTrimPlanner: Sendable {
         }
     }
 
-    private func isBT709SDR(_ track: MediaTrack) -> Bool {
-        guard let color = track.colorInfo else { return false }
-        return normalized(color.primaries) == "bt709"
-            && normalized(color.transfer) == "bt709"
-            && normalized(color.matrix) == "bt709"
-    }
-
     private func recommendedBitrate(video: MediaTrack, multiplier: Int) -> Int {
         guard let dimensions = video.dimensions else { return 8_000_000 }
         let pixels = dimensions.width.multipliedReportingOverflow(by: dimensions.height)
@@ -224,7 +242,4 @@ public struct ExactTrimPlanner: Sendable {
         return min(50_000_000, max(500_000, bitrate.partialValue))
     }
 
-    private func normalized(_ value: String?) -> String {
-        value?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() ?? ""
-    }
 }

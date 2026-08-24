@@ -119,17 +119,31 @@ public struct JoinNormalizationCommandBuilder: Sendable {
             throw JoinNormalizationCommandError.noEncodedLanes
         }
 
+        let videoArguments = FFmpegVideoEncoderArguments()
         var graphParts = [String]()
-        var videoOutputs = [(laneIndex: Int, label: String, choice: JoinVideoTargetChoice)]()
+        var videoOutputs = [
+            (
+                laneIndex: Int,
+                label: String,
+                choice: JoinVideoTargetChoice,
+                hdr10Signal: MediaHDR10Signal?
+            )
+        ]()
         for lane in videoLanes {
             guard mapping.lanes.indices.contains(lane.laneIndex),
                 let choice = resolvedPlan.choices.videoTargetsByLane[lane.laneIndex],
                 lane.recommendedPreset == choice.preset,
                 lane.recommendedCanvas == choice.canvas,
-                lane.dynamicRangeChoices == [.sdr], choice.dynamicRange == .sdr,
+                lane.recommendedDynamicRange == choice.dynamicRange,
+                lane.dynamicRangeChoices == [choice.dynamicRange],
                 choice.canvas.width.isMultiple(of: 2), choice.canvas.height.isMultiple(of: 2)
             else {
-                if lane.dynamicRangeChoices != [.sdr] {
+                if lane.dynamicRangeChoices.count != 1
+                    || !lane.dynamicRangeChoices.contains(
+                        resolvedPlan.choices.videoTargetsByLane[lane.laneIndex]?.dynamicRange
+                            ?? .sdr
+                    )
+                {
                     throw JoinNormalizationCommandError.unsupportedDynamicRange(
                         laneIndex: lane.laneIndex
                     )
@@ -140,12 +154,47 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                 throw JoinNormalizationCommandError.unavailableEncoder(choice.preset)
             }
             let mappingLane = mapping.lanes[lane.laneIndex]
+            let hdr10Signal: MediaHDR10Signal?
+            switch choice.dynamicRange {
+            case .sdr:
+                hdr10Signal = nil
+            case .hdr10:
+                guard choice.preset == .av1Quality || choice.preset == .hevcCompatibility else {
+                    throw JoinNormalizationCommandError.unsupportedDynamicRange(
+                        laneIndex: lane.laneIndex
+                    )
+                }
+                let signals = sources.indices.compactMap { sourceIndex in
+                    mappingLane.trackIDsBySource[sourceIndex]
+                        .flatMap { indexedTracks[sourceIndex][$0] }
+                        .flatMap(MediaHDR10Signal.init(track:))
+                }
+                guard signals.count == sources.count, let first = signals.first,
+                    signals.allSatisfy({ $0 == first })
+                else {
+                    throw JoinNormalizationCommandError.unsupportedDynamicRange(
+                        laneIndex: lane.laneIndex
+                    )
+                }
+                hdr10Signal = first
+            }
             var inputLabels = [String]()
             for sourceIndex in sources.indices {
                 guard let trackID = mappingLane.trackIDsBySource[sourceIndex],
-                    let track = indexedTracks[sourceIndex][trackID],
-                    isBT709SDR(track)
+                    let track = indexedTracks[sourceIndex][trackID]
                 else {
+                    throw JoinNormalizationCommandError.unsupportedDynamicRange(
+                        laneIndex: lane.laneIndex
+                    )
+                }
+                let isReviewedDynamicRange =
+                    switch choice.dynamicRange {
+                    case .sdr:
+                        MediaHDR10Signal.isBT709SDR(track)
+                    case .hdr10:
+                        MediaHDR10Signal(track: track) == hdr10Signal
+                    }
+                guard isReviewedDynamicRange else {
                     throw JoinNormalizationCommandError.unsupportedDynamicRange(
                         laneIndex: lane.laneIndex
                     )
@@ -164,7 +213,8 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         + "force_original_aspect_ratio=decrease:flags=lanczos,"
                         + "pad=w=\(choice.canvas.width):h=\(choice.canvas.height):"
                         + "x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
-                        + "format=\(FFmpegSDRVideoEncoderArguments().filterPixelFormat(for: choice.preset)),setsar=1,"
+                        + "format=\(videoArguments.filterPixelFormat(for: choice.preset)),"
+                        + "\(videoArguments.setParamsFilter(for: choice.dynamicRange)),setsar=1,"
                         + "tpad=stop_mode=clone:stop_duration=\(decimalSeconds(duration)),"
                         + "trim=duration=\(decimalSeconds(duration)),"
                         + "setpts=PTS-STARTPTS[\(label)]"
@@ -176,7 +226,7 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                 inputLabels.joined()
                     + "concat=n=\(sources.count):v=1:a=0[\(outputLabel)]"
             )
-            videoOutputs.append((lane.laneIndex, outputLabel, choice))
+            videoOutputs.append((lane.laneIndex, outputLabel, choice, hdr10Signal))
         }
 
         var audioOutputs = [(laneIndex: Int, label: String, choice: JoinAudioTargetChoice)]()
@@ -254,7 +304,22 @@ public struct JoinNormalizationCommandBuilder: Sendable {
             throw JoinNormalizationCommandError.commandTooLarge
         }
         var arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
-        for source in sources {
+        for (sourceIndex, source) in sources.enumerated() {
+            for output in videoOutputs where output.hdr10Signal != nil {
+                guard
+                    let trackID = mapping.lanes[output.laneIndex]
+                        .trackIDsBySource[sourceIndex],
+                    let signal = output.hdr10Signal
+                else {
+                    throw JoinNormalizationCommandError.inconsistentPlan
+                }
+                arguments.append(
+                    contentsOf: videoArguments.inputMetadataArguments(
+                        signal,
+                        streamSpecifier: String(trackID)
+                    )
+                )
+            }
             arguments.append(contentsOf: ["-i", source.sourceURL.standardizedFileURL.path])
         }
         arguments.append(contentsOf: ["-filter_complex", graph])
@@ -265,11 +330,13 @@ public struct JoinNormalizationCommandBuilder: Sendable {
             arguments.append(contentsOf: ["-map", "[\(output.label)]"])
             do {
                 arguments.append(
-                    contentsOf: try FFmpegSDRVideoEncoderArguments().make(
+                    contentsOf: try videoArguments.make(
                         outputIndex: outputIndex,
                         encoder: encoder,
                         preset: output.choice.preset,
-                        rateControl: output.choice.rateControl
+                        rateControl: output.choice.rateControl,
+                        dynamicRange: output.choice.dynamicRange,
+                        hdr10Signal: output.hdr10Signal
                     )
                 )
             } catch {
@@ -316,13 +383,6 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         default: return nil
         }
         return allowed.contains(normalizedLayout) ? normalizedLayout : nil
-    }
-
-    private func isBT709SDR(_ track: MediaTrack) -> Bool {
-        guard track.hdrFormats.isEmpty, let color = track.colorInfo else { return false }
-        return normalized(color.primaries) == "bt709"
-            && normalized(color.transfer) == "bt709"
-            && normalized(color.matrix) == "bt709"
     }
 
     private func safeAbsolutePath(_ url: URL) -> Bool {

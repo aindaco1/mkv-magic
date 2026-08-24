@@ -394,6 +394,9 @@ Opus, AC-3, E-AC-3, and lossless options remain available in Advanced settings w
 - HDR10 transcodes preserve 10-bit processing, BT.2020 primaries, PQ transfer, matrix information, mastering-display metadata, and content-light metadata when available.
 - Verification compares expected color/HDR metadata with the output.
 - A preservation workflow fails or warns instead of silently emitting incorrect colors.
+- Exact Trim and uniform-HDR common-format Join accept only a validated static HDR10 signal. Joined sources must have identical mastering-display and content-light values because one output lane cannot truthfully carry multiple static signals.
+- AV1 carries the validated static signal in both its encoded stream and Matroska output. HEVC VideoToolbox preservation is guaranteed at the Matroska container layer; raw elementary-stream MDCV/CLL preservation is not claimed.
+- Mixed SDR/HDR conversion, tone mapping, SDR-to-HDR signaling, HDR10+, and HLG remain blocked until their pixel transforms and verification contracts are implemented.
 - Dolby Vision is preserved during compatible stream-copy operations.
 - Any transcode whose Dolby Vision result cannot be guaranteed requires an explicit warning and choice.
 - No operation silently strips Dolby Vision metadata.
@@ -882,9 +885,10 @@ The opt-in timed Encoding Test now persists a runtime-bound recommendation and
 reorders the same verified choices when measured AV1 throughput is impractical;
 it never reads user media or removes an encoder choice.
 It fails closed for
-incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision
-transcodes, unsupported HDR, and image subtitle conversion. A revision-bound
-choice resolver and pure FFmpeg compiler now turn exact SDR video and AAC layout
+incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision,
+HDR10+, HLG, mixed SDR/HDR conversion, and image subtitle conversion. Uniform
+static HDR10 lanes with identical metadata can now select AV1 or HEVC. A revision-bound
+choice resolver and pure FFmpeg compiler now turn exact SDR or static HDR10 video and AAC layout
 decisions into one filter graph and one process, with no repeated encode stage;
 explicit missing-audio approval produces exact-duration silence. Bundled-tool
 fixtures execute and decode both HEVC video and stereo-to-surround AAC results.
@@ -913,17 +917,21 @@ audits copied streams, metadata, attachments, duration, segment identity, and
 canonical nested chapters before commit and after reopen. The internal Exact
 Trim path now holds the requested range exactly, selects only an encoder that
 passed the active local capability probe, and compiles one FFmpeg invocation
-with one video generation. Audio is packet-copied by default; explicit AAC
+with one video generation. Strict BT.709 SDR and validated 10-bit static HDR10
+are executable; HDR10 uses only AV1 or HEVC and binds output verification to the
+exact inspected BT.2020/PQ, matrix, mastering-display, and content-light signal.
+Audio is packet-copied by default; explicit AAC
 conversion retains reviewed channel count, layout, and sample rate and encodes
 each audio track once. Output-side seeking applies the in-point to copied audio,
 avoiding the pre-in packets retained by input-side accurate seeking. The executor
 preserves reviewed track metadata and attachments, replaces FFmpeg-generated
 statistics tags only after requiring a tag-free source, installs the clipped and
 rebased nested chapter tree, and verifies duration, streams, metadata,
-attachments, tags, chapter count/XML, and segment identity before commit and
-again after reopen. It currently fails closed for subtitle/data tracks, multiple
-video tracks, source tags, ordered chapters, HDR/Dolby Vision, incomplete facts,
-unavailable encoders, and non-MKV inputs. The native Trim sheet now samples five
+attachments, tags, chapter count/XML, color/HDR signal, and segment identity
+before commit and again after reopen. It currently fails closed for subtitle/data
+tracks, multiple video tracks, source tags, ordered chapters, mixed or unsupported
+HDR, HDR10+, HLG, Dolby Vision, incomplete facts, unavailable encoders, and
+non-MKV inputs. The native Trim sheet now samples five
 local thumbnails, supports exact numeric in/out entry, defaults to disclosed
 zero-encode Fast Trim, and offers one-generation Exact Trim choices only from the
 active local capability probe. Save remains disabled until an immutable review
@@ -932,7 +940,7 @@ chapters. Both routes use shared cancellable verified-output progress, add the
 reopened result to inspection, and persist a sanitized History lifecycle. The
 native common-format Join route now enables only after the active capability
 probe and the same fail-closed source-metadata policy used by final assembly.
-It presents the exact resolved SDR video/AAC audio targets, packet-copy lanes,
+It presents the exact resolved SDR or uniform static HDR10 video and AAC audio targets, packet-copy lanes,
 attachments, metadata source, and nested chapter output; requires one explicit
 approval; binds that approval to unchanged source and chapter revisions; creates
 the verified normalized stream bundle only in private temporary storage; and
@@ -977,8 +985,16 @@ explicit balanced SVT preset.
 The native, consent-based timed benchmark now measures the actual bundled AV1
 and HEVC encoders against one synthetic fixture, persists only bounded local
 metrics, and feeds the shared initial preset order without removing choices.
-User-facing advanced preset controls, HDR10 transcode preservation, representative
-beta-corpus tuning, and physical Intel performance acceptance remain open.
+The media model now retains exact bounded ST 2086 mastering-display and CTA-861.3
+content-light values from FFprobe. Exact Trim and uniform-HDR common-format Join
+compile static HDR10 through the same one-generation encoder policy, require
+10-bit BT.2020/PQ limited-range input, inject deterministic frame and output
+signaling, and compare the reopened output to the exact reviewed signal. Uniform
+joined sources must agree on static metadata. AV1 is verified at the stream and
+Matroska layers; the HEVC VideoToolbox contract is Matroska-container preservation.
+Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding, user-facing
+advanced preset controls, representative beta-corpus tuning, and physical Intel
+performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
 

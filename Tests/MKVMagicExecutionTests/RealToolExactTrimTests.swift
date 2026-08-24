@@ -140,6 +140,86 @@ final class RealToolExactTrimTests: XCTestCase {
         }
     }
 
+    func testBundledToolsExactTrimPreservesStaticHDR10Signal() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard
+            capabilities.softwareAV1 == .verified
+                || capabilities.hevc10VideoToolbox == .verified
+        else {
+            throw XCTSkip("No bundled 10-bit AV1 or HEVC encoder verified on this Mac")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-hdr10-exact-trim"
+        ) { root in
+            let sourceURL = try await makeHDR10Fixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner
+            )
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            let expectedSignal = try XCTUnwrap(
+                source.tracks.first.flatMap(MediaHDR10Signal.init(track:))
+            )
+            let preset: VideoPreset =
+                capabilities.softwareAV1 == .verified ? .av1Quality : .hevcCompatibility
+            let rateControl: JoinVideoRateControl =
+                preset == .av1Quality ? .constantQuality(30) : .averageBitrate(500_000)
+            let choice = ExactTrimChoice(
+                videoPreset: preset,
+                videoRateControl: rateControl,
+                audioPolicy: .packetCopy
+            )
+            let executor = ExactTrimExecutor(
+                ffmpegURL: ffmpegURL,
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try await executor.preview(
+                source: source,
+                range: MediaTrimRange(
+                    start: MediaTime(nanoseconds: 200_000_000),
+                    end: MediaTime(nanoseconds: 1_400_000_000)
+                ),
+                choice: choice,
+                capabilities: capabilities
+            )
+            let destination = root.appendingPathComponent("HDR10 Exact Trim.mkv")
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: destination
+            )
+
+            XCTAssertEqual(output.tracks.count, 1)
+            XCTAssertEqual(output.tracks[0].codec, expectedCodec(preset))
+            XCTAssertEqual(MediaHDR10Signal(track: output.tracks[0]), expectedSignal)
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+        }
+    }
+
     private func makeFixture(
         root: URL,
         ffmpegURL: URL,
@@ -215,6 +295,58 @@ final class RealToolExactTrimTests: XCTestCase {
             )
         )
         XCTAssertEqual(edit.exitCode, 0, edit.standardError.text)
+        return sourceURL
+    }
+
+    private func makeHDR10Fixture(
+        root: URL,
+        ffmpegURL: URL,
+        mkvpropeditURL: URL,
+        runner: FoundationCommandRunner
+    ) async throws -> URL {
+        let width = 96
+        let height = 64
+        let frameCount = 20
+        let rawVideoURL = root.appendingPathComponent("hdr10-frames.yuv")
+        let sourceURL = root.appendingPathComponent("HDR10 Source.mkv")
+        try Data(repeating: 0, count: width * height * 3 * frameCount).write(
+            to: rawVideoURL
+        )
+        let encode = try await runner.run(
+            CommandRequest(
+                executableURL: ffmpegURL,
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-mastering_display:v:0",
+                    "G(13250,34500)B(7500,3000)R(34000,16000)"
+                        + "WP(15635,16450)L(10000000,50)",
+                    "-content_light:v:0", "1000,400",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p10le",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideoURL.path,
+                    "-frames:v", "\(frameCount)",
+                    "-vf",
+                    "setparams=range=limited:color_primaries=bt2020:"
+                        + "color_trc=smpte2084:colorspace=bt2020nc",
+                    "-c:v", "hevc_videotoolbox", "-profile:v", "main10",
+                    "-pix_fmt", "p010le", "-b:v", "500000",
+                    "-color_primaries", "9", "-color_trc", "16",
+                    "-colorspace", "9", "-color_range", "1",
+                    "-metadata", "title=HDR10 Exact Trim Fixture",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+        let clearTags = try await runner.run(
+            CommandRequest(
+                executableURL: mkvpropeditURL,
+                arguments: ["--abort-on-warnings", sourceURL.path, "--tags", "all:"],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(clearTags.exitCode, 0, clearTags.standardError.text)
         return sourceURL
     }
 

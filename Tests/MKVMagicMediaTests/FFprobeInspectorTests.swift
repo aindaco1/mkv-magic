@@ -47,8 +47,18 @@ final class FFprobeInspectorTests: XCTestCase {
                   "color_transfer": "smpte2084",
                   "color_primaries": "bt2020",
                   "side_data_list": [
-                    {"side_data_type": "Mastering display metadata"},
-                    {"side_data_type": "Content light level metadata"}
+                    {
+                      "side_data_type": "Mastering display metadata",
+                      "red_x": "17/25", "red_y": "8/25",
+                      "green_x": "53/200", "green_y": "69/100",
+                      "blue_x": "3/20", "blue_y": "3/50",
+                      "white_point_x": "3127/10000", "white_point_y": "329/1000",
+                      "min_luminance": "1/200", "max_luminance": "1000/1"
+                    },
+                    {
+                      "side_data_type": "Content light level metadata",
+                      "max_content": 1000, "max_average": 400
+                    }
                   ],
                   "disposition": {"default": 1, "forced": 0, "original": 1},
                   "tags": {"language": "eng", "title": "Picture"}
@@ -103,6 +113,28 @@ final class FFprobeInspectorTests: XCTestCase {
         XCTAssertTrue(asset.tracks[0].isOriginal)
         XCTAssertEqual(asset.tracks[0].colorInfo?.transfer, "smpte2084")
         XCTAssertEqual(asset.tracks[0].hdrFormats, ["HDR10 metadata"])
+        XCTAssertEqual(
+            asset.tracks[0].masteringDisplayMetadata,
+            MediaMasteringDisplayMetadata(
+                redX: 34_000,
+                redY: 16_000,
+                greenX: 13_250,
+                greenY: 34_500,
+                blueX: 7_500,
+                blueY: 3_000,
+                whitePointX: 15_635,
+                whitePointY: 16_450,
+                maxLuminance: 10_000_000,
+                minLuminance: 50
+            )
+        )
+        XCTAssertEqual(
+            asset.tracks[0].contentLightLevelMetadata,
+            MediaContentLightLevelMetadata(
+                maxContentLightLevel: 1_000,
+                maxFrameAverageLightLevel: 400
+            )
+        )
         XCTAssertEqual(asset.tracks[1].channelLayout, "5.1")
         XCTAssertEqual(asset.chapters.first?.title, "Part 1")
         XCTAssertEqual(asset.metadata["title"], "Example")

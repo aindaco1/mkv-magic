@@ -104,13 +104,22 @@ public struct ExactTrimCommandBuilder: Sendable {
             throw ExactTrimCommandError.inconsistentPlan
         }
 
-        var arguments = [
-            "-hide_banner", "-nostdin", "-loglevel", "error",
+        let videoArguments = FFmpegVideoEncoderArguments()
+        var arguments = ["-hide_banner", "-nostdin", "-loglevel", "error"]
+        if let hdr10Signal = resolvedPlan.hdr10Signal {
+            arguments.append(
+                contentsOf: videoArguments.inputMetadataArguments(
+                    hdr10Signal,
+                    streamSpecifier: "v:0"
+                )
+            )
+        }
+        arguments.append(contentsOf: [
             "-i", sourceURL.path,
             // Output-side seeking discards every stream before the reviewed in-point.
             // Input-side accurate seeking cannot discard early packets on copied audio.
             "-ss", decimalSeconds(resolvedPlan.range.start),
-        ]
+        ])
         for trackID in resolvedPlan.trackIDsInOutputOrder {
             arguments.append(contentsOf: ["-map", "0:\(trackID)"])
         }
@@ -118,13 +127,21 @@ public struct ExactTrimCommandBuilder: Sendable {
             arguments.append(contentsOf: ["-map", "0:t?"])
         }
         arguments.append(contentsOf: ["-c", "copy"])
+        if resolvedPlan.videoDynamicRange == .hdr10 {
+            arguments.append(contentsOf: [
+                "-filter:v:0",
+                videoArguments.setParamsFilter(for: .hdr10),
+            ])
+        }
         do {
             arguments.append(
-                contentsOf: try FFmpegSDRVideoEncoderArguments().make(
+                contentsOf: try videoArguments.make(
                     outputIndex: 0,
                     encoder: encoder,
                     preset: resolvedPlan.choice.videoPreset,
-                    rateControl: resolvedPlan.choice.videoRateControl
+                    rateControl: resolvedPlan.choice.videoRateControl,
+                    dynamicRange: resolvedPlan.videoDynamicRange,
+                    hdr10Signal: resolvedPlan.hdr10Signal
                 )
             )
         } catch {

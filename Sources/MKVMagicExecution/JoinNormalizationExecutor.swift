@@ -131,10 +131,24 @@ public struct JoinNormalizationOutputVerifier: Sendable {
                 normalized(track.codec) == expectedCodec(for: choice.preset),
                 track.dimensions == choice.canvas,
                 track.displayDimensions == choice.canvas,
-                track.bitDepth == expectedBitDepth(for: choice.preset),
-                track.hdrFormats.isEmpty,
-                isBT709SDR(track)
+                track.bitDepth == expectedBitDepth(for: choice.preset)
             else {
+                throw JoinNormalizationVerificationError.videoMismatch(
+                    laneIndex: laneIndex
+                )
+            }
+            let matchesDynamicRange =
+                switch choice.dynamicRange {
+                case .sdr:
+                    MediaHDR10Signal.isBT709SDR(track)
+                case .hdr10:
+                    reviewedHDR10Signal(
+                        sources: sources,
+                        resolvedPlan: resolvedPlan,
+                        laneIndex: laneIndex
+                    ).map { MediaHDR10Signal(track: track) == $0 } ?? false
+                }
+            guard matchesDynamicRange else {
                 throw JoinNormalizationVerificationError.videoMismatch(
                     laneIndex: laneIndex
                 )
@@ -201,12 +215,25 @@ public struct JoinNormalizationOutputVerifier: Sendable {
         }
     }
 
-    private func isBT709SDR(_ track: MediaTrack) -> Bool {
-        guard let color = track.colorInfo else { return false }
-        return normalized(color.range) == "tv"
-            && normalized(color.primaries) == "bt709"
-            && normalized(color.transfer) == "bt709"
-            && normalized(color.matrix) == "bt709"
+    private func reviewedHDR10Signal(
+        sources: [MediaAsset],
+        resolvedPlan: ResolvedJoinNormalizationPlan,
+        laneIndex: Int
+    ) -> MediaHDR10Signal? {
+        let mapping = resolvedPlan.proposal.report.mapping
+        guard mapping.lanes.indices.contains(laneIndex) else { return nil }
+        let lane = mapping.lanes[laneIndex]
+        let signals = sources.indices.compactMap { sourceIndex -> MediaHDR10Signal? in
+            guard lane.trackIDsBySource.indices.contains(sourceIndex),
+                let trackID = lane.trackIDsBySource[sourceIndex],
+                let track = sources[sourceIndex].tracks.first(where: { $0.id == trackID })
+            else { return nil }
+            return MediaHDR10Signal(track: track)
+        }
+        guard signals.count == sources.count, let first = signals.first,
+            signals.allSatisfy({ $0 == first })
+        else { return nil }
+        return first
     }
 
     private func normalizedAudioLayout(_ value: String?) -> String {

@@ -81,6 +81,44 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         XCTAssertEqual(command.copiedAudioTrackIDs, [])
     }
 
+    func testHDR10AddsStaticInputMetadataFrameSignalAndTenBitOutput() throws {
+        let fixture = try makeFixture(hdr10: true)
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try resolve(
+            source: fixture.source,
+            choice: ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000)
+            ),
+            range: range(1, 9)
+        )
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(),
+            outputURL: fixture.root.appendingPathComponent("HDR Exact.mkv")
+        )
+
+        XCTAssertEqual(
+            value(after: "-mastering_display:v:0", in: command.arguments),
+            "G(13250,34500)B(7500,3000)R(34000,16000)"
+                + "WP(15635,16450)L(10000000,50)"
+        )
+        XCTAssertEqual(value(after: "-content_light:v:0", in: command.arguments), "1000,400")
+        XCTAssertLessThan(
+            try XCTUnwrap(command.arguments.firstIndex(of: "-mastering_display:v:0")),
+            try XCTUnwrap(command.arguments.firstIndex(of: "-i"))
+        )
+        XCTAssertEqual(
+            value(after: "-filter:v:0", in: command.arguments),
+            "setparams=range=limited:color_primaries=bt2020:color_trc=smpte2084:"
+                + "colorspace=bt2020nc"
+        )
+        XCTAssertEqual(value(after: "-color_primaries:v:0", in: command.arguments), "9")
+        XCTAssertEqual(value(after: "-color_trc:v:0", in: command.arguments), "16")
+        XCTAssertEqual(value(after: "-colorspace:v:0", in: command.arguments), "9")
+        XCTAssertEqual(value(after: "-color_range:v:0", in: command.arguments), "1")
+    }
+
     func testRejectsExistingOutputAndCapabilityRegression() throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -121,7 +159,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         let source: MediaAsset
     }
 
-    private func makeFixture() throws -> Fixture {
+    private func makeFixture(hdr10: Bool = false) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-exact-command-\(UUID().uuidString)",
             isDirectory: true
@@ -136,7 +174,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
                 container: "matroska,webm",
                 duration: MediaTime(nanoseconds: 10_000_000_000),
                 fileSize: 1,
-                tracks: [videoTrack(), audioTrack()],
+                tracks: [videoTrack(hdr10: hdr10), audioTrack()],
                 metadata: ["title": "Feature"],
                 chapterEntryCount: 0,
                 globalTagCount: 0,
@@ -175,25 +213,28 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         )
     }
 
-    private func videoTrack() -> MediaTrack {
+    private func videoTrack(hdr10: Bool = false) -> MediaTrack {
         MediaTrack(
             id: 0,
             kind: .video,
-            codec: "h264",
-            codecID: "V_MPEG4/ISO/AVC",
-            profile: "High",
+            codec: hdr10 ? "hevc" : "h264",
+            codecID: hdr10 ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
+            profile: hdr10 ? "Main 10" : "High",
             uid: 100,
             isDefault: true,
             dimensions: MediaDimensions(width: 160, height: 90),
-            pixelFormat: "yuv420p",
-            bitDepth: 8,
+            pixelFormat: hdr10 ? "yuv420p10le" : "yuv420p",
+            bitDepth: hdr10 ? 10 : 8,
             frameRate: "24/1",
             colorInfo: MediaColorInfo(
                 range: "tv",
-                primaries: "bt709",
-                transfer: "bt709",
-                matrix: "bt709"
-            )
+                primaries: hdr10 ? "bt2020" : "bt709",
+                transfer: hdr10 ? "smpte2084" : "bt709",
+                matrix: hdr10 ? "bt2020nc" : "bt709"
+            ),
+            masteringDisplayMetadata: hdr10 ? hdrMasteringDisplay : nil,
+            contentLightLevelMetadata: hdr10 ? hdrContentLight : nil,
+            hdrFormats: hdr10 ? ["HDR10 metadata"] : []
         )
     }
 
@@ -236,3 +277,21 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         }
     }
 }
+
+private let hdrMasteringDisplay = MediaMasteringDisplayMetadata(
+    redX: 34_000,
+    redY: 16_000,
+    greenX: 13_250,
+    greenY: 34_500,
+    blueX: 7_500,
+    blueY: 3_000,
+    whitePointX: 15_635,
+    whitePointY: 16_450,
+    maxLuminance: 10_000_000,
+    minLuminance: 50
+)
+
+private let hdrContentLight = MediaContentLightLevelMetadata(
+    maxContentLightLevel: 1_000,
+    maxFrameAverageLightLevel: 400
+)

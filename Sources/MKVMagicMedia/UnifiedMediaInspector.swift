@@ -102,6 +102,8 @@ extension MediaTrack {
             bitDepth: bitDepth ?? detail.bitDepth,
             frameRate: frameRate,
             colorInfo: colorInfo,
+            masteringDisplayMetadata: masteringDisplayMetadata,
+            contentLightLevelMetadata: contentLightLevelMetadata,
             hdrFormats: hdrFormats,
             tags: tags
         )

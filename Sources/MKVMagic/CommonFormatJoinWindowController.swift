@@ -49,14 +49,17 @@ enum CommonFormatJoinChoicePolicy {
                     let canvas = lane.recommendedCanvas,
                     let timing = lane.recommendedFrameRatePolicy
                 else { throw CommonFormatJoinChoicePolicyError.incompleteProposal }
-                guard lane.dynamicRangeChoices == [.sdr] else {
+                guard lane.dynamicRangeChoices.count == 1,
+                    let dynamicRange = lane.recommendedDynamicRange,
+                    lane.dynamicRangeChoices == [dynamicRange]
+                else {
                     throw CommonFormatJoinChoicePolicyError.unsupportedDynamicRange(laneIndex)
                 }
                 videoTargets[laneIndex] = JoinVideoTargetChoice(
                     preset: preset,
                     canvas: canvas,
                     frameRatePolicy: timing,
-                    dynamicRange: .sdr,
+                    dynamicRange: dynamicRange,
                     rateControl: recommendedRateControl(preset: preset, canvas: canvas)
                 )
             case .audioTarget, .missingAudio:
@@ -143,7 +146,8 @@ enum CommonFormatJoinChoicePolicy {
             values.append(
                 "Video lane \(lane.laneIndex + 1): \(presetName(choice.preset)), "
                     + "\(choice.canvas.width)×\(choice.canvas.height) fit-and-pad, "
-                    + "SDR, preserve source timing, \(rateControlName(choice.rateControl))."
+                    + "\(dynamicRangeName(choice.dynamicRange)), preserve source timing, "
+                    + "\(rateControlName(choice.rateControl))."
             )
         }
         for lane in candidate.proposal.audioLanes where lane.encodesAudio {
@@ -208,6 +212,13 @@ enum CommonFormatJoinChoicePolicy {
 
     private static func presetName(_ preset: VideoPreset) -> String {
         preset.displayName
+    }
+
+    private static func dynamicRangeName(_ dynamicRange: JoinVideoDynamicRangeTarget) -> String {
+        switch dynamicRange {
+        case .sdr: "SDR"
+        case .hdr10: "HDR10 with static metadata preserved"
+        }
     }
 
     private static func rateControlName(_ rateControl: JoinVideoRateControl) -> String {

@@ -263,7 +263,10 @@ public struct JoinNormalizationChoiceResolver: Sendable {
             lane.recommendedPreset == videoChoice.preset,
             lane.recommendedCanvas == videoChoice.canvas,
             lane.recommendedFrameRatePolicy == videoChoice.frameRatePolicy,
-            lane.dynamicRangeChoices.contains(videoChoice.dynamicRange)
+            lane.dynamicRangeChoices.contains(videoChoice.dynamicRange),
+            videoChoice.dynamicRange != .hdr10
+                || videoChoice.preset == .av1Quality
+                || videoChoice.preset == .hevcCompatibility
         else {
             throw JoinNormalizationChoiceError.invalidChoice
         }

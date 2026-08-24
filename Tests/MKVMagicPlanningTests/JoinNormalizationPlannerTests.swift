@@ -148,6 +148,46 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         XCTAssertEqual(proposal.impact.videoEncodeCount, 1)
     }
 
+    func testUniformStaticHDR10PreservesOneIdenticalSignalAndRequiresTenBitCodec() throws {
+        let sources = [
+            asset(part: 1, tracks: [hdr10Video(id: 0, width: 1_920, height: 1_080)]),
+            asset(part: 2, tracks: [hdr10Video(id: 10)]),
+        ]
+        let mapping = JoinTrackMapping(lanes: [
+            JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+        ])
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: mapping
+        )
+
+        XCTAssertTrue(proposal.blockers.isEmpty)
+        XCTAssertEqual(proposal.videoLanes[0].recommendedPreset, .av1Quality)
+        XCTAssertEqual(proposal.videoLanes[0].recommendedDynamicRange, .hdr10)
+        XCTAssertEqual(proposal.videoLanes[0].dynamicRangeChoices, [.hdr10])
+        XCTAssertEqual(proposal.videoLanes[0].outputBitDepth, 10)
+
+        let incompatibleCodec = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: mapping,
+            preferredVideoPreset: .h264Compatibility
+        )
+        XCTAssertTrue(
+            incompatibleCodec.blockers.contains { $0.summary.contains("AV1 or HEVC") }
+        )
+
+        let metadataDrift = try JoinNormalizationPlanner().propose(
+            sources: [
+                sources[0],
+                asset(part: 2, tracks: [hdr10Video(id: 10, maxContentLightLevel: 999)]),
+            ],
+            mapping: mapping
+        )
+        XCTAssertTrue(
+            metadataDrift.blockers.contains { $0.summary.contains("differing") }
+        )
+    }
+
     func testDolbyVisionNormalizationFailsClosed() throws {
         let dolbyVision = MediaTrack(
             id: 10,
@@ -300,7 +340,12 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         )
     }
 
-    private func hdr10Video(id: Int) -> MediaTrack {
+    private func hdr10Video(
+        id: Int,
+        width: Int = 3_840,
+        height: Int = 2_160,
+        maxContentLightLevel: Int = 1_000
+    ) -> MediaTrack {
         MediaTrack(
             id: id,
             kind: .video,
@@ -308,8 +353,8 @@ final class JoinNormalizationPlannerTests: XCTestCase {
             codecID: "V_MPEGH/ISO/HEVC",
             profile: "Main 10",
             level: 153,
-            dimensions: MediaDimensions(width: 3_840, height: 2_160),
-            displayDimensions: MediaDimensions(width: 3_840, height: 2_160),
+            dimensions: MediaDimensions(width: width, height: height),
+            displayDimensions: MediaDimensions(width: width, height: height),
             pixelFormat: "yuv420p10le",
             bitDepth: 10,
             frameRate: "24000/1001",
@@ -319,7 +364,27 @@ final class JoinNormalizationPlannerTests: XCTestCase {
                 transfer: "smpte2084",
                 matrix: "bt2020nc"
             ),
-            hdrFormats: ["HDR10"]
+            masteringDisplayMetadata: hdrMasteringDisplay,
+            contentLightLevelMetadata: MediaContentLightLevelMetadata(
+                maxContentLightLevel: maxContentLightLevel,
+                maxFrameAverageLightLevel: 400
+            ),
+            hdrFormats: ["HDR10 metadata"]
+        )
+    }
+
+    private var hdrMasteringDisplay: MediaMasteringDisplayMetadata {
+        MediaMasteringDisplayMetadata(
+            redX: 34_000,
+            redY: 16_000,
+            greenX: 13_250,
+            greenY: 34_500,
+            blueX: 7_500,
+            blueY: 3_000,
+            whitePointX: 15_635,
+            whitePointY: 16_450,
+            maxLuminance: 10_000_000,
+            minLuminance: 50
         )
     }
 

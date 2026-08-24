@@ -92,9 +92,10 @@ needs normalization, the same window previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
 local one-frame capability probe; affected audio lanes are converted once to
-verified AAC without automatic downmix; and mixed SDR/HDR, Dolby
-Vision, incomplete facts, and image-subtitle limitations fail closed or require
-explicit choices. Behind that read-only preview, file-specific choices are now
+verified AAC without automatic downmix; uniform static HDR10 lanes retain one
+identical reviewed BT.2020/PQ and mastering/light-level signal; and mixed
+SDR/HDR, Dolby Vision, incomplete facts, and image-subtitle limitations fail
+closed or require explicit choices. Behind that read-only preview, file-specific choices are now
 bound to every inspected source fact and compiled into one bounded FFmpeg graph:
 each affected video or audio lane is encoded exactly once, ordinary audio layouts
 can be normalized without an automatic downmix, and explicitly approved missing
@@ -102,8 +103,9 @@ audio becomes exact-duration silence. Real bundled-tool fixtures decode the HEVC
 and AAC results and prove that source bytes do not change. The internal
 normalization executor now binds every source to a filesystem revision, invokes
 that graph once, verifies the intermediate stream bundle's exact encoded lanes,
-duration, Matroska structure, dimensions, bit depth, SDR color, audio layout,
-and sample rate, and atomically commits only after a second reopen audit. Each
+duration, Matroska structure, dimensions, bit depth, reviewed SDR or static HDR10
+color signal, audio layout, and sample rate, and atomically commits only after a
+second reopen audit. Each
 encoded segment is padded and trimmed to its reviewed source-container duration,
 so an encoded video lane remains aligned with a directly copied audio lane even
 when the source contains encoder padding. A final pure compiler now emits one
@@ -127,8 +129,8 @@ approval before Save. The app binds the approval to unchanged source and chapter
 revisions, creates the verified normalized bundle only in private temporary
 storage, assembles the final MKV, adds only the reopened final result to the
 library, and records exactly one sanitized History job. Source tags, executable
-subtitle conversion/gaps, and HDR conversion continue to fail closed before
-encoding.
+subtitle conversion/gaps, mixed SDR/HDR conversion, HDR10+, HLG, and Dolby Vision
+transcodes continue to fail closed before encoding.
 
 For an eligible inspected MKV, **Trim…** now opens one compact native review
 window. Five bounded local thumbnails provide quick **Set In** and **Set Out**
@@ -149,9 +151,11 @@ rebases the complete nested chapter tree, writes that reviewed tree to the
 temporary output, and verifies streams, metadata, attachments, duration,
 segment identity, and canonical re-extracted chapters before commit and after
 reopen. It rejects ordered editions and changed sources rather than guessing.
-The internal Exact Trim path retains the user's numeric boundaries, encodes the
-BT.709 SDR video exactly once with the first selected encoder that passed the
-active local probe, and packet-copies every audio track by default. Explicit AAC
+The internal Exact Trim path retains the user's numeric boundaries and encodes
+the video exactly once with the selected encoder that passed the active local
+probe. It accepts strict BT.709 SDR, or validated 10-bit static HDR10 through AV1
+or HEVC while preserving BT.2020/PQ, matrix, mastering-display, and content-light
+facts. Every audio track is packet-copied by default. Explicit AAC
 conversion preserves each reviewed channel layout and sample rate while encoding
 each selected audio track once. Output-side seeking makes the reviewed boundary
 apply to copied audio as well as encoded video. The same transaction preserves
@@ -159,8 +163,8 @@ track metadata and attachments, clips and rebases the exact nested chapter tree,
 removes only FFmpeg-synthesized statistics tags from a reviewed tag-free source,
 and repeats semantic and chapter audits after reopen. It currently fails closed
 for source tags, subtitle/data tracks, multiple video tracks, ordered editions,
-HDR/Dolby Vision, incomplete color/layout facts, unavailable encoders, and
-non-MKV inputs.
+mixed or unsupported HDR, HDR10+, HLG, Dolby Vision, incomplete color/layout
+facts, unavailable encoders, and non-MKV inputs.
 The bundled FFmpeg includes checksum-pinned, statically linked SVT-AV1 4.1.0
 for native 10-bit software AV1 encoding and dav1d 1.5.4 for software AV1
 decoding on both Apple Silicon and Intel. This allows Macs without hardware AV1

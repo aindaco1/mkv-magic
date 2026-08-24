@@ -188,6 +188,8 @@ private struct FFprobeStream: Decodable {
             bitDepth: bitsPerRawSample.flatMap(Int.init) ?? inferredBitDepth,
             frameRate: averageFrameRate,
             colorInfo: colorInfo,
+            masteringDisplayMetadata: normalizedMasteringDisplayMetadata,
+            contentLightLevelMetadata: normalizedContentLightLevelMetadata,
             hdrFormats: normalizedHDRFormats,
             tags: tags ?? [:]
         )
@@ -213,15 +215,133 @@ private struct FFprobeStream: Decodable {
         }) {
             formats.insert("HDR10 metadata")
         }
+        if types.contains(where: {
+            $0.localizedCaseInsensitiveContains("HDR Dynamic Metadata SMPTE2094-40")
+                || $0.localizedCaseInsensitiveContains("HDR10+")
+        }) {
+            formats.insert("HDR10+")
+        }
         return formats.sorted()
+    }
+
+    private var normalizedMasteringDisplayMetadata: MediaMasteringDisplayMetadata? {
+        guard
+            let data = sideData?.first(where: {
+                $0.type.localizedCaseInsensitiveContains("Mastering display")
+            }),
+            let redX = data.redX.scaledInteger(denominator: 50_000),
+            let redY = data.redY.scaledInteger(denominator: 50_000),
+            let greenX = data.greenX.scaledInteger(denominator: 50_000),
+            let greenY = data.greenY.scaledInteger(denominator: 50_000),
+            let blueX = data.blueX.scaledInteger(denominator: 50_000),
+            let blueY = data.blueY.scaledInteger(denominator: 50_000),
+            let whitePointX = data.whitePointX.scaledInteger(denominator: 50_000),
+            let whitePointY = data.whitePointY.scaledInteger(denominator: 50_000),
+            let maxLuminance = data.maxLuminance.scaledInteger(denominator: 10_000),
+            let minLuminance = data.minLuminance.scaledInteger(denominator: 10_000),
+            [redX, redY, greenX, greenY, blueX, blueY, whitePointX, whitePointY]
+                .allSatisfy({ (0...50_000).contains($0) }),
+            (1...1_000_000_000).contains(maxLuminance),
+            (0...maxLuminance).contains(minLuminance)
+        else {
+            return nil
+        }
+        return MediaMasteringDisplayMetadata(
+            redX: redX,
+            redY: redY,
+            greenX: greenX,
+            greenY: greenY,
+            blueX: blueX,
+            blueY: blueY,
+            whitePointX: whitePointX,
+            whitePointY: whitePointY,
+            maxLuminance: maxLuminance,
+            minLuminance: minLuminance
+        )
+    }
+
+    private var normalizedContentLightLevelMetadata: MediaContentLightLevelMetadata? {
+        guard
+            let data = sideData?.first(where: {
+                $0.type.localizedCaseInsensitiveContains("Content light level")
+            }),
+            let maxContent = data.maxContent,
+            let maxAverage = data.maxAverage,
+            (0...65_535).contains(maxContent),
+            (0...65_535).contains(maxAverage)
+        else {
+            return nil
+        }
+        return MediaContentLightLevelMetadata(
+            maxContentLightLevel: maxContent,
+            maxFrameAverageLightLevel: maxAverage
+        )
     }
 }
 
 private struct FFprobeSideData: Decodable {
     let type: String
+    let redX: String?
+    let redY: String?
+    let greenX: String?
+    let greenY: String?
+    let blueX: String?
+    let blueY: String?
+    let whitePointX: String?
+    let whitePointY: String?
+    let minLuminance: String?
+    let maxLuminance: String?
+    let maxContent: Int?
+    let maxAverage: Int?
 
     enum CodingKeys: String, CodingKey {
         case type = "side_data_type"
+        case redX = "red_x"
+        case redY = "red_y"
+        case greenX = "green_x"
+        case greenY = "green_y"
+        case blueX = "blue_x"
+        case blueY = "blue_y"
+        case whitePointX = "white_point_x"
+        case whitePointY = "white_point_y"
+        case minLuminance = "min_luminance"
+        case maxLuminance = "max_luminance"
+        case maxContent = "max_content"
+        case maxAverage = "max_average"
+    }
+}
+
+extension Optional where Wrapped == String {
+    fileprivate func scaledInteger(denominator targetDenominator: Int64) -> Int64? {
+        guard let value = self else { return nil }
+        let parts = value.split(separator: "/", omittingEmptySubsequences: false)
+        let numerator: Int64
+        let denominator: Int64
+        if parts.count == 1 {
+            guard let parsed = Int64(parts[0]) else { return nil }
+            numerator = parsed
+            denominator = 1
+        } else if parts.count == 2,
+            let parsedNumerator = Int64(parts[0]),
+            let parsedDenominator = Int64(parts[1])
+        {
+            numerator = parsedNumerator
+            denominator = parsedDenominator
+        } else {
+            return nil
+        }
+        guard numerator >= 0, denominator > 0, targetDenominator > 0 else { return nil }
+        let product = numerator.multipliedReportingOverflow(by: targetDenominator)
+        guard !product.overflow else { return nil }
+        let quotient = product.partialValue / denominator
+        let remainder = product.partialValue % denominator
+        let doubledRemainder = remainder.multipliedReportingOverflow(by: 2)
+        guard !doubledRemainder.overflow else { return nil }
+        if doubledRemainder.partialValue >= denominator {
+            let rounded = quotient.addingReportingOverflow(1)
+            return rounded.overflow ? nil : rounded.partialValue
+        }
+        return quotient
     }
 }
 

@@ -182,7 +182,7 @@ public struct FFmpegEncodingBenchmark<Runner: CommandRunning>: Sendable {
             "-frames:v", String(Self.sourceFrameCount), "-an",
         ]
         arguments.append(
-            contentsOf: try FFmpegSDRVideoEncoderArguments().make(
+            contentsOf: try FFmpegVideoEncoderArguments().make(
                 outputIndex: 0,
                 encoder: candidate.encoder,
                 preset: candidate.preset,

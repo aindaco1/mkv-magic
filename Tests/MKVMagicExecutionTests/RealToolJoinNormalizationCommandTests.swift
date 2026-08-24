@@ -21,8 +21,11 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             ffmpegURL: ffmpegURL,
             runner: runner
         ).probe()
-        guard capabilities.hevc10VideoToolbox == .verified else {
-            throw XCTSkip("Bundled HEVC VideoToolbox did not verify on this Mac")
+        guard
+            capabilities.softwareAV1 == .verified
+                || capabilities.hevc10VideoToolbox == .verified
+        else {
+            throw XCTSkip("No bundled 10-bit AV1 or HEVC encoder verified on this Mac")
         }
 
         try await PrivateTemporaryDirectory.withDirectory(
@@ -349,6 +352,117 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
         }
     }
 
+    func testBundledToolsJoinUniformHDR10WithExactStaticMetadata() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.hevc10VideoToolbox == .verified else {
+            throw XCTSkip("Bundled HEVC VideoToolbox did not verify on this Mac")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-hdr10-normalization"
+        ) { root in
+            let sourceURLs = try await [
+                makeHDR10VideoFixture(
+                    root: root,
+                    name: "hdr-first",
+                    width: 64,
+                    height: 48,
+                    ffmpegURL: ffmpegURL,
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner
+                ),
+                makeHDR10VideoFixture(
+                    root: root,
+                    name: "hdr-second",
+                    width: 80,
+                    height: 64,
+                    ffmpegURL: ffmpegURL,
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: runner
+                ),
+            ]
+            let sourceDigests = try sourceURLs.map {
+                SHA256.hash(data: try Data(contentsOf: $0))
+            }
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            var sources = [MediaAsset]()
+            for sourceURL in sourceURLs {
+                try await sources.append(inspector.inspect(sourceURL))
+            }
+            let expectedSignal = try XCTUnwrap(
+                sources[0].tracks.first.flatMap(MediaHDR10Signal.init(track:))
+            )
+            XCTAssertEqual(
+                sources.compactMap { $0.tracks.first.flatMap(MediaHDR10Signal.init(track:)) },
+                [expectedSignal, expectedSignal]
+            )
+            let preset: VideoPreset =
+                capabilities.softwareAV1 == .verified ? .av1Quality : .hevcCompatibility
+            let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+            let proposal = try JoinNormalizationPlanner().propose(
+                sources: sources,
+                mapping: mapping,
+                preferredVideoPreset: preset
+            )
+            XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
+            let lane = try XCTUnwrap(proposal.videoLanes.first)
+            XCTAssertEqual(lane.dynamicRangeChoices, [.hdr10])
+            let choice = JoinVideoTargetChoice(
+                preset: preset,
+                canvas: try XCTUnwrap(lane.recommendedCanvas),
+                frameRatePolicy: .preserveSourceTiming,
+                dynamicRange: .hdr10,
+                rateControl: preset == .av1Quality
+                    ? .constantQuality(30) : .averageBitrate(500_000)
+            )
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(videoTargetsByLane: [lane.laneIndex: choice]),
+                availableVideoPresets: Set(capabilities.availableVideoPresets),
+                aacAvailable: true
+            )
+            let executor = JoinNormalizationExecutor(
+                ffmpegURL: ffmpegURL,
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            )
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: root.appendingPathComponent("verified-hdr10-join.mkv")
+            )
+
+            XCTAssertEqual(output.tracks.count, 1)
+            XCTAssertEqual(output.tracks[0].codec, preset == .av1Quality ? "av1" : "hevc")
+            XCTAssertEqual(output.tracks[0].dimensions, MediaDimensions(width: 80, height: 64))
+            XCTAssertEqual(MediaHDR10Signal(track: output.tracks[0]), expectedSignal)
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
+        }
+    }
+
     func testBundledFFmpegNormalizesStereoAndSurroundOnceIntoAACSurround() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
@@ -544,6 +658,54 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             )
         )
         XCTAssertEqual(colorEdit.exitCode, 0, colorEdit.standardError.text)
+        return outputURL
+    }
+
+    private func makeHDR10VideoFixture(
+        root: URL,
+        name: String,
+        width: Int,
+        height: Int,
+        ffmpegURL: URL,
+        mkvpropeditURL: URL,
+        runner: FoundationCommandRunner
+    ) async throws -> URL {
+        let rawURL = root.appendingPathComponent("\(name).yuv")
+        let outputURL = root.appendingPathComponent("\(name).mkv")
+        try Data(repeating: 0, count: width * height * 3 * 12).write(to: rawURL)
+        let result = try await runner.run(
+            CommandRequest(
+                executableURL: ffmpegURL,
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-mastering_display:v:0",
+                    "G(13250,34500)B(7500,3000)R(34000,16000)"
+                        + "WP(15635,16450)L(10000000,50)",
+                    "-content_light:v:0", "1000,400",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p10le",
+                    "-video_size", "\(width)x\(height)", "-framerate", "24",
+                    "-i", rawURL.path, "-frames:v", "12",
+                    "-vf",
+                    "setparams=range=limited:color_primaries=bt2020:"
+                        + "color_trc=smpte2084:colorspace=bt2020nc",
+                    "-c:v", "hevc_videotoolbox", "-profile:v", "main10",
+                    "-pix_fmt", "p010le", "-b:v", "500000",
+                    "-color_primaries:v", "9", "-color_trc:v", "16",
+                    "-colorspace:v", "9", "-color_range:v", "1",
+                    outputURL.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(result.exitCode, 0, result.standardError.text)
+        let clearTags = try await runner.run(
+            CommandRequest(
+                executableURL: mkvpropeditURL,
+                arguments: ["--abort-on-warnings", outputURL.path, "--tags", "all:"],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(clearTags.exitCode, 0, clearTags.standardError.text)
         return outputURL
     }
 
