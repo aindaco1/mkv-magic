@@ -91,8 +91,10 @@ if source inclusion or order changes. When a reviewed group
 needs normalization, the same window previews the proposed common video,
 audio, and text-subtitle targets. Compatible lanes remain packet copies;
 affected video is bounded to one generation using an encoder that passed a
-local one-frame capability probe; affected audio lanes are converted once to
-verified AAC without automatic downmix; uniform static HDR10 lanes retain one
+local one-frame capability probe; affected audio lanes default to compatible
+AAC and can instead use locally verified Opus, AC-3, E-AC-3, or lossless FLAC
+when that format can represent the reviewed common layout, without automatic
+downmix; uniform static HDR10 lanes retain one
 identical reviewed BT.2020/PQ and mastering/light-level signal; and mixed
 SDR/HDR, Dolby Vision, incomplete facts, and image-subtitle limitations fail
 closed or require explicit choices. Behind that read-only preview, file-specific choices are now
@@ -100,7 +102,7 @@ bound to every inspected source fact and compiled into one bounded FFmpeg graph:
 each affected video or audio lane is encoded exactly once, ordinary audio layouts
 can be normalized without an automatic downmix, and explicitly approved missing
 audio becomes exact-duration silence. Real bundled-tool fixtures decode the HEVC
-and AAC results and prove that source bytes do not change. The internal
+and all five audio-format results and prove that source bytes do not change. The internal
 normalization executor now binds every source to a filesystem revision, invokes
 that graph once, verifies the intermediate stream bundle's exact encoded lanes,
 duration, Matroska structure, dimensions, bit depth, reviewed SDR or static HDR10

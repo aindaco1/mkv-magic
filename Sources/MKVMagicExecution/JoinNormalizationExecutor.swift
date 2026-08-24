@@ -159,7 +159,7 @@ public struct JoinNormalizationOutputVerifier: Sendable {
         for (track, laneIndex) in zip(audioTracks, audioLaneIndices) {
             guard let choice = resolvedPlan.choices.audioTargetsByLane[laneIndex],
                 track.kind == .audio,
-                normalized(track.codec) == "aac",
+                normalized(track.codec) == choice.preset.codecName,
                 track.channels == choice.channels,
                 track.sampleRate == choice.sampleRate,
                 normalizedAudioLayout(track.channelLayout)

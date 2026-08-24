@@ -48,6 +48,31 @@ public enum AudioTranscodePreset: String, Codable, CaseIterable, Hashable, Senda
         return supportedLayouts.contains(layout)
     }
 
+    /// Returns the explicit common-format Join target for one reviewed lane.
+    /// Exact layouts are preferred. The sole rematrix allowance is between the
+    /// two conventional six-channel 5.1 orders; this retains all six channels
+    /// while selecting the order the chosen encoder can reopen faithfully.
+    public func joinOutputChannelLayout(
+        forSourceLayout rawLayout: String,
+        channels: Int
+    ) -> String? {
+        let layout = rawLayout.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard Self.channelCounts[layout] == channels else { return nil }
+        if preserves(channelLayout: layout, channels: channels) { return layout }
+        guard channels == 6 else { return nil }
+        switch (self, layout) {
+        case (.aacCompatibility, "5.1(side)"),
+            (.opusQuality, "5.1(side)"),
+            (.flacLossless, "5.1(side)"):
+            return "5.1"
+        case (.ac3Compatibility, "5.1"),
+            (.eac3Compatibility, "5.1"):
+            return "5.1(side)"
+        default:
+            return nil
+        }
+    }
+
     /// The exact declared output sample rate. A `nil` result means this preset
     /// must not be offered for the input rate. Opus uses its standardized 48 kHz
     /// Matroska clock; all other accepted choices retain the input rate.

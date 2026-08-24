@@ -303,11 +303,15 @@ Tracks are paired by type, language, role, channel layout, and codec compatibili
 
 For differing audio layouts, the default proposal preserves the largest layout without fabricating surround information:
 
-- Same layout/different codecs: convert to AAC while retaining the layout.
-- Stereo plus 5.1: continuous 5.1 AAC; stereo material occupies front left/right and other channels remain silent.
-- 5.1 plus 7.1: continuous 7.1 AAC; unavailable channels remain silent during 5.1 material.
+- Same layout/different codecs: recommend AAC, then offer each locally verified
+  AAC, Opus, AC-3, E-AC-3, or FLAC target that can represent the reviewed lane.
+- Stereo plus 5.1: continuous 5.1 in the chosen format; stereo material occupies
+  front left/right and other channels remain silent.
+- 5.1 plus 7.1: continuous 7.1 only in a format whose exact target layout is
+  verified; unavailable channels remain silent during 5.1 material.
 - Never downmix automatically.
-- An optional secondary stereo compatibility track requires a separate audio encode and is clearly disclosed.
+- A format change resets approval and remains part of the same single fused
+  normalization pass as any required video conversion.
 
 For differing video properties, propose but do not silently choose resolution, frame-rate behavior, pixel format, color space, HDR policy, and codec.
 
@@ -383,8 +387,12 @@ other accepted Exact Trim inputs retain their sample rate.
 | E-AC-3 | 192 kbps | 256 kbps | 768 kbps | Not offered |
 | FLAC | Lossless | Lossless | Lossless | Lossless |
 
-Common-format Join still defaults its encoded audio lanes to the reviewed AAC
-target until its per-lane advanced audio control slice is complete.
+Common-format Join uses the same bounded audio preset policy per lane. AAC is the
+compatibility-first default when it is verified and representable. Otherwise the
+first verified compatible choice is selected; for example, a reviewed 7.1 lane
+can offer Opus and FLAC while hiding AC-3/E-AC-3 and an unrepresentable AAC
+layout. Join may explicitly normalize 5.1 versus 5.1(side) channel order without
+changing the six-channel count, and discloses the final reviewed layout.
 
 #### Input and output containers
 

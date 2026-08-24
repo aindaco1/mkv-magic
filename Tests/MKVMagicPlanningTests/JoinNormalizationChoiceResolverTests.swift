@@ -182,12 +182,21 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
             mapping: mapping
         )
         let lane = proposal.audioLanes[0]
+        let channels = try XCTUnwrap(lane.outputChannels)
+        let layout = try XCTUnwrap(
+            AudioTranscodePreset.aacCompatibility.joinOutputChannelLayout(
+                forSourceLayout: try XCTUnwrap(lane.outputChannelLayout),
+                channels: channels
+            )
+        )
         let denied = JoinAudioTargetChoice(
-            codec: try XCTUnwrap(lane.outputCodec),
-            channels: try XCTUnwrap(lane.outputChannels),
-            channelLayout: try XCTUnwrap(lane.outputChannelLayout),
+            preset: .aacCompatibility,
+            channels: channels,
+            channelLayout: layout,
             sampleRate: try XCTUnwrap(lane.outputSampleRate),
-            bitrate: try XCTUnwrap(lane.outputBitrate),
+            bitrate: AudioTranscodePreset.aacCompatibility.recommendedBitrate(
+                channels: channels
+            ),
             allowsSyntheticSilence: false
         )
 
@@ -207,7 +216,7 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
         }
 
         let approved = JoinAudioTargetChoice(
-            codec: denied.codec,
+            preset: denied.preset,
             channels: denied.channels,
             channelLayout: denied.channelLayout,
             sampleRate: denied.sampleRate,
@@ -234,6 +243,110 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
                 aacAvailable: true
             )
         )
+    }
+
+    func testEveryTypedAudioTargetResolvesWithExactRateLayoutAndCapability() throws {
+        let sources = [
+            asset(part: 1, tracks: [audio(id: 0, sampleRate: 48_000)]),
+            asset(part: 2, tracks: [audio(id: 0, sampleRate: 44_100)]),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .audio, trackIDsBySource: [0, 0])
+            ])
+        )
+        let lane = proposal.audioLanes[0]
+        for preset in AudioTranscodePreset.allCases {
+            let choice = JoinAudioTargetChoice(
+                preset: preset,
+                channels: 2,
+                channelLayout: "stereo",
+                sampleRate: try XCTUnwrap(
+                    preset.outputSampleRate(forInput: try XCTUnwrap(lane.outputSampleRate))
+                ),
+                bitrate: preset.recommendedBitrate(channels: 2),
+                allowsSyntheticSilence: false
+            )
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(audioTargetsByLane: [0: choice]),
+                availableVideoPresets: [],
+                aacAvailable: false,
+                availableAudioPresets: [preset]
+            )
+            XCTAssertEqual(resolved.choices.audioTargetsByLane[0], choice)
+        }
+    }
+
+    func testRejectsUnavailableOrMutatedTypedAudioTarget() throws {
+        let sources = [
+            asset(part: 1, tracks: [audio(id: 0)]),
+            asset(part: 2, tracks: []),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .audio, trackIDsBySource: [0, nil])
+            ])
+        )
+        let opus = JoinAudioTargetChoice(
+            preset: .opusQuality,
+            channels: 2,
+            channelLayout: "stereo",
+            sampleRate: 48_000,
+            bitrate: 160_000,
+            allowsSyntheticSilence: true
+        )
+        XCTAssertThrowsError(
+            try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(audioTargetsByLane: [0: opus]),
+                availableVideoPresets: [],
+                aacAvailable: true
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? JoinNormalizationChoiceError,
+                .unavailableAudioPreset(.opusQuality)
+            )
+        }
+        let wrongRate = JoinAudioTargetChoice(
+            preset: .opusQuality,
+            channels: 2,
+            channelLayout: "stereo",
+            sampleRate: 44_100,
+            bitrate: 160_000,
+            allowsSyntheticSilence: true
+        )
+        XCTAssertThrowsError(
+            try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(audioTargetsByLane: [0: wrongRate]),
+                availableVideoPresets: [],
+                aacAvailable: false,
+                availableAudioPresets: [.opusQuality]
+            )
+        ) { XCTAssertEqual($0 as? JoinNormalizationChoiceError, .invalidChoice) }
+    }
+
+    func testDecodesLegacyAACChoiceAndWritesTypedPortableChoice() throws {
+        let legacy = Data(
+            #"{"codec":"AAC","channels":2,"channelLayout":"stereo","sampleRate":48000,"bitrate":192000,"allowsSyntheticSilence":false}"#
+                .utf8
+        )
+        let decoded = try JSONDecoder().decode(JoinAudioTargetChoice.self, from: legacy)
+        XCTAssertEqual(decoded.preset, .aacCompatibility)
+        XCTAssertEqual(decoded.codec, "AAC")
+        let encoded = try JSONEncoder().encode(decoded)
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: encoded) as? [String: Any]
+        )
+        XCTAssertEqual(object["preset"] as? String, "aacCompatibility")
+        XCTAssertNil(object["codec"])
     }
 
     func testEveryAttachmentAndMetadataDecisionIsExplicitAndNoExtrasAreAccepted() throws {
@@ -378,7 +491,8 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
     private func audio(
         id: Int,
         channels: Int = 2,
-        language: String = "en"
+        language: String = "en",
+        sampleRate: Int = 48_000
     ) -> MediaTrack {
         MediaTrack(
             id: id,
@@ -390,7 +504,7 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
             isDefault: true,
             channels: channels,
             channelLayout: channels == 2 ? "stereo" : "5.1(side)",
-            sampleRate: 48_000
+            sampleRate: sampleRate
         )
     }
 }

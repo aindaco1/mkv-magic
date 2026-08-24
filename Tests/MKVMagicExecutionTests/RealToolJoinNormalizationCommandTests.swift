@@ -465,7 +465,7 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
         }
     }
 
-    func testBundledFFmpegNormalizesStereoAndSurroundOnceIntoAACSurround() async throws {
+    func testBundledFFmpegNormalizesStereoAndSurroundOnceIntoEveryAudioFormat() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
         }
@@ -478,8 +478,8 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             ffmpegURL: ffmpegURL,
             runner: runner
         ).probe()
-        guard capabilities.aac == .verified else {
-            throw XCTSkip("Bundled AAC did not verify on this Mac")
+        guard Set(capabilities.availableAudioPresets) == Set(AudioTranscodePreset.allCases) else {
+            throw XCTSkip("Every bundled audio encoder must verify for this integration")
         }
 
         try await PrivateTemporaryDirectory.withDirectory(
@@ -525,86 +525,71 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
             )
             XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
             let lane = try XCTUnwrap(proposal.audioLanes.first)
-            let choice = JoinAudioTargetChoice(
-                codec: try XCTUnwrap(lane.outputCodec),
-                channels: try XCTUnwrap(lane.outputChannels),
-                channelLayout: try XCTUnwrap(lane.outputChannelLayout),
-                sampleRate: try XCTUnwrap(lane.outputSampleRate),
-                bitrate: try XCTUnwrap(lane.outputBitrate),
-                allowsSyntheticSilence: false
-            )
-            XCTAssertEqual(choice.channels, 6)
-            XCTAssertEqual(choice.channelLayout, "5.1")
-            let resolved = try JoinNormalizationChoiceResolver().resolve(
-                sources: sources,
-                proposal: proposal,
-                choices: JoinNormalizationChoices(audioTargetsByLane: [0: choice]),
-                availableVideoPresets: Set(capabilities.availableVideoPresets),
-                aacAvailable: true
-            )
-            let outputURL = root.appendingPathComponent("normalized-audio.mkv")
-            let command = try JoinNormalizationCommandBuilder().build(
-                sources: sources,
-                resolvedPlan: resolved,
-                capabilities: capabilities,
-                outputURL: outputURL
-            )
-            let result = try await runner.run(
-                CommandRequest(
-                    executableURL: ffmpegURL,
-                    arguments: command.arguments,
-                    timeout: 120
-                )
-            )
-            XCTAssertEqual(result.exitCode, 0, result.standardError.text)
-
-            let output = try await inspector.inspect(outputURL)
-            XCTAssertEqual(output.tracks.count, 1)
-            XCTAssertEqual(output.tracks[0].kind, .audio)
-            XCTAssertEqual(output.tracks[0].codec, "aac")
-            XCTAssertEqual(output.tracks[0].channels, 6)
-            XCTAssertEqual(output.tracks[0].sampleRate, 48_000)
-            let duration = try XCTUnwrap(output.duration?.nanoseconds)
-            XCTAssertGreaterThan(duration, 1_800_000_000)
-            XCTAssertLessThan(duration, 2_200_000_000)
-            XCTAssertEqual(
-                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
-                sourceDigests
-            )
-
-            let decode = try await runner.run(
-                CommandRequest(
-                    executableURL: ffmpegURL,
-                    arguments: [
-                        "-hide_banner", "-loglevel", "error", "-i", outputURL.path,
-                        "-map", "0:a:0", "-f", "null", "-",
-                    ],
-                    timeout: 60
-                )
-            )
-            XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
-
+            let channels = try XCTUnwrap(lane.outputChannels)
             let executor = JoinNormalizationExecutor(
                 ffmpegURL: ffmpegURL,
                 runner: runner,
                 inspector: inspector
             )
-            let preview = try executor.preview(
-                sources: sources,
-                resolvedPlan: resolved,
-                capabilities: capabilities
-            )
-            let committedURL = root.appendingPathComponent("verified-normalized-audio.mkv")
-            let committed = try await executor.execute(
-                preview: preview,
-                destinationURL: committedURL
-            )
-            XCTAssertEqual(committed.sourceURL, committedURL)
-            XCTAssertEqual(committed.tracks.count, 1)
-            XCTAssertEqual(committed.tracks[0].codec, "aac")
-            XCTAssertEqual(committed.tracks[0].channels, 6)
-            XCTAssertEqual(committed.tracks[0].channelLayout, "5.1")
-            XCTAssertEqual(committed.tracks[0].sampleRate, 48_000)
+            let laneLayout = try XCTUnwrap(lane.outputChannelLayout)
+            let laneSampleRate = try XCTUnwrap(lane.outputSampleRate)
+            for preset in AudioTranscodePreset.allCases {
+                let choice = JoinAudioTargetChoice(
+                    preset: preset,
+                    channels: channels,
+                    channelLayout: try XCTUnwrap(
+                        preset.joinOutputChannelLayout(
+                            forSourceLayout: laneLayout,
+                            channels: channels
+                        )
+                    ),
+                    sampleRate: try XCTUnwrap(
+                        preset.outputSampleRate(forInput: laneSampleRate)
+                    ),
+                    bitrate: preset.recommendedBitrate(channels: channels),
+                    allowsSyntheticSilence: false
+                )
+                let resolved = try JoinNormalizationChoiceResolver().resolve(
+                    sources: sources,
+                    proposal: proposal,
+                    choices: JoinNormalizationChoices(audioTargetsByLane: [0: choice]),
+                    availableVideoPresets: Set(capabilities.availableVideoPresets),
+                    aacAvailable: false,
+                    availableAudioPresets: Set(capabilities.availableAudioPresets)
+                )
+                let preview = try executor.preview(
+                    sources: sources,
+                    resolvedPlan: resolved,
+                    capabilities: capabilities
+                )
+                let committedURL = root.appendingPathComponent(
+                    "verified-\(preset.rawValue)-audio.mkv"
+                )
+                let committed = try await executor.execute(
+                    preview: preview,
+                    destinationURL: committedURL
+                )
+                XCTAssertEqual(committed.sourceURL, committedURL)
+                XCTAssertEqual(committed.tracks.count, 1)
+                XCTAssertEqual(committed.tracks[0].codec, preset.codecName)
+                XCTAssertEqual(committed.tracks[0].channels, channels)
+                XCTAssertEqual(committed.tracks[0].channelLayout, choice.channelLayout)
+                XCTAssertEqual(committed.tracks[0].sampleRate, choice.sampleRate)
+                let duration = try XCTUnwrap(committed.duration?.nanoseconds)
+                XCTAssertGreaterThan(duration, 1_800_000_000)
+                XCTAssertLessThan(duration, 2_200_000_000)
+                let decode = try await runner.run(
+                    CommandRequest(
+                        executableURL: ffmpegURL,
+                        arguments: [
+                            "-hide_banner", "-loglevel", "error", "-i", committedURL.path,
+                            "-map", "0:a:0", "-f", "null", "-",
+                        ],
+                        timeout: 60
+                    )
+                )
+                XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+            }
             XCTAssertEqual(
                 try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
                 sourceDigests

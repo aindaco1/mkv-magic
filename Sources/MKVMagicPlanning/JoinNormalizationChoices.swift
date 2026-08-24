@@ -128,27 +128,88 @@ public struct JoinVideoTargetChoice: Codable, Hashable, Sendable {
 }
 
 public struct JoinAudioTargetChoice: Codable, Hashable, Sendable {
-    public let codec: String
+    public let preset: AudioTranscodePreset
     public let channels: Int
     public let channelLayout: String
     public let sampleRate: Int
-    public let bitrate: Int
+    public let bitrate: Int?
     public let allowsSyntheticSilence: Bool
 
     public init(
-        codec: String,
+        preset: AudioTranscodePreset,
         channels: Int,
         channelLayout: String,
         sampleRate: Int,
-        bitrate: Int,
+        bitrate: Int?,
         allowsSyntheticSilence: Bool
     ) {
-        self.codec = codec
+        self.preset = preset
         self.channels = channels
         self.channelLayout = channelLayout
         self.sampleRate = sampleRate
         self.bitrate = bitrate
         self.allowsSyntheticSilence = allowsSyntheticSilence
+    }
+
+    public var codec: String { preset.displayName }
+
+    private enum CodingKeys: String, CodingKey {
+        case preset
+        case codec
+        case channels
+        case channelLayout
+        case sampleRate
+        case bitrate
+        case allowsSyntheticSilence
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        if let decodedPreset = try values.decodeIfPresent(
+            AudioTranscodePreset.self,
+            forKey: .preset
+        ) {
+            preset = decodedPreset
+        } else {
+            let legacyCodec = try values.decode(String.self, forKey: .codec)
+            guard let decodedPreset = Self.preset(forLegacyCodec: legacyCodec) else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .codec,
+                    in: values,
+                    debugDescription: "Unsupported legacy Join audio codec."
+                )
+            }
+            preset = decodedPreset
+        }
+        channels = try values.decode(Int.self, forKey: .channels)
+        channelLayout = try values.decode(String.self, forKey: .channelLayout)
+        sampleRate = try values.decode(Int.self, forKey: .sampleRate)
+        bitrate = try values.decodeIfPresent(Int.self, forKey: .bitrate)
+        allowsSyntheticSilence = try values.decode(
+            Bool.self,
+            forKey: .allowsSyntheticSilence
+        )
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(preset, forKey: .preset)
+        try values.encode(channels, forKey: .channels)
+        try values.encode(channelLayout, forKey: .channelLayout)
+        try values.encode(sampleRate, forKey: .sampleRate)
+        try values.encodeIfPresent(bitrate, forKey: .bitrate)
+        try values.encode(allowsSyntheticSilence, forKey: .allowsSyntheticSilence)
+    }
+
+    private static func preset(forLegacyCodec codec: String) -> AudioTranscodePreset? {
+        switch codec.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "aac": .aacCompatibility
+        case "opus": .opusQuality
+        case "ac-3", "ac3": .ac3Compatibility
+        case "e-ac-3", "eac3": .eac3Compatibility
+        case "flac", "flac (lossless)": .flacLossless
+        default: nil
+        }
     }
 }
 
@@ -193,6 +254,7 @@ public enum JoinNormalizationChoiceError: Error, Equatable, Sendable {
     case unexpectedChoice
     case unavailableVideoPreset(VideoPreset)
     case unavailableAAC
+    case unavailableAudioPreset(AudioTranscodePreset)
 }
 
 extension JoinNormalizationChoiceError: LocalizedError {
@@ -217,6 +279,8 @@ extension JoinNormalizationChoiceError: LocalizedError {
             return "The selected \(preset.rawValue) encoder did not pass the active local probe."
         case .unavailableAAC:
             return "The bundled AAC encoder did not pass the active local probe."
+        case .unavailableAudioPreset(let preset):
+            return "The selected \(preset.displayName) encoder did not pass the active local probe."
         }
     }
 }
@@ -242,7 +306,8 @@ public struct JoinNormalizationChoiceResolver: Sendable {
         proposal: JoinNormalizationProposal,
         choices: JoinNormalizationChoices,
         availableVideoPresets: Set<VideoPreset>,
-        aacAvailable: Bool
+        aacAvailable: Bool,
+        availableAudioPresets: Set<AudioTranscodePreset> = []
     ) throws -> ResolvedJoinNormalizationPlan {
         guard proposal.blockers.isEmpty else {
             throw JoinNormalizationChoiceError.proposalBlocked
@@ -298,7 +363,15 @@ public struct JoinNormalizationChoiceResolver: Sendable {
                 else {
                     throw missing(decision)
                 }
-                guard aacAvailable else { throw JoinNormalizationChoiceError.unavailableAAC }
+                let effectiveAudioPresets = availableAudioPresets.union(
+                    aacAvailable ? [.aacCompatibility] : []
+                )
+                guard effectiveAudioPresets.contains(choice.preset) else {
+                    if choice.preset == .aacCompatibility {
+                        throw JoinNormalizationChoiceError.unavailableAAC
+                    }
+                    throw JoinNormalizationChoiceError.unavailableAudioPreset(choice.preset)
+                }
                 try validate(audioChoice: choice, lane: lane)
                 if decision.kind == .missingAudio, !choice.allowsSyntheticSilence {
                     throw missing(decision)
@@ -406,15 +479,35 @@ public struct JoinNormalizationChoiceResolver: Sendable {
         audioChoice: JoinAudioTargetChoice,
         lane: JoinAudioLaneProposal
     ) throws {
-        guard lane.encodesAudio,
-            audioChoice.codec.caseInsensitiveCompare(lane.outputCodec ?? "") == .orderedSame,
+        guard let proposedSampleRate = lane.outputSampleRate,
+            let outputSampleRate = audioChoice.preset.outputSampleRate(
+                forInput: proposedSampleRate
+            )
+        else {
+            throw JoinNormalizationChoiceError.invalidChoice
+        }
+        let bitrateIsValid =
+            audioChoice.bitrate.map {
+                (32_000...1_536_000).contains($0)
+            } ?? audioChoice.preset.isLossless
+        guard
+            lane.encodesAudio,
             audioChoice.channels == lane.outputChannels,
-            audioChoice.channelLayout == lane.outputChannelLayout,
-            audioChoice.sampleRate == lane.outputSampleRate,
-            audioChoice.bitrate == lane.outputBitrate,
+            audioChoice.channelLayout
+                == audioChoice.preset.joinOutputChannelLayout(
+                    forSourceLayout: lane.outputChannelLayout ?? "",
+                    channels: audioChoice.channels
+                ),
+            audioChoice.sampleRate == outputSampleRate,
+            audioChoice.preset.preserves(
+                channelLayout: audioChoice.channelLayout,
+                channels: audioChoice.channels
+            ),
+            audioChoice.bitrate
+                == audioChoice.preset.recommendedBitrate(channels: audioChoice.channels),
             (8_000...768_000).contains(audioChoice.sampleRate),
             (1...64).contains(audioChoice.channels),
-            (32_000...1_536_000).contains(audioChoice.bitrate)
+            bitrateIsValid
         else {
             throw JoinNormalizationChoiceError.invalidChoice
         }

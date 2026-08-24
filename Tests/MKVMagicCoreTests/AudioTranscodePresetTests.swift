@@ -56,4 +56,40 @@ final class AudioTranscodePresetTests: XCTestCase {
         XCTAssertEqual(
             AudioTranscodePreset.flacLossless.outputSampleRate(forInput: 192_000), 192_000)
     }
+
+    func testJoinLayoutTargetMakesOnlyReviewedSixChannelRematrixes() {
+        XCTAssertEqual(
+            AudioTranscodePreset.aacCompatibility.joinOutputChannelLayout(
+                forSourceLayout: "5.1(side)",
+                channels: 6
+            ),
+            "5.1"
+        )
+        XCTAssertEqual(
+            AudioTranscodePreset.ac3Compatibility.joinOutputChannelLayout(
+                forSourceLayout: "5.1",
+                channels: 6
+            ),
+            "5.1(side)"
+        )
+        XCTAssertEqual(
+            AudioTranscodePreset.opusQuality.joinOutputChannelLayout(
+                forSourceLayout: "7.1",
+                channels: 8
+            ),
+            "7.1"
+        )
+        XCTAssertNil(
+            AudioTranscodePreset.aacCompatibility.joinOutputChannelLayout(
+                forSourceLayout: "7.1",
+                channels: 8
+            )
+        )
+        XCTAssertNil(
+            AudioTranscodePreset.flacLossless.joinOutputChannelLayout(
+                forSourceLayout: "stereo",
+                channels: 6
+            )
+        )
+    }
 }

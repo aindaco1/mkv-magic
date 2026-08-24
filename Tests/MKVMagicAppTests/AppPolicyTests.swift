@@ -239,7 +239,13 @@ final class AppPolicyTests: XCTestCase {
             proResEncoder: "prores_ks",
             aac: .verified,
             aacEncoder: "aac_at",
-            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters,
+            audioCapabilities: [
+                .opusQuality: .init(status: .verified, encoder: "libopus"),
+                .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
+                .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
+                .flacLossless: .init(status: .verified, encoder: "flac"),
+            ]
         )
         let snapshot = LosslessJoinReviewBuilder.make(
             selections: [
@@ -272,7 +278,7 @@ final class AppPolicyTests: XCTestCase {
         window.setContentSize(window.minSize)
         content.layoutSubtreeIfNeeded()
         XCTAssertEqual(window.title, "Review Common Format")
-        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 460))
+        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 520))
         let controls = buttons(in: content)
         let approval = try XCTUnwrap(
             controls.first { $0.title == "I approve every common-format choice above." }
@@ -287,6 +293,23 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(review.contains("AAC, stereo, 48 kHz, 192 kbps"))
         XCTAssertTrue(review.contains("one fused normalization pass"))
         XCTAssertTrue(review.contains("nested Matroska edition"))
+        let audioPopup = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first {
+                $0.accessibilityLabel() == "Common format audio lane 1 format"
+            }
+        )
+        XCTAssertEqual(
+            audioPopup.itemTitles,
+            ["AAC", "Opus", "AC-3", "E-AC-3", "FLAC (Lossless)"]
+        )
+        audioPopup.selectItem(withTitle: "Opus")
+        XCTAssertTrue(audioPopup.sendAction(audioPopup.action, to: audioPopup.target))
+        XCTAssertFalse(save.isEnabled)
+        XCTAssertEqual(controller.reviewedPlan.choices.audioTargetsByLane[0]?.preset, .opusQuality)
+        let updatedReview = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        ).string
+        XCTAssertTrue(updatedReview.contains("Opus, stereo, 48 kHz, 160 kbps"))
         for button in controls where !button.isHidden {
             let frame = button.convert(button.bounds, to: content)
             XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
@@ -307,6 +330,64 @@ final class AppPolicyTests: XCTestCase {
             let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
         }
+    }
+
+    @MainActor
+    func testCommonFormatJoinFallsBackToVerifiedOpusForSevenPointOne() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .unavailable,
+            h264VideoToolbox: .unavailable,
+            proRes: .unavailable,
+            proResEncoder: nil,
+            aac: .unavailable,
+            aacEncoder: nil,
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters,
+            audioCapabilities: [
+                .opusQuality: .init(status: .verified, encoder: "libopus"),
+                .flacLossless: .init(status: .verified, encoder: "flac"),
+            ]
+        )
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: losslessJoinOption(
+                        part: 1,
+                        duration: 10,
+                        sampleRate: 48_000,
+                        channels: 8,
+                        channelLayout: "7.1"
+                    ),
+                    editionID: nil
+                ),
+                LosslessJoinSourceSelection(
+                    option: losslessJoinOption(
+                        part: 2,
+                        duration: 10,
+                        sampleRate: 44_100,
+                        channels: 8,
+                        channelLayout: "7.1"
+                    ),
+                    editionID: nil
+                ),
+            ],
+            encodingCapabilities: capabilities
+        )
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        XCTAssertTrue(snapshot.isReady)
+        XCTAssertTrue(snapshot.normalizationSummaries.contains { $0.contains("Opus once") })
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        XCTAssertEqual(resolved.choices.audioTargetsByLane[0]?.preset, .opusQuality)
+        let controller = try CommonFormatJoinWindowController(candidate: candidate)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let popup = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first {
+                $0.accessibilityLabel() == "Common format audio lane 1 format"
+            }
+        )
+        XCTAssertEqual(popup.itemTitles, ["Opus", "FLAC (Lossless)"])
     }
 
     func testCommonFormatJoinReviewExplainsUniformStaticHDR10Preservation() throws {
@@ -405,7 +486,7 @@ final class AppPolicyTests: XCTestCase {
         let content = try XCTUnwrap(window.contentView)
         window.setContentSize(window.minSize)
         content.layoutSubtreeIfNeeded()
-        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 560))
+        XCTAssertEqual(window.minSize, NSSize(width: 620, height: 610))
 
         let popups = descendants(in: content).compactMap { $0 as? NSPopUpButton }
         let format = try XCTUnwrap(
@@ -2267,6 +2348,8 @@ final class AppPolicyTests: XCTestCase {
         part: Int,
         duration seconds: Int64,
         sampleRate: Int = 48_000,
+        channels: Int = 2,
+        channelLayout: String? = nil,
         chapters: [MatroskaChapterEdition] = []
     ) -> LosslessJoinSourceOption {
         let source = MediaAsset(
@@ -2282,8 +2365,8 @@ final class AppPolicyTests: XCTestCase {
                     profile: "LC",
                     uid: UInt64(part),
                     isDefault: true,
-                    channels: 2,
-                    channelLayout: "stereo",
+                    channels: channels,
+                    channelLayout: channelLayout ?? (channels == 2 ? "stereo" : "5.1(side)"),
                     sampleRate: sampleRate
                 )
             ],

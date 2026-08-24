@@ -85,6 +85,10 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         XCTAssertEqual(graph.components(separatedBy: "channel_layouts=5.1(side)").count - 1, 2)
         XCTAssertEqual(graph.components(separatedBy: "apad=pad_dur=1.000000000").count - 1, 2)
         XCTAssertEqual(graph.components(separatedBy: "atrim=end=1.000000000").count - 1, 2)
+        XCTAssertEqual(
+            value(after: "-channel_layout:a:0", in: command.arguments),
+            "5.1(side)"
+        )
     }
 
     func testSynthesizesOnlyExplicitlyApprovedMissingAudioForExactPartDuration() throws {
@@ -350,6 +354,64 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         XCTAssertFalse(command.arguments.contains("libsvtav1"))
     }
 
+    func testBuildsEveryReviewedAudioFormatWithSharedBoundedArguments() throws {
+        let sources = [
+            asset(part: 1, tracks: [audio(id: 0, channels: 2, sampleRate: 44_100)]),
+            asset(part: 2, tracks: [audio(id: 0, channels: 2, sampleRate: 48_000)]),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: mapping(audio: [0, 0])
+        )
+        let capabilities = capabilities()
+        let encoders: [AudioTranscodePreset: String] = [
+            .aacCompatibility: "aac_at",
+            .opusQuality: "libopus",
+            .ac3Compatibility: "ac3",
+            .eac3Compatibility: "eac3",
+            .flacLossless: "flac",
+        ]
+        for preset in AudioTranscodePreset.allCases {
+            let choice = JoinAudioTargetChoice(
+                preset: preset,
+                channels: 2,
+                channelLayout: "stereo",
+                sampleRate: try XCTUnwrap(preset.outputSampleRate(forInput: 48_000)),
+                bitrate: preset.recommendedBitrate(channels: 2),
+                allowsSyntheticSilence: false
+            )
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(audioTargetsByLane: [0: choice]),
+                availableVideoPresets: [],
+                aacAvailable: false,
+                availableAudioPresets: [preset]
+            )
+            let command = try JoinNormalizationCommandBuilder().build(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities,
+                outputURL: URL(fileURLWithPath: "/output/\(preset.rawValue).mkv")
+            )
+            XCTAssertEqual(value(after: "-c:a:0", in: command.arguments), encoders[preset])
+            XCTAssertEqual(value(after: "-ar:a:0", in: command.arguments), "48000")
+            XCTAssertEqual(value(after: "-ac:a:0", in: command.arguments), "2")
+            XCTAssertEqual(
+                value(after: "-channel_layout:a:0", in: command.arguments),
+                "stereo"
+            )
+            XCTAssertEqual(
+                value(after: "-b:a:0", in: command.arguments),
+                choice.bitrate.map(String.init)
+            )
+            XCTAssertEqual(
+                command.arguments.contains("-application:a:0"),
+                preset == .opusQuality
+            )
+        }
+    }
+
     private func resolve(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
@@ -388,12 +450,21 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         }
         var audioTargets = [Int: JoinAudioTargetChoice]()
         for lane in proposal.audioLanes where lane.encodesAudio {
+            let channels = try XCTUnwrap(lane.outputChannels)
+            let layout = try XCTUnwrap(
+                AudioTranscodePreset.aacCompatibility.joinOutputChannelLayout(
+                    forSourceLayout: try XCTUnwrap(lane.outputChannelLayout),
+                    channels: channels
+                )
+            )
             audioTargets[lane.laneIndex] = JoinAudioTargetChoice(
-                codec: try XCTUnwrap(lane.outputCodec),
-                channels: try XCTUnwrap(lane.outputChannels),
-                channelLayout: try XCTUnwrap(lane.outputChannelLayout),
+                preset: .aacCompatibility,
+                channels: channels,
+                channelLayout: layout,
                 sampleRate: try XCTUnwrap(lane.outputSampleRate),
-                bitrate: try XCTUnwrap(lane.outputBitrate),
+                bitrate: AudioTranscodePreset.aacCompatibility.recommendedBitrate(
+                    channels: channels
+                ),
                 allowsSyntheticSilence: allowsSyntheticSilence
             )
         }
@@ -423,7 +494,13 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
             proResEncoder: "prores_ks",
             aac: .verified,
             aacEncoder: "aac_at",
-            availableFilters: filters
+            availableFilters: filters,
+            audioCapabilities: [
+                .opusQuality: .init(status: .verified, encoder: "libopus"),
+                .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
+                .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
+                .flacLossless: .init(status: .verified, encoder: "flac"),
+            ]
         )
     }
 

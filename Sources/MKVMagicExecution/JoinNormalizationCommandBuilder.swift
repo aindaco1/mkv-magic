@@ -10,6 +10,7 @@ public enum JoinNormalizationCommandError: Error, Equatable, Sendable {
     case inconsistentPlan
     case unavailableEncoder(VideoPreset)
     case unavailableAAC
+    case unavailableAudioPreset(AudioTranscodePreset)
     case missingFilter(String)
     case unsupportedDynamicRange(laneIndex: Int)
     case unsupportedAudioLayout(laneIndex: Int)
@@ -34,6 +35,8 @@ extension JoinNormalizationCommandError: LocalizedError {
             "The selected \(preset.rawValue) encoder did not pass the active local probe."
         case .unavailableAAC:
             "The bundled AAC encoder did not pass the active local probe."
+        case .unavailableAudioPreset(let preset):
+            "The selected \(preset.displayName) encoder did not pass the active local probe."
         case .missingFilter(let filter):
             "Bundled FFmpeg did not report the required \(filter) filter."
         case .unsupportedDynamicRange(let laneIndex):
@@ -120,6 +123,7 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         }
 
         let videoArguments = FFmpegVideoEncoderArguments()
+        let audioArguments = FFmpegAudioEncoderArguments()
         var graphParts = [String]()
         var videoOutputs = [
             (
@@ -232,12 +236,33 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         for lane in audioLanes {
             guard mapping.lanes.indices.contains(lane.laneIndex),
                 let choice = resolvedPlan.choices.audioTargetsByLane[lane.laneIndex],
-                let aacEncoder = capabilities.aacEncoder, capabilities.aac == .verified,
-                let safeLayout = safeAudioLayout(choice.channelLayout, channels: choice.channels)
+                let audioEncoder = capabilities.verifiedAudioEncoder(for: choice.preset),
+                choice.preset.preserves(
+                    channelLayout: choice.channelLayout,
+                    channels: choice.channels
+                )
             else {
-                if capabilities.aac != .verified || capabilities.aacEncoder == nil {
+                if let preset = resolvedPlan.choices.audioTargetsByLane[lane.laneIndex]?.preset,
+                    capabilities.verifiedAudioEncoder(for: preset) == nil
+                {
+                    if preset != .aacCompatibility {
+                        throw JoinNormalizationCommandError.unavailableAudioPreset(preset)
+                    }
                     throw JoinNormalizationCommandError.unavailableAAC
                 }
+                throw JoinNormalizationCommandError.unsupportedAudioLayout(
+                    laneIndex: lane.laneIndex
+                )
+            }
+            let safeLayout: String
+            do {
+                safeLayout = try audioArguments.filterChannelLayout(
+                    encoder: audioEncoder,
+                    preset: choice.preset,
+                    channels: choice.channels,
+                    outputChannelLayout: choice.channelLayout
+                )
+            } catch {
                 throw JoinNormalizationCommandError.unsupportedAudioLayout(
                     laneIndex: lane.laneIndex
                 )
@@ -264,8 +289,12 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                     continue
                 }
                 guard let track = indexedTracks[sourceIndex][trackID],
-                    safeAudioLayout(track.channelLayout ?? "", channels: track.channels ?? 0)
-                        != nil,
+                    AudioTranscodePreset.allCases.contains(where: {
+                        $0.preserves(
+                            channelLayout: track.channelLayout ?? "",
+                            channels: track.channels ?? 0
+                        )
+                    }),
                     let duration = sources[sourceIndex].duration,
                     duration.nanoseconds > 0
                 else {
@@ -278,7 +307,10 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         laneIndex: lane.laneIndex
                     )
                 }
-                let sampleFormat = aacEncoder == "aac_at" ? "s16" : "fltp"
+                let sampleFormat = filterSampleFormat(
+                    preset: choice.preset,
+                    encoder: audioEncoder
+                )
                 graphParts.append(
                     "[\(sourceIndex):\(trackID)]"
                         + "aresample=\(choice.sampleRate):first_pts=0,"
@@ -344,16 +376,29 @@ public struct JoinNormalizationCommandBuilder: Sendable {
             }
         }
         for (outputIndex, output) in audioOutputs.enumerated() {
-            guard let aacEncoder = capabilities.aacEncoder, capabilities.aac == .verified else {
-                throw JoinNormalizationCommandError.unavailableAAC
+            guard let encoder = capabilities.verifiedAudioEncoder(for: output.choice.preset) else {
+                if output.choice.preset == .aacCompatibility {
+                    throw JoinNormalizationCommandError.unavailableAAC
+                }
+                throw JoinNormalizationCommandError.unavailableAudioPreset(output.choice.preset)
             }
-            arguments.append(contentsOf: [
-                "-map", "[\(output.label)]",
-                "-c:a:\(outputIndex)", aacEncoder,
-                "-b:a:\(outputIndex)", String(output.choice.bitrate),
-                "-ar:a:\(outputIndex)", String(output.choice.sampleRate),
-                "-ac:a:\(outputIndex)", String(output.choice.channels),
-            ])
+            arguments.append(contentsOf: ["-map", "[\(output.label)]"])
+            do {
+                arguments.append(
+                    contentsOf: try audioArguments.make(
+                        outputIndex: outputIndex,
+                        encoder: encoder,
+                        preset: output.choice.preset,
+                        channels: output.choice.channels,
+                        channelLayout: output.choice.channelLayout,
+                        inputSampleRate: output.choice.sampleRate
+                    )
+                )
+            } catch {
+                throw JoinNormalizationCommandError.unsupportedAudioLayout(
+                    laneIndex: output.laneIndex
+                )
+            }
         }
         arguments.append(contentsOf: [
             "-map_metadata", "-1", "-map_chapters", "-1",
@@ -372,17 +417,13 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         )
     }
 
-    private func safeAudioLayout(_ layout: String, channels: Int) -> String? {
-        let normalizedLayout = normalized(layout)
-        let allowed: Set<String>
-        switch channels {
-        case 1: allowed = ["mono"]
-        case 2: allowed = ["stereo"]
-        case 6: allowed = ["5.1", "5.1(side)"]
-        case 8: allowed = ["7.1", "7.1(wide)"]
-        default: return nil
-        }
-        return allowed.contains(normalizedLayout) ? normalizedLayout : nil
+    private func filterSampleFormat(
+        preset: AudioTranscodePreset,
+        encoder: String
+    ) -> String {
+        if preset == .aacCompatibility && encoder == "aac_at" { return "s16" }
+        if preset == .flacLossless { return "s32" }
+        return "fltp"
     }
 
     private func safeAbsolutePath(_ url: URL) -> Bool {

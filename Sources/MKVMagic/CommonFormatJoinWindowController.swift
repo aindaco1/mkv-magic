@@ -67,20 +67,20 @@ enum CommonFormatJoinChoicePolicy {
             case .audioTarget, .missingAudio:
                 guard let laneIndex = decision.laneIndex,
                     let lane = proposal.audioLanes.first(where: { $0.laneIndex == laneIndex }),
-                    let codec = lane.outputCodec,
-                    let channels = lane.outputChannels,
-                    let layout = lane.outputChannelLayout,
-                    let sampleRate = lane.outputSampleRate,
-                    let bitrate = lane.outputBitrate
+                    let preset = candidate.capabilities.availableAudioPresets.first(where: {
+                        audioTargetChoice(
+                            lane: lane,
+                            preset: $0,
+                            allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+                        ) != nil
+                    }),
+                    let choice = audioTargetChoice(
+                        lane: lane,
+                        preset: preset,
+                        allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+                    )
                 else { throw CommonFormatJoinChoicePolicyError.incompleteProposal }
-                audioTargets[laneIndex] = JoinAudioTargetChoice(
-                    codec: codec,
-                    channels: channels,
-                    channelLayout: layout,
-                    sampleRate: sampleRate,
-                    bitrate: bitrate,
-                    allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
-                )
+                audioTargets[laneIndex] = choice
             case .attachmentPolicy:
                 guard let sourceIndex = decision.sourceIndex,
                     candidate.sources.indices.contains(sourceIndex)
@@ -142,7 +142,8 @@ enum CommonFormatJoinChoicePolicy {
             proposal: candidate.proposal,
             choices: choices,
             availableVideoPresets: Set(candidate.capabilities.availableVideoPresets),
-            aacAvailable: candidate.capabilities.aac == .verified
+            aacAvailable: candidate.capabilities.aac == .verified,
+            availableAudioPresets: Set(candidate.capabilities.availableAudioPresets)
         )
     }
 
@@ -194,6 +195,44 @@ enum CommonFormatJoinChoicePolicy {
         )
     }
 
+    static func availableAudioPresets(
+        for lane: JoinAudioLaneProposal,
+        capabilities: FFmpegEncodingCapabilities
+    ) -> [AudioTranscodePreset] {
+        capabilities.availableAudioPresets.filter {
+            audioTargetChoice(
+                lane: lane,
+                preset: $0,
+                allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+            ) != nil
+        }
+    }
+
+    static func audioTargetChoice(
+        lane: JoinAudioLaneProposal,
+        preset: AudioTranscodePreset,
+        allowsSyntheticSilence: Bool
+    ) -> JoinAudioTargetChoice? {
+        guard lane.encodesAudio,
+            let channels = lane.outputChannels,
+            let layout = lane.outputChannelLayout,
+            let proposedSampleRate = lane.outputSampleRate,
+            let outputLayout = preset.joinOutputChannelLayout(
+                forSourceLayout: layout,
+                channels: channels
+            ),
+            let outputSampleRate = preset.outputSampleRate(forInput: proposedSampleRate)
+        else { return nil }
+        return JoinAudioTargetChoice(
+            preset: preset,
+            channels: channels,
+            channelLayout: outputLayout,
+            sampleRate: outputSampleRate,
+            bitrate: preset.recommendedBitrate(channels: channels),
+            allowsSyntheticSilence: allowsSyntheticSilence
+        )
+    }
+
     static func summaries(
         for candidate: CommonFormatJoinCandidate,
         resolvedPlan: ResolvedJoinNormalizationPlan
@@ -218,9 +257,10 @@ enum CommonFormatJoinChoicePolicy {
             let silence =
                 choice.allowsSyntheticSilence
                 ? "; add silence only where this lane is missing" : ""
+            let rate = choice.bitrate.map { ", \($0 / 1_000) kbps" } ?? ", lossless"
             values.append(
-                "Audio lane \(lane.laneIndex + 1): AAC, \(choice.channelLayout), "
-                    + "\(choice.sampleRate / 1_000) kHz, \(choice.bitrate / 1_000) kbps\(silence)."
+                "Audio lane \(lane.laneIndex + 1): \(choice.preset.displayName), "
+                    + "\(choice.channelLayout), \(choice.sampleRate / 1_000) kHz\(rate)\(silence)."
             )
         }
         for sourceIndex in resolvedPlan.choices.retainedAttachmentIDsBySource.keys.sorted() {
@@ -313,8 +353,14 @@ final class CommonFormatJoinWindowController: NSWindowController {
         window.title = "Review Common Format"
         window.styleMask = [.titled, .closable, .resizable]
         let hasVideoTarget = candidate.proposal.videoLanes.contains(where: \.encodesVideo)
-        window.setContentSize(NSSize(width: 700, height: hasVideoTarget ? 650 : 520))
-        window.minSize = NSSize(width: 620, height: hasVideoTarget ? 560 : 460)
+        let hasAudioTarget = candidate.proposal.audioLanes.contains(where: \.encodesAudio)
+        window.setContentSize(
+            NSSize(width: 700, height: hasVideoTarget ? 710 : (hasAudioTarget ? 580 : 520))
+        )
+        window.minSize = NSSize(
+            width: 620,
+            height: hasVideoTarget ? 610 : (hasAudioTarget ? 520 : 460)
+        )
         super.init(window: window)
         choiceViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         choiceViewController.onContinue = { [weak self] plan in self?.finish(with: plan) }
@@ -634,6 +680,91 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
 }
 
 @MainActor
+private final class CommonFormatJoinAudioLaneControls: NSObject {
+    let laneIndex: Int
+    let view = NSStackView()
+    var onChange: (() -> Void)?
+
+    private let lane: JoinAudioLaneProposal
+    private let presets: [AudioTranscodePreset]
+    private let formatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let detail = NSTextField(wrappingLabelWithString: "")
+
+    init(
+        lane: JoinAudioLaneProposal,
+        capabilities: FFmpegEncodingCapabilities,
+        initialChoice: JoinAudioTargetChoice
+    ) {
+        laneIndex = lane.laneIndex
+        self.lane = lane
+        presets = CommonFormatJoinChoicePolicy.availableAudioPresets(
+            for: lane,
+            capabilities: capabilities
+        )
+        super.init()
+
+        let title = NSTextField(labelWithString: "Audio lane \(lane.laneIndex + 1)")
+        title.font = .systemFont(ofSize: 13, weight: .semibold)
+        formatPopup.addItems(withTitles: presets.map(\.displayName))
+        if let index = presets.firstIndex(of: initialChoice.preset) {
+            formatPopup.selectItem(at: index)
+        }
+        formatPopup.target = self
+        formatPopup.action = #selector(formatChanged)
+        formatPopup.setAccessibilityLabel(
+            "Common format audio lane \(lane.laneIndex + 1) format"
+        )
+        detail.textColor = .secondaryLabelColor
+        detail.font = .systemFont(ofSize: 11)
+        detail.setAccessibilityLabel("Common format audio lane \(lane.laneIndex + 1) target")
+
+        let formatStack = NSStackView(views: [
+            NSTextField(labelWithString: "Audio format"), formatPopup,
+        ])
+        formatStack.orientation = .vertical
+        formatStack.alignment = .leading
+        formatStack.spacing = 4
+        view.addArrangedSubview(title)
+        view.addArrangedSubview(formatStack)
+        view.addArrangedSubview(detail)
+        view.orientation = .vertical
+        view.alignment = .leading
+        view.spacing = 7
+        view.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        view.wantsLayer = true
+        view.layer?.cornerRadius = 6
+        view.layer?.borderWidth = 1
+        view.layer?.borderColor = NSColor.separatorColor.cgColor
+        refreshDetail()
+    }
+
+    func selectedChoice() -> JoinAudioTargetChoice? {
+        guard presets.indices.contains(formatPopup.indexOfSelectedItem) else { return nil }
+        return CommonFormatJoinChoicePolicy.audioTargetChoice(
+            lane: lane,
+            preset: presets[formatPopup.indexOfSelectedItem],
+            allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+        )
+    }
+
+    @objc private func formatChanged() {
+        refreshDetail()
+        onChange?()
+    }
+
+    private func refreshDetail() {
+        guard let choice = selectedChoice() else {
+            detail.stringValue = "No locally verified format can represent this reviewed layout."
+            return
+        }
+        let rate = choice.bitrate.map { "\($0 / 1_000) kbps" } ?? "lossless"
+        let silence = choice.allowsSyntheticSilence ? " • silence for missing parts" : ""
+        detail.stringValue =
+            "Keep \(choice.channelLayout) • \(choice.sampleRate / 1_000) kHz • \(rate)\(silence)"
+    }
+}
+
+@MainActor
 private final class CommonFormatJoinViewController: NSViewController {
     var onCancel: (() -> Void)?
     var onContinue: ((ResolvedJoinNormalizationPlan) -> Void)?
@@ -641,6 +772,7 @@ private final class CommonFormatJoinViewController: NSViewController {
     private let candidate: CommonFormatJoinCandidate
     fileprivate(set) var reviewedPlan: ResolvedJoinNormalizationPlan
     private var videoControls = [CommonFormatJoinVideoLaneControls]()
+    private var audioControls = [CommonFormatJoinAudioLaneControls]()
     private let review = NSTextView()
     private let validationMessage = NSTextField(wrappingLabelWithString: "")
     private let approval = NSButton(
@@ -711,7 +843,24 @@ private final class CommonFormatJoinViewController: NSViewController {
             controls.view.translatesAutoresizingMaskIntoConstraints = false
             controls.view.widthAnchor.constraint(equalTo: targets.widthAnchor).isActive = true
         }
-        targets.isHidden = videoControls.isEmpty
+        for lane in candidate.proposal.audioLanes.filter(\.encodesAudio).sorted(by: {
+            $0.laneIndex < $1.laneIndex
+        }) {
+            guard let choice = reviewedPlan.choices.audioTargetsByLane[lane.laneIndex] else {
+                continue
+            }
+            let controls = CommonFormatJoinAudioLaneControls(
+                lane: lane,
+                capabilities: candidate.capabilities,
+                initialChoice: choice
+            )
+            controls.onChange = { [weak self] in self?.refreshPlanFromControls() }
+            audioControls.append(controls)
+            targets.addArrangedSubview(controls.view)
+            controls.view.translatesAutoresizingMaskIntoConstraints = false
+            controls.view.widthAnchor.constraint(equalTo: targets.widthAnchor).isActive = true
+        }
+        targets.isHidden = videoControls.isEmpty && audioControls.isEmpty
         validationMessage.textColor = .systemRed
         validationMessage.font = .systemFont(ofSize: 12)
         validationMessage.isHidden = true
@@ -789,10 +938,20 @@ private final class CommonFormatJoinViewController: NSViewController {
             }
             videoTargets[controls.laneIndex] = choice
         }
+        var audioTargets = [Int: JoinAudioTargetChoice]()
+        for controls in audioControls {
+            guard let choice = controls.selectedChoice() else {
+                showValidation(
+                    "Choose a locally verified format for every visible audio lane."
+                )
+                return
+            }
+            audioTargets[controls.laneIndex] = choice
+        }
         let existing = reviewedPlan.choices
         let choices = JoinNormalizationChoices(
             videoTargetsByLane: videoTargets,
-            audioTargetsByLane: existing.audioTargetsByLane,
+            audioTargetsByLane: audioTargets,
             retainedAttachmentIDsBySource: existing.retainedAttachmentIDsBySource,
             metadataSourceByLane: existing.metadataSourceByLane,
             approvedEmptySubtitleLanes: existing.approvedEmptySubtitleLanes,

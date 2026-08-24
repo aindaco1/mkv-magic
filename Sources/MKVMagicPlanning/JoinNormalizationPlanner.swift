@@ -582,7 +582,7 @@ public struct JoinNormalizationPlanner: Sendable {
                 kind: .audioTarget,
                 laneIndex: laneIndex,
                 summary:
-                    "Confirm one AAC conversion to the largest source layout for audio lane \(laneIndex + 1); no downmix is automatic."
+                    "Choose one locally verified common format for the largest source layout in audio lane \(laneIndex + 1); no downmix is automatic."
             )
         )
         if isMissing {

@@ -484,7 +484,8 @@ final class AppModel {
                 proposal: candidate.proposal,
                 choices: resolvedPlan.choices,
                 availableVideoPresets: Set(candidate.capabilities.availableVideoPresets),
-                aacAvailable: candidate.capabilities.aac == .verified
+                aacAvailable: candidate.capabilities.aac == .verified,
+                availableAudioPresets: Set(candidate.capabilities.availableAudioPresets)
             )
             let catalog = try makeToolCatalog()
             let runner = FoundationCommandRunner()

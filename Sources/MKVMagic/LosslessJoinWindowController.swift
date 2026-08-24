@@ -329,17 +329,31 @@ enum LosslessJoinReviewBuilder {
             )
         }
         for lane in proposal.audioLanes where lane.encodesAudio {
-            let layout = lane.outputChannelLayout ?? "layout needs review"
-            let rate = lane.outputSampleRate.map { "\($0 / 1_000) kHz" } ?? "rate needs review"
+            let preset =
+                encodingCapabilities?.availableAudioPresets.first(where: {
+                    CommonFormatJoinChoicePolicy.audioTargetChoice(
+                        lane: lane,
+                        preset: $0,
+                        allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+                    ) != nil
+                }) ?? .aacCompatibility
+            let choice = CommonFormatJoinChoicePolicy.audioTargetChoice(
+                lane: lane,
+                preset: preset,
+                allowsSyntheticSilence: lane.sourceActions.contains(.synthesizeSilence)
+            )
+            let layout = choice?.channelLayout ?? lane.outputChannelLayout ?? "layout needs review"
+            let rate = choice.map { "\($0.sampleRate / 1_000) kHz" } ?? "rate needs review"
             let bitrate =
-                lane.outputBitrate.map { "\($0 / 1_000) kbps" }
-                ?? "bitrate needs review"
+                choice.map {
+                    $0.bitrate.map { "\($0 / 1_000) kbps" } ?? "lossless"
+                } ?? "bitrate needs review"
             let silence =
                 lane.sourceActions.contains(.synthesizeSilence)
                 ? " • silent missing sections"
                 : ""
             summaries.append(
-                "Audio lane \(lane.laneIndex + 1): AAC once • \(layout) • \(rate) • \(bitrate)\(silence)."
+                "Audio lane \(lane.laneIndex + 1): \(preset.displayName) once • \(layout) • \(rate) • \(bitrate)\(silence)."
             )
         }
         for lane in proposal.subtitleLanes where lane.mechanism == .normalizeTextToASS {
@@ -359,9 +373,16 @@ enum LosslessJoinReviewBuilder {
             summaries.append("Blocked: \(message)")
             blockers.append(message)
         } else if let capabilities = encodingCapabilities,
-            needsAudioEncode, capabilities.aac != .verified
+            needsAudioEncode,
+            proposal.audioLanes.filter(\.encodesAudio).contains(where: {
+                CommonFormatJoinChoicePolicy.availableAudioPresets(
+                    for: $0,
+                    capabilities: capabilities
+                ).isEmpty
+            })
         {
-            let message = "No bundled AAC encoder passed the active local probe."
+            let message =
+                "No locally verified bundled audio format can represent every reviewed Join lane."
             summaries.append("Blocked: \(message)")
             blockers.append(message)
         } else if let capabilities = encodingCapabilities,
