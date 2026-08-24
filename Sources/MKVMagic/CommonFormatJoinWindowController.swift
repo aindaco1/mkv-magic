@@ -1035,7 +1035,11 @@ private final class CommonFormatJoinViewController: NSViewController {
     }
 
     private func showValidation(_ message: String) {
-        validationMessage.stringValue = message
         validationMessage.isHidden = false
+        AccessibleStatusPresentation.present(
+            message,
+            in: validationMessage,
+            returningFocusTo: preferredInitialFirstResponder
+        )
     }
 }

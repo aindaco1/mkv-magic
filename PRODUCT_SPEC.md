@@ -1308,6 +1308,18 @@ future direct bypass. This establishes consistent bounded wording in source and
 automated UI regressions; observed VoiceOver announcement, localization, and
 representative real-failure acceptance remain open.
 
+The accessible-failure continuation centralizes AppKit status announcements and
+optional recovery focus. Every directly presented actionable UI failure now
+updates its visible status field and posts a native accessibility value-change
+notification through one implementation; eligible validation and retry paths
+return focus only after their recovery control is visible and enabled. Main
+model failures are deduplicated across routine refreshes. Regression work also
+found and fixed live workflow-name reloads clearing the selected workflow before
+Save. The source gate rejects direct error-label assignments and one-off native
+accessibility posts outside the shared presenter. This is automated runtime and
+source evidence, not an observed VoiceOver announcement-order or representative
+private-media failure walkthrough.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

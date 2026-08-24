@@ -185,7 +185,11 @@ final class TrackEditorViewController: NSViewController {
 
     @objc private func preview() {
         guard let track = selectedTrack else {
-            statusLabel.stringValue = "No track with a stable Matroska UID is available."
+            AccessibleStatusPresentation.present(
+                "No track with a stable Matroska UID is available.",
+                in: statusLabel,
+                returningFocusTo: trackPopup
+            )
             return
         }
         do {
@@ -205,16 +209,24 @@ final class TrackEditorViewController: NSViewController {
                 isTextDescription: textDescriptionCheck.state == .on
             )
             guard edit != (try TrackEditorPresentation.normalizedEdit(for: track)) else {
-                statusLabel.stringValue = "Change at least one value before previewing."
+                AccessibleStatusPresentation.present(
+                    "Change at least one value before previewing.",
+                    in: statusLabel,
+                    returningFocusTo: nameField
+                )
                 return
             }
             statusLabel.stringValue = ""
             onPreview?(edit)
         } catch {
-            statusLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not prepare the track edit.",
-                recovery: "The original is unchanged; review the track fields and try again.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the track edit.",
+                    recovery: "The original is unchanged; review the track fields and try again.",
+                    error: error
+                ),
+                in: statusLabel,
+                returningFocusTo: languageField
             )
         }
     }

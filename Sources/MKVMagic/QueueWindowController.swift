@@ -277,7 +277,6 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusLabel.stringValue = "Updating queue…"
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let statusMessage: String
             do {
                 self.snapshot = try await operation()
                 self.tableView.reloadData()
@@ -289,16 +288,20 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
                         byExtendingSelection: false
                     )
                 }
-                statusMessage = QueuePresentation.summary(self.snapshot)
+                self.refreshSelection()
+                self.statusLabel.stringValue = QueuePresentation.summary(self.snapshot)
             } catch {
-                statusMessage = UserFacingErrorPresentation.message(
-                    failure: "Could not update the queue.",
-                    recovery: "The last confirmed queue remains shown; try the action again.",
-                    error: error
+                self.refreshSelection()
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not update the queue.",
+                        recovery: "The last confirmed queue remains shown; try the action again.",
+                        error: error
+                    ),
+                    in: self.statusLabel,
+                    returningFocusTo: self.tableView
                 )
             }
-            self.refreshSelection()
-            self.statusLabel.stringValue = statusMessage
         }
     }
 

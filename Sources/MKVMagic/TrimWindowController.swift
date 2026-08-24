@@ -615,6 +615,13 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             configureQualityPopup(resetSelection: false)
             refreshAdvancedControls(resetValues: false)
             updateInputState()
+            if reviewErrorMessage != nil {
+                AccessibleStatusPresentation.present(
+                    inputMessage.stringValue,
+                    in: inputMessage,
+                    returningFocusTo: reviewButton
+                )
+            }
         }
     }
 

@@ -123,6 +123,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
+    private var lastAnnouncedModelFailure: String?
     private var historyWindowController: HistoryWindowController?
     private var queueWindowController: QueueWindowController?
     private var encodingBenchmarkWindowController: EncodingBenchmarkWindowController?
@@ -495,10 +496,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 controller.window?.makeKeyAndOrderFront(nil)
                 statusLabel.stringValue = records.isEmpty ? "No history yet" : "History loaded"
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not load History.",
-                    recovery: "Media work is unchanged; close and reopen History to retry.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not load History.",
+                        recovery: "Media work is unchanged; close and reopen History to retry.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
             }
         }
@@ -552,10 +556,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue =
                     snapshot.jobs.isEmpty ? "Queue is empty" : "Queue loaded"
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not load Queue.",
-                    recovery: "Media work is unchanged; close and reopen Queue to retry.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not load Queue.",
+                        recovery: "Media work is unchanged; close and reopen Queue to retry.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
             }
         }
@@ -580,10 +587,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     ? "Encoding test ready; it will not run without your approval."
                     : "Saved encoding recommendation loaded."
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not open Encoding Test.",
-                    recovery: "No test was started; close and reopen Encoding Test to retry.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not open Encoding Test.",
+                        recovery: "No test was started; close and reopen Encoding Test to retry.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
             }
         }
@@ -627,10 +637,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     ? "Create your first portable workflow"
                     : "Workflows loaded"
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not load workflows.",
-                    recovery: "No workflow was changed; close and reopen Workflows to retry.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not load workflows.",
+                        recovery: "No workflow was changed; close and reopen Workflows to retry.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
             }
         }
@@ -693,10 +706,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue = "Choose numeric trim boundaries and review the result."
             } catch {
                 isPreparingTrim = false
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not open Trim.",
-                    recovery: "No output was created; check the selected video and try again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not open Trim.",
+                        recovery: "No output was created; check the selected video and try again.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
                 refresh()
             }
@@ -808,10 +824,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 }
                 statusLabel.stringValue = "Review source order, track lanes, and chapters."
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not open Join.",
-                    recovery: "No output was created; review the selected files and try again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not open Join.",
+                        recovery: "No output was created; review the selected files and try again.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
                 refresh()
             }
@@ -839,10 +858,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 )
             }
         } catch {
-            statusLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not prepare common-format choices.",
-                recovery: "No plan was approved; close and reopen Join to retry.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare common-format choices.",
+                    recovery: "No plan was approved; close and reopen Join to retry.",
+                    error: error
+                ),
+                in: statusLabel
             )
             refresh()
         }
@@ -863,10 +885,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 guard view.window === parentWindow else { return }
                 chooseCommonFormatJoinDestination(preview, parentWindow: parentWindow)
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not confirm the common-format join.",
-                    recovery: "No output was created; reopen Join and review every choice again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not confirm the common-format join.",
+                        recovery:
+                            "No output was created; reopen Join and review every choice again.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
                 refresh()
             }
@@ -945,10 +971,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 guard view.window === parentWindow else { return }
                 chooseLosslessJoinDestination(preview, parentWindow: parentWindow)
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not confirm the lossless join.",
-                    recovery: "No output was created; reopen Join and review every source again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not confirm the lossless join.",
+                        recovery:
+                            "No output was created; reopen Join and review every source again.",
+                        error: error
+                    ),
+                    in: statusLabel
                 )
                 refresh()
             }
@@ -1118,10 +1148,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 )
             }
         } catch {
-            impactLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not prepare this workflow.",
-                recovery: "No output was created; review the selected file and workflow cards.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare this workflow.",
+                    recovery:
+                        "No output was created; review the selected file and workflow cards.",
+                    error: error
+                ),
+                in: impactLabel,
+                returningFocusTo: previewButton
             )
             statusLabel.stringValue = "Workflow preview needs attention"
             clearPendingChange()
@@ -1185,10 +1220,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             runButton.toolTip =
                 "Create a new MKV from a temporary clone, verify it, then commit it."
         } catch {
-            impactLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not prepare the title edit.",
-                recovery: "The original is unchanged; revise the title and try again.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the title edit.",
+                    recovery: "The original is unchanged; revise the title and try again.",
+                    error: error
+                ),
+                in: impactLabel,
+                returningFocusTo: segmentTitleField
             )
             clearPendingChange()
         }
@@ -1217,10 +1256,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 self.runButton.toolTip =
                     "Create a new MKV from a temporary clone, verify it, then commit it."
             } catch {
-                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the track edit.",
-                    recovery: "The original is unchanged; revise the track fields and try again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the track edit.",
+                        recovery:
+                            "The original is unchanged; revise the track fields and try again.",
+                        error: error
+                    ),
+                    in: self.impactLabel,
+                    returningFocusTo: self.editTrackButton
                 )
                 self.clearPendingChange()
             }
@@ -1285,12 +1329,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Replace chapters on a temporary clone, re-extract the exact hierarchy, verify preserved media, then commit."
                 }
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not open Chapter Studio.",
-                    recovery: "No chapters were changed; check the selected MKV and try again.",
-                    error: error
-                )
                 chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not open Chapter Studio.",
+                        recovery: "No chapters were changed; check the selected MKV and try again.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: chaptersButton
+                )
                 clearPendingChange()
             }
         }
@@ -1389,12 +1437,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Write a normalized subtitle copy, verify text, timing, and style structure, then commit it."
                 }
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the subtitle cleanup preview.",
-                    recovery: "The subtitle is unchanged; check the file and try again.",
-                    error: error
-                )
                 cleanSubtitleButton.isEnabled = true
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the subtitle cleanup preview.",
+                        recovery: "The subtitle is unchanged; check the file and try again.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: cleanSubtitleButton
+                )
                 clearPendingChange()
             }
         }
@@ -1503,12 +1555,17 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Remux once, restore the original track UID and position, verify the MKV and extracted subtitle, then commit it."
                 }
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the embedded subtitle preview.",
-                    recovery: "The MKV is unchanged; choose the track again or inspect the file.",
-                    error: error
-                )
                 cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the embedded subtitle preview.",
+                        recovery:
+                            "The MKV is unchanged; choose the track again or inspect the file.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: cleanSubtitleButton
+                )
                 clearPendingChange()
             }
         }
@@ -1617,12 +1674,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     )
                 }
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the external subtitle preview.",
-                    recovery: "No subtitle was added; check the subtitle file and try again.",
-                    error: error
-                )
                 addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the external subtitle preview.",
+                        recovery: "No subtitle was added; check the subtitle file and try again.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: addSubtitleButton
+                )
                 clearPendingChange()
                 completion(nil)
             }
@@ -1667,10 +1728,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 try payload.validateForReview()
                 completion(payload)
             } catch {
-                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not use the reviewed subtitle cleanup.",
-                    recovery: "No subtitle was added; reopen the preview and review it again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not use the reviewed subtitle cleanup.",
+                        recovery: "No subtitle was added; reopen the preview and review it again.",
+                        error: error
+                    ),
+                    in: self.impactLabel
                 )
                 self.clearPendingChange()
                 completion(nil)
@@ -1742,11 +1806,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 self.runButton.toolTip =
                     "Remux retained tracks, verify the new MKV, then commit it."
             } catch {
-                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not prepare track removal.",
-                    recovery:
-                        "The original is unchanged; revise the selected tracks and try again.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare track removal.",
+                        recovery:
+                            "The original is unchanged; revise the selected tracks and try again.",
+                        error: error
+                    ),
+                    in: self.impactLabel,
+                    returningFocusTo: isEnglishCleanup
+                        ? self.cleanMKVButton : self.removeTracksButton
                 )
                 self.clearPendingChange()
             }
@@ -1886,12 +1955,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 refreshOpenQueue()
                 await model.runAutomaticQueueCycleIfEligible()
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not add this workflow to the queue.",
-                    recovery: "Nothing was queued; review the destination and try again.",
-                    error: error
-                )
                 restoreEditingControls(for: asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not add this workflow to the queue.",
+                        recovery: "Nothing was queued; review the destination and try again.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: queueButton
+                )
             }
         }
     }
@@ -2025,11 +2098,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     retryingQueueJobID: job.id
                 )
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not restore the queued input.",
-                    recovery:
-                        "The queued job remains saved; choose Review Again after checking the file.",
-                    error: error
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not restore the queued input.",
+                        recovery:
+                            "The queued job remains saved; choose Review Again after checking the file.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: queueButton
                 )
             }
         }
@@ -2039,19 +2116,30 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.reloadData()
         switch model.state {
         case .ready:
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = model.assets.isEmpty ? "Ready" : "Inspection complete"
         case .discovering:
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = "Finding media files…"
         case .inspecting(let filename):
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = "Inspecting \(filename)…"
         case .executing(let message):
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = message
         case .completed(let message):
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = message
         case .completedWithWarnings(let message):
+            lastAnnouncedModelFailure = nil
             statusLabel.stringValue = message
         case .failed(let message):
-            statusLabel.stringValue = message
+            if lastAnnouncedModelFailure == message || statusLabel.stringValue == message {
+                statusLabel.stringValue = message
+            } else {
+                AccessibleStatusPresentation.present(message, in: statusLabel)
+            }
+            lastAnnouncedModelFailure = message
         }
         if tableView.selectedRow >= model.assets.count {
             tableView.deselectAll(nil)

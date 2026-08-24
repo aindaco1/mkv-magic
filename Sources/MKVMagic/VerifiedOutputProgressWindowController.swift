@@ -162,7 +162,6 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
     }
 
     private func setStatus(_ message: String) {
-        statusLabel.stringValue = message
-        NSAccessibility.post(element: statusLabel, notification: .valueChanged)
+        AccessibleStatusPresentation.present(message, in: statusLabel)
     }
 }

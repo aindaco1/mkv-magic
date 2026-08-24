@@ -85,7 +85,9 @@ final class TrackRemovalViewController: NSViewController {
     private let previewButton = NSButton(
         title: "Preview Removal", target: nil, action: nil)
 
-    var preferredInitialFirstResponder: NSView { checkboxes.first ?? previewButton }
+    var preferredInitialFirstResponder: NSView {
+        checkboxes.first(where: \.isEnabled) ?? previewButton
+    }
 
     init(asset: MediaAsset, mode: TrackRemovalSheetMode) {
         tracks = asset.tracks.filter { $0.kind != .attachment }
@@ -212,10 +214,14 @@ final class TrackRemovalViewController: NSViewController {
             statusLabel.stringValue = ""
             onPreview?(removal)
         } catch {
-            statusLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not prepare track removal.",
-                recovery: "No tracks were removed; revise the selection and try again.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare track removal.",
+                    recovery: "No tracks were removed; revise the selection and try again.",
+                    error: error
+                ),
+                in: statusLabel,
+                returningFocusTo: preferredInitialFirstResponder
             )
         }
     }

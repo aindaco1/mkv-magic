@@ -195,6 +195,7 @@ final class EncodingBenchmarkViewController: NSViewController {
         statusLabel.stringValue = "Creating and encoding a private synthetic clip…"
         task = Task { @MainActor [weak self] in
             guard let self else { return }
+            var failureMessage: String?
             do {
                 let report = try await onRun()
                 self.report = report
@@ -206,7 +207,7 @@ final class EncodingBenchmarkViewController: NSViewController {
             } catch is CancellationError {
                 statusLabel.stringValue = "Encoding test cancelled; previous recommendation kept."
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failureMessage = UserFacingErrorPresentation.message(
                     failure: "Could not complete the encoding test.",
                     recovery: "The previous recommendation is unchanged; try the test again.",
                     error: error
@@ -214,6 +215,13 @@ final class EncodingBenchmarkViewController: NSViewController {
             }
             task = nil
             setRunning(false)
+            if let failureMessage {
+                AccessibleStatusPresentation.present(
+                    failureMessage,
+                    in: statusLabel,
+                    returningFocusTo: runButton
+                )
+            }
         }
     }
 

@@ -1638,6 +1638,7 @@ final class AppPolicyTests: XCTestCase {
                     && $0.contains("Details: simulated persistence failure")
             }
         )
+        XCTAssertTrue(controller.window?.firstResponder === table)
     }
 
     func testUserFacingErrorPresentationIsActionableSingleLineAndBounded() {
@@ -1659,6 +1660,87 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(message.contains("\t"))
         XCTAssertLessThanOrEqual(detail.count, UserFacingErrorPresentation.maximumDetailCharacters)
         XCTAssertTrue(detail.hasSuffix("…"))
+    }
+
+    @MainActor
+    func testAccessibleStatusPresentationAnnouncesAndReturnsFocusToRecovery() {
+        let status = NSTextField(labelWithString: "")
+        let retry = NSButton(title: "Try Again", target: nil, action: nil)
+        let content = NSView()
+        content.addSubview(status)
+        content.addSubview(retry)
+        let window = NSWindow(contentViewController: NSViewController())
+        window.contentView = content
+        window.makeFirstResponder(nil)
+        var postedElement: AnyObject?
+        var postedNotification: NSAccessibility.Notification?
+
+        AccessibleStatusPresentation.present(
+            "The action failed safely. Try again.",
+            in: status,
+            returningFocusTo: retry,
+            postNotification: { element, notification in
+                postedElement = element as AnyObject
+                postedNotification = notification
+            }
+        )
+
+        XCTAssertEqual(status.stringValue, "The action failed safely. Try again.")
+        XCTAssertTrue(window.firstResponder === retry)
+        XCTAssertTrue(postedElement === status)
+        XCTAssertEqual(postedNotification, .valueChanged)
+    }
+
+    @MainActor
+    func testWorkflowValidationReturnsFocusToTheInvalidName() throws {
+        let controller = WorkflowWindowController(
+            workflows: [
+                SavedWorkflow(
+                    name: "Temporary workflow",
+                    steps: [SavedWorkflowStep(action: .removeNonEnglishSubtitles)]
+                )
+            ],
+            hasSelectedAsset: true,
+            onSave: { _ in XCTFail("Invalid workflow must not be saved") },
+            onUse: { _ in XCTFail("Invalid workflow must not be previewed") }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        let workflows = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first {
+                $0.accessibilityLabel() == "Saved workflows"
+            }
+        )
+        workflows.reloadData()
+        XCTAssertEqual(workflows.numberOfRows, 1)
+        workflows.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        XCTAssertEqual(workflows.selectedRow, 0)
+        let name = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Workflow name"
+            }
+        )
+        name.stringValue = "   "
+        let nameDelegate = try XCTUnwrap(name.delegate)
+        nameDelegate.controlTextDidChange?(
+            Notification(name: NSControl.textDidChangeNotification, object: name)
+        )
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains(
+                "Unsaved changes"
+            )
+        )
+        let save = try XCTUnwrap(buttons(in: content).first { $0.title == "Save" })
+        let action = try XCTUnwrap(save.action)
+
+        XCTAssertTrue(NSApp.sendAction(action, to: save.target, from: save))
+
+        XCTAssertTrue(window.firstResponder === name.currentEditor())
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains(
+                "Give the workflow a name before saving."
+            )
+        )
     }
 
     @MainActor

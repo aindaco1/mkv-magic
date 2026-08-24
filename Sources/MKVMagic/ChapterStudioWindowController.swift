@@ -1301,7 +1301,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
 
     private func showError(_ message: String) {
         statusLabel.textColor = .systemRed
-        statusLabel.stringValue = message
+        AccessibleStatusPresentation.present(
+            message,
+            in: statusLabel,
+            returningFocusTo: outlineView
+        )
     }
 
     private func showError(failure: String, recovery: String, error: Error) {

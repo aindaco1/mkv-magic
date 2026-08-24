@@ -367,6 +367,14 @@ reintroduced. This is a source-level and automated-UI pass, not observed
 VoiceOver, localization, or real-failure acceptance. See
 [docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md](docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md).
 
+The accessible-failure continuation routes dynamic AppKit failures through one
+presenter that updates visible text, posts a native value-change notification,
+and returns focus to an enabled recovery control when the failure has one.
+Model failures are deduplicated so routine refreshes do not repeat the same
+announcement. The pass also fixes live workflow renaming so its selected row
+and subsequent Save validation remain intact. See
+[docs/releases/M8_ACCESSIBLE_FAILURE_RECOVERY_SLICE.md](docs/releases/M8_ACCESSIBLE_FAILURE_RECOVERY_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

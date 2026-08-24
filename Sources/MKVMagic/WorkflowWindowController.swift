@@ -49,11 +49,13 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
     private let statusLabel = NSTextField(labelWithString: "")
     private let duplicateButton = NSButton(title: "Duplicate", target: nil, action: nil)
     private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
+    private let importButton = NSButton(title: "Import…", target: nil, action: nil)
     private let exportButton = NSButton(title: "Export…", target: nil, action: nil)
     private let addStepButton = NSPopUpButton(frame: .zero, pullsDown: true)
     private let removeStepButton = NSButton(title: "Remove Step", target: nil, action: nil)
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
+    private let saveButton = NSButton(title: "Save", target: nil, action: nil)
     private let useButton = NSButton(title: "Save & Preview", target: nil, action: nil)
 
     var preferredInitialFirstResponder: NSView { workflowTable }
@@ -214,13 +216,14 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         stepButtons.alignment = .centerY
         stepButtons.spacing = 8
 
-        let importButton = NSButton(
-            title: "Import…", target: self, action: #selector(importWorkflow))
+        importButton.target = self
+        importButton.action = #selector(importWorkflow)
         importButton.setAccessibilityHelp("Choose one portable MKV Magic workflow to import.")
         exportButton.target = self
         exportButton.action = #selector(exportWorkflow)
         exportButton.setAccessibilityHelp("Export the selected workflow as a portable local file.")
-        let saveButton = NSButton(title: "Save", target: self, action: #selector(saveLibrary))
+        saveButton.target = self
+        saveButton.action = #selector(saveLibrary)
         saveButton.keyEquivalent = "s"
         saveButton.keyEquivalentModifierMask = [.command]
         saveButton.setAccessibilityHelp("Save all workflow changes privately on this Mac.")
@@ -335,6 +338,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         else { return }
         workflows[index].name = nameField.stringValue
         workflowTable.reloadData()
+        workflowTable.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
         markUnsaved()
     }
 
@@ -451,12 +455,19 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         if let workflow = selectedWorkflow {
             let trimmedName = workflow.name.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !trimmedName.isEmpty else {
-                statusLabel.stringValue = "Give the workflow a name before saving."
-                nameField.becomeFirstResponder()
+                AccessibleStatusPresentation.present(
+                    "Give the workflow a name before saving.",
+                    in: statusLabel,
+                    returningFocusTo: nameField
+                )
                 return
             }
             guard !thenUse || workflow.steps.contains(where: \.isEnabled) else {
-                statusLabel.stringValue = "Enable at least one step before previewing."
+                AccessibleStatusPresentation.present(
+                    "Enable at least one step before previewing.",
+                    in: statusLabel,
+                    returningFocusTo: stepTable
+                )
                 return
             }
             if let index = selectedWorkflowIndex { workflows[index].name = trimmedName }
@@ -479,12 +490,16 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
                     statusLabel.stringValue = "Saved. Inspect a Matroska file to preview it."
                 }
             } catch {
-                statusLabel.stringValue = UserFacingErrorPresentation.message(
-                    failure: "Could not save workflows.",
-                    recovery: "Unsaved changes remain open; try Save again.",
-                    error: error
-                )
                 setEditingEnabled(true)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not save workflows.",
+                        recovery: "Unsaved changes remain open; try Save again.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: thenUse ? useButton : saveButton
+                )
             }
         }
     }
@@ -512,10 +527,14 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
                 statusLabel.stringValue = "Imported. Save to keep it."
             }
         } catch {
-            statusLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not import that workflow.",
-                recovery: "Nothing was added; choose another MKV Magic workflow file.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not import that workflow.",
+                    recovery: "Nothing was added; choose another MKV Magic workflow file.",
+                    error: error
+                ),
+                in: statusLabel,
+                returningFocusTo: importButton
             )
         }
     }
@@ -534,10 +553,14 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             try JSONSavedWorkflowStore.writePortableFile(workflow, to: url)
             statusLabel.stringValue = "Exported \(url.lastPathComponent)."
         } catch {
-            statusLabel.stringValue = UserFacingErrorPresentation.message(
-                failure: "Could not export the workflow.",
-                recovery: "The saved workflow is unchanged; choose another destination.",
-                error: error
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not export the workflow.",
+                    recovery: "The saved workflow is unchanged; choose another destination.",
+                    error: error
+                ),
+                in: statusLabel,
+                returningFocusTo: exportButton
             )
         }
     }

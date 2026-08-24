@@ -22,6 +22,18 @@ if rg -n "$custom_motion_pattern" Sources/MKVMagic --glob '*.swift' >&2; then
     failure=1
 fi
 
+if rg -n '\.(stringValue|string) = UserFacingErrorPresentation\.message' \
+    Sources/MKVMagic --glob '*.swift' >&2; then
+    echo "user-facing AppKit failures must use AccessibleStatusPresentation" >&2
+    failure=1
+fi
+
+if rg -n 'NSAccessibility\.post' Sources/MKVMagic --glob '*.swift' \
+    --glob '!AccessibleStatusPresentation.swift' >&2; then
+    echo "accessibility status notifications must use the shared presenter" >&2
+    failure=1
+fi
+
 if [[ "$failure" -ne 0 ]]; then
     exit 1
 fi
