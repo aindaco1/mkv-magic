@@ -119,6 +119,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let joinButton = NSButton(title: "Join Files…", target: nil, action: nil)
     private let queueButton = NSButton(title: "Add to Queue", target: nil, action: nil)
     private let runButton = NSButton(title: "Verify & Run", target: nil, action: nil)
+    private let chooseFilesButton = NSButton(title: "Choose Files…", target: nil, action: nil)
     private var pendingChange: PendingChange?
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
@@ -143,6 +144,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var losslessJoinProgressWindowController: VerifiedOutputProgressWindowController?
     private var losslessJoinTask: Task<Void, Never>?
     private var verifiedRunTask: Task<Void, Never>?
+
+    var preferredInitialFirstResponder: NSView { chooseFilesButton }
 
     init(model: AppModel) {
         self.model = model
@@ -208,6 +211,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         joinButton.isBordered = false
         joinButton.font = .systemFont(ofSize: NSFont.systemFontSize)
         joinButton.isEnabled = false
+        joinButton.setAccessibilityHelp(
+            "Review how two or more inspected Matroska files will be joined."
+        )
         let stack = NSStackView(views: [
             title,
             sidebarLabel("Quick Actions", symbol: "wand.and.stars"),
@@ -268,6 +274,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         button.alignment = .left
         button.isBordered = false
         button.font = .systemFont(ofSize: NSFont.systemFontSize)
+        button.setAccessibilityHelp("Open \(title) in a separate window.")
         return button
     }
 
@@ -280,8 +287,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         )
         help.textColor = .secondaryLabelColor
 
-        let choose = NSButton(title: "Choose Files…", target: self, action: #selector(chooseFiles))
-        choose.bezelStyle = .rounded
+        chooseFilesButton.target = self
+        chooseFilesButton.action = #selector(chooseFiles)
+        chooseFilesButton.bezelStyle = .rounded
+        chooseFilesButton.setAccessibilityLabel("Choose media files or folders")
+        chooseFilesButton.setAccessibilityHelp(
+            "Open one or more media files or folders for local inspection."
+        )
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("asset"))
         column.title = "Files"
@@ -291,19 +303,23 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.delegate = self
         tableView.rowHeight = 32
         tableView.allowsEmptySelection = false
+        tableView.setAccessibilityLabel("Inspected media files")
+        tableView.setAccessibilityHelp(
+            "Choose a file to inspect its tracks and enable applicable actions."
+        )
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
 
-        let stack = NSStackView(views: [heading, help, choose, scroll])
+        let stack = NSStackView(views: [heading, help, chooseFilesButton, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 12
         stack.edgeInsets = NSEdgeInsets(top: 32, left: 28, bottom: 24, right: 28)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
-        choose.setContentHuggingPriority(.required, for: .horizontal)
+        chooseFilesButton.setContentHuggingPriority(.required, for: .horizontal)
 
         let container = NSView()
         container.addSubview(stack)
@@ -327,6 +343,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         inspectorText.isHorizontallyResizable = false
         inspectorText.textContainer?.widthTracksTextView = true
         inspectorText.string = "Select an inspected file to see its tracks."
+        inspectorText.setAccessibilityLabel("Selected media details")
+        inspectorText.setAccessibilityHelp(
+            "Read-only container, track, chapter, attachment, tag, and warning details."
+        )
         let scroll = NSScrollView()
         scroll.documentView = inspectorText
         scroll.hasVerticalScroller = true
@@ -334,6 +354,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
         let titleLabel = NSTextField(labelWithString: "Segment title")
         segmentTitleField.placeholderString = "Leave empty to remove"
+        segmentTitleField.setAccessibilityLabel("Segment title")
+        segmentTitleField.setAccessibilityHelp(
+            "Edit the Matroska segment title, or leave it empty to remove the title."
+        )
         previewButton.target = self
         previewButton.action = #selector(previewChange)
         previewButton.isEnabled = false
@@ -400,6 +424,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private func makeFooter() -> NSView {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingMiddle
+        statusLabel.setAccessibilityLabel("Application status")
+        impactLabel.setAccessibilityLabel("Plan impact")
+        impactLabel.setAccessibilityHelp(
+            "Summarizes whether the reviewed change copies, remuxes, or transcodes media."
+        )
         impactLabel.font = .systemFont(ofSize: 13, weight: .medium)
         runButton.isEnabled = false
         runButton.keyEquivalent = "\r"
@@ -408,6 +437,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         queueButton.isEnabled = false
         queueButton.target = self
         queueButton.action = #selector(addPendingWorkflowToQueue)
+        queueButton.setAccessibilityHelp(
+            "Save the reviewed workflow as waiting production-queue work."
+        )
+        runButton.setAccessibilityHelp(
+            "Choose a destination, create one verified output, and preserve the original."
+        )
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -432,7 +467,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         return container
     }
 
-    @objc private func chooseFiles() {
+    @objc func chooseFiles() {
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = true

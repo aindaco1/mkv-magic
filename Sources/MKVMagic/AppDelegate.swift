@@ -18,15 +18,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
-        NSApp.mainMenu = makeMainMenu()
 
         let content = MainViewController(model: model)
+        NSApp.mainMenu = makeMainMenu(openTarget: content)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic"
         window.setContentSize(NSSize(width: 1080, height: 680))
         window.minSize = NSSize(width: 820, height: 520)
         window.center()
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = content.preferredInitialFirstResponder
         let controller = NSWindowController(window: window)
         windowController = controller
         controller.showWindow(nil)
@@ -58,7 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateController.checkForUpdates()
     }
 
-    private func makeMainMenu() -> NSMenu {
+    private func makeMainMenu(openTarget: MainViewController) -> NSMenu {
         let main = NSMenu()
         let appItem = NSMenuItem()
         main.addItem(appItem)
@@ -86,7 +87,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let fileItem = NSMenuItem()
         main.addItem(fileItem)
         let fileMenu = NSMenu(title: "File")
-        fileMenu.addItem(withTitle: "Open…", action: nil, keyEquivalent: "o")
+        let open = NSMenuItem(
+            title: "Open…",
+            action: #selector(MainViewController.chooseFiles),
+            keyEquivalent: "o"
+        )
+        open.target = openTarget
+        fileMenu.addItem(open)
         fileMenu.addItem(.separator())
         fileMenu.addItem(
             withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")

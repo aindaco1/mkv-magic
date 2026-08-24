@@ -28,6 +28,7 @@ final class QueueWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 840, height: 520))
         window.minSize = NSSize(width: 700, height: 420)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = content.preferredInitialFirstResponder
         super.init(window: window)
         window.center()
     }
@@ -60,6 +61,8 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+
+    var preferredInitialFirstResponder: NSView { tableView }
 
     init(
         snapshot: MediaQueueSnapshot,
@@ -112,6 +115,10 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         tableView.rowHeight = 28
         tableView.allowsEmptySelection = true
         tableView.usesAlternatingRowBackgroundColors = true
+        tableView.setAccessibilityLabel("Production queue jobs")
+        tableView.setAccessibilityHelp(
+            "Select a job to hold, resume, review, cancel, or reorder it."
+        )
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
@@ -131,6 +138,15 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             button.bezelStyle = .rounded
         }
         statusLabel.textColor = .secondaryLabelColor
+        statusLabel.setAccessibilityLabel("Production queue status")
+        pauseButton.setAccessibilityHelp(
+            "Pause or resume new automatic starts without stopping active work."
+        )
+        cancelButton.setAccessibilityHelp(
+            "Cancel the selected pending job or request cancellation of active work."
+        )
+        moveUpButton.setAccessibilityHelp("Move the selected pending job one place earlier.")
+        moveDownButton.setAccessibilityHelp("Move the selected pending job one place later.")
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -289,6 +305,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusLabel.stringValue = QueuePresentation.summary(snapshot)
         guard let job = selectedJob else {
             primaryButton.isEnabled = false
+            primaryButton.setAccessibilityHelp("Select a queue job to choose an action.")
             cancelButton.isEnabled = false
             moveUpButton.isEnabled = false
             moveDownButton.isEnabled = false
@@ -298,15 +315,25 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         case .waiting:
             primaryButton.title = "Hold"
             primaryButton.isEnabled = true
+            primaryButton.setAccessibilityHelp(
+                "Hold the selected waiting job so it cannot start automatically."
+            )
         case .held:
             primaryButton.title = "Resume"
             primaryButton.isEnabled = true
+            primaryButton.setAccessibilityHelp(
+                "Return the selected held job to the automatic-start queue."
+            )
         case .failed, .needsReview:
             primaryButton.title = "Review Again…"
             primaryButton.isEnabled = true
+            primaryButton.setAccessibilityHelp(
+                "Reopen the selected job and require a fresh plan review before retry."
+            )
         default:
             primaryButton.title = "Hold"
             primaryButton.isEnabled = false
+            primaryButton.setAccessibilityHelp("No primary action is available for this job.")
         }
         cancelButton.isEnabled = [.waiting, .held, .running, .failed, .needsReview].contains(
             job.state

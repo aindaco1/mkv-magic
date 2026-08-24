@@ -65,6 +65,25 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(window.minSize.width, 820)
         XCTAssertEqual(window.minSize.height, 520)
         XCTAssertTrue(window.contentViewController is MainViewController)
+        let openItem = try XCTUnwrap(
+            NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "File" }?
+                .item(withTitle: "Open…")
+        )
+        XCTAssertEqual(openItem.keyEquivalent, "o")
+        XCTAssertEqual(openItem.action, #selector(MainViewController.chooseFiles))
+        XCTAssertTrue(openItem.target === window.contentViewController)
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Choose media files or folders"
+        )
+        let accessibilityLabels = descendants(in: contentView).compactMap {
+            $0.accessibilityLabel()
+        }
+        XCTAssertTrue(accessibilityLabels.contains("Inspected media files"))
+        XCTAssertTrue(accessibilityLabels.contains("Selected media details"))
+        XCTAssertTrue(accessibilityLabels.contains("Segment title"))
+        XCTAssertTrue(accessibilityLabels.contains("Application status"))
+        XCTAssertTrue(accessibilityLabels.contains("Plan impact"))
         await delegate.waitForInitialQueueCycle()
         let queueSnapshot = try await queueStore.load()
         XCTAssertTrue(queueSnapshot.jobs.isEmpty)
@@ -1444,6 +1463,8 @@ final class AppPolicyTests: XCTestCase {
         let table = try XCTUnwrap(
             descendants(in: content).compactMap { $0 as? NSTableView }.first
         )
+        XCTAssertEqual(table.accessibilityLabel(), "Production queue jobs")
+        XCTAssertTrue(window.initialFirstResponder === table)
         XCTAssertEqual(table.numberOfRows, 7)
         XCTAssertEqual(
             table.tableColumns.map(\.title),
@@ -1481,6 +1502,10 @@ final class AppPolicyTests: XCTestCase {
         )
         let controls = buttons(in: content)
         XCTAssertNotNil(controls.first { $0.title == "Pause Automatic Starts" })
+        XCTAssertTrue(
+            controls.first { $0.title == "Pause Automatic Starts" }?.accessibilityHelp()?
+                .contains("without stopping active work") == true
+        )
         let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
         XCTAssertTrue(labels.contains { $0.contains("Add to Queue saves a reviewed workflow") })
         XCTAssertTrue(
@@ -1771,6 +1796,15 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 620)
         XCTAssertEqual(window.minSize.height, 420)
+        let table = try XCTUnwrap(
+            descendants(in: contentView).compactMap { $0 as? NSTableView }.first
+        )
+        let detail = try XCTUnwrap(
+            descendants(in: contentView).compactMap { $0 as? NSTextView }.first
+        )
+        XCTAssertEqual(table.accessibilityLabel(), "Verified job history")
+        XCTAssertEqual(detail.accessibilityLabel(), "Selected job progress")
+        XCTAssertTrue(window.initialFirstResponder === table)
     }
 
     @MainActor
@@ -1785,6 +1819,8 @@ final class AppPolicyTests: XCTestCase {
         let exportFrame = export.convert(export.bounds, to: contentView)
 
         XCTAssertTrue(export.isEnabled)
+        XCTAssertEqual(export.accessibilityLabel(), "Export Privacy-Safe Report")
+        XCTAssertTrue(export.accessibilityHelp()?.contains("without media names or paths") == true)
         XCTAssertGreaterThanOrEqual(exportFrame.minY, 0)
         XCTAssertLessThanOrEqual(exportFrame.maxY, contentView.bounds.maxY)
         XCTAssertTrue(labels.contains { $0.contains("excludes filenames, paths, titles") })
@@ -2027,6 +2063,18 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(text.contains("No redundant English SDH subtitle tracks were found."))
         XCTAssertTrue(text.contains("Not included in this run."))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
+        let primary = try XCTUnwrap(buttons(in: content).first { $0.title == "Use This Plan" })
+        let cancel = try XCTUnwrap(buttons(in: content).first { $0.title == "Cancel" })
+        XCTAssertEqual(primary.keyEquivalent, "\r")
+        XCTAssertEqual(cancel.keyEquivalent, "\u{1b}")
+        XCTAssertTrue(window.initialFirstResponder === primary)
+        let accessibilityLabels = descendants(in: content).compactMap {
+            $0.accessibilityLabel()
+        }
+        XCTAssertTrue(accessibilityLabels.contains("Workflow and source"))
+        XCTAssertTrue(accessibilityLabels.contains("Encoding impact"))
+        XCTAssertTrue(accessibilityLabels.contains("Workflow step outcomes"))
+        XCTAssertTrue(accessibilityLabels.contains("Source safety"))
 
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_WORKFLOW_REVIEW_CAPTURE"

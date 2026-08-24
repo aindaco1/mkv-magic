@@ -29,11 +29,13 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
         )
         context.textColor = .secondaryLabelColor
         context.lineBreakMode = .byTruncatingMiddle
+        context.setAccessibilityLabel("Workflow and source")
 
         let impact = NSTextField(
             wrappingLabelWithString: WorkflowPlanReviewPresentation.impactSummary(for: preview)
         )
         impact.font = .systemFont(ofSize: 13, weight: .medium)
+        impact.setAccessibilityLabel("Encoding impact")
 
         let outcomeStack = WorkflowOutcomeStackView()
         outcomeStack.orientation = .vertical
@@ -48,6 +50,10 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
         scroll.documentView = outcomeStack
         scroll.hasVerticalScroller = true
         scroll.borderType = .bezelBorder
+        scroll.setAccessibilityLabel("Workflow step outcomes")
+        scroll.setAccessibilityHelp(
+            "Lists each enabled, already satisfied, or disabled workflow card."
+        )
 
         let safety = NSTextField(
             wrappingLabelWithString: preview.compiledWorkflow == nil
@@ -55,6 +61,7 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
                 : "MKV Magic will create and verify one new MKV. The source file will not be changed."
         )
         safety.textColor = .secondaryLabelColor
+        safety.setAccessibilityLabel("Source safety")
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         let primary = NSButton(
@@ -63,6 +70,13 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
             action: #selector(accept)
         )
         primary.keyEquivalent = "\r"
+        primary.setAccessibilityHelp(
+            preview.compiledWorkflow == nil
+                ? "Close this review without creating an output."
+                : "Accept this exact plan and enable Verify and Run."
+        )
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityHelp("Close this review without accepting the plan.")
         if preview.compiledWorkflow == nil { cancel.isHidden = true }
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -91,6 +105,7 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
             outcomeStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
             buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        panel.initialFirstResponder = primary
     }
 
     @available(*, unavailable)

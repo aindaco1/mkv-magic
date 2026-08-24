@@ -14,6 +14,7 @@ final class HistoryWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 760, height: 560))
         window.minSize = NSSize(width: 620, height: 420)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = content.preferredInitialFirstResponder
         super.init(window: window)
         window.center()
     }
@@ -36,6 +37,8 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         action: nil
     )
     private let exportStatus = NSTextField(labelWithString: "")
+
+    var preferredInitialFirstResponder: NSView { tableView }
 
     init(
         records: [MediaJobRecord],
@@ -83,6 +86,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableView.rowHeight = 28
         tableView.allowsEmptySelection = false
         tableView.usesAlternatingRowBackgroundColors = true
+        tableView.setAccessibilityLabel("Verified job history")
+        tableView.setAccessibilityHelp(
+            "Choose a job to read its sanitized execution progress."
+        )
         let tableScroll = NSScrollView()
         tableScroll.documentView = tableView
         tableScroll.hasVerticalScroller = true
@@ -94,6 +101,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         detailText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         detailText.textContainerInset = NSSize(width: 8, height: 8)
         detailText.string = HistoryPresentation.emptyDetail
+        detailText.setAccessibilityLabel("Selected job progress")
+        detailText.setAccessibilityHelp(
+            "Read-only ordered stages and sanitized messages for the selected job."
+        )
         let detailScroll = NSScrollView()
         detailScroll.documentView = detailText
         detailScroll.hasVerticalScroller = true
@@ -103,8 +114,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         exportButton.action = #selector(exportPrivacySafeReport)
         exportButton.isEnabled = onExport != nil
         exportButton.setAccessibilityLabel("Export Privacy-Safe Report")
+        exportButton.setAccessibilityHelp(
+            "Choose a local destination for a bounded report without media names or paths."
+        )
         exportStatus.textColor = .secondaryLabelColor
         exportStatus.lineBreakMode = .byTruncatingMiddle
+        exportStatus.setAccessibilityLabel("Report export status")
         let exportRow = NSStackView(views: [exportButton, exportStatus])
         exportRow.orientation = .horizontal
         exportRow.spacing = 10

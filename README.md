@@ -322,6 +322,15 @@ host name, timestamp, or user file. The optional 15 ms p95 budgets are an early
 regression tripwire, not a claim of physical Intel acceptance. See
 [docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md](docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md).
 
+The main File menu now routes **Command-O** to the same local file/folder
+chooser as the visible button. The main window, Queue, History, and saved-
+workflow plan review set an intentional first keyboard target; plan review uses
+Return to accept and Escape to cancel. Their primary lists, read-only details,
+impact/source-safety text, dynamic queue actions, and status fields now expose
+explicit VoiceOver names and concise help. These native AppKit regressions are a
+baseline, not a claimed manual keyboard-only or VoiceOver walkthrough. See
+[docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

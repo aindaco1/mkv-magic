@@ -650,6 +650,14 @@ MKVMagic
 - Inspector: media tracks, properties, warnings, and advanced settings.
 - Persistent bottom summary: output, `0/1 video encodes`, estimated time/size, Verify & Run.
 
+The main File menu's **Command-O** opens the same bounded local chooser as the
+visible file button. Main, Queue, History, and saved-workflow review windows set
+an intentional initial keyboard target. Their core lists, details, impact and
+safety summaries, dynamic actions, and status fields expose explicit VoiceOver
+names and help; plan review uses Return to accept and Escape to cancel. These
+contracts have AppKit regressions, while a packaged manual keyboard/VoiceOver
+walkthrough and the rest of the app surface remain M8 acceptance work.
+
 The chapter editor is a dedicated window or workspace with a synchronized outline/table, timeline, thumbnails, analysis suggestions, and inspector.
 
 ### 8.4 Bundled tools
@@ -1246,6 +1254,14 @@ current 10-logical-processor arm64 development Mac, the first observed standard
 run measured 0.480 ms p95 per workflow compilation and 1.396 ms p95 per queue
 schedule. These observations do not claim M1-reference, Intel, UI rendering,
 private-corpus, launch/memory, cancellation, transcode, or soak acceptance.
+
+The first keyboard/VoiceOver baseline fixes the previously unbound Command-O
+menu item and adds intentional focus, Return/Escape review controls, and
+explicit accessibility names/help across the main, Queue, History, and saved-
+workflow review windows. Those windows use native AppKit and introduce no custom
+motion. Automated accessibility-tree checks are not manual VoiceOver, keyboard-
+only, contrast, reduced-motion, localization, or every-window acceptance; those
+broader passes remain open.
 
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
