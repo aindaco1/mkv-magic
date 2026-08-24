@@ -1106,8 +1106,8 @@ of the portable recipe, and fuses it with granular cleanup and title removal in
 one verified output transaction. A dependent subtitle text-cleanup card now
 reuses the deterministic cue review and feeds only accepted changes into that
 same remux. The review is ephemeral and both the temporary and committed MKV
-must pass extracted SRT or ASS/SSA payload comparison. Broader conditions, queue
-execution, and filename cleanup remain open.
+must pass extracted SRT or ASS/SSA payload comparison. Broader conditions and
+filename cleanup remain open.
 
 The production-queue persistence and scheduling foundation is implemented as a
 separate contract from sanitized History. A private versioned document stores
@@ -1120,9 +1120,24 @@ cancelling jobs to **Needs Review** rather than restarting them. The pure
 scheduler preserves queue order, admits at most one video-heavy job, separately
 bounds audio-heavy and zero-encode lightweight work, starts only one lightweight
 job on battery, and starts nothing
-under serious thermal pressure or while paused. AppKit controls, bookmark
-resolution, executor admission/cancellation, and retry re-planning remain open;
-this foundation alone is not a user-operable production queue.
+under serious thermal pressure or while paused.
+
+A native queue execution bridge now persists each saved-workflow plan and fresh,
+narrow input/destination bookmarks before **Verify & Run** starts any media tool.
+It shows ordered jobs, resource class, state, and attempts; supports pending
+hold/resume/reorder/cancel; cooperatively cancels the active subprocess tree; and
+requires failed or interrupted work to resolve its source, re-inspect, recompile,
+and pass the plan review again before retry. A retry atomically replaces stale
+bookmarks, destination, workflow snapshot, and reviewed plan while preserving
+the job identity and attempt history. Queue recovery runs once per app launch,
+so opening or refreshing the window cannot reclassify current work as
+interrupted.
+
+Automatic executor admission remains open. The current explicit **Verify & Run**
+path starts immediately and is intentionally distinguished in the UI from the
+persisted pause for future automatic starts. Built-in quick actions, unattended
+batch startup, battery and thermal adapters, the Trash-after-verified-success
+queue option, and soak/physical-Intel acceptance also remain open.
 
 Deliverables:
 

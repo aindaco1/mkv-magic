@@ -1211,6 +1211,174 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    @MainActor
+    func testQueueRecoveryRunsOnceAndDoesNotReclassifyCurrentWork() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-queue-recovery-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try AppHistoryLocation.makeQueueStore(applicationSupportURL: root)
+        let model = AppModel(queueStoreFactory: { store })
+
+        let initialQueue = try await model.loadQueue()
+        XCTAssertTrue(initialQueue.jobs.isEmpty)
+        let now = Date()
+        let job = makeQueueJob(createdAt: now)
+        _ = try await store.append(job, at: now)
+        _ = try await store.transition(
+            jobID: job.id,
+            to: .running,
+            at: now,
+            reason: nil
+        )
+
+        let visibleQueue = try await model.loadQueue()
+        XCTAssertEqual(visibleQueue.jobs.only?.state, .running)
+    }
+
+    @MainActor
+    func testQueueWindowKeepsNativeControlsReadableAtMinimumSize() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let waiting = makeQueueJob(createdAt: base)
+        var running = makeQueueJob(createdAt: base, videoEncodes: 1)
+        var failed = makeQueueJob(createdAt: base, audioEncodes: 1)
+        try running.transition(to: .running, at: base)
+        try failed.transition(to: .running, at: base)
+        try failed.transition(to: .failed, at: base, reason: .executionFailed)
+        let snapshot = MediaQueueSnapshot(
+            jobs: [waiting, running, failed],
+            updatedAt: base
+        )
+        let controller = QueueWindowController(
+            snapshot: snapshot,
+            onSetPaused: { _ in snapshot },
+            onTransition: { _, _, _ in snapshot },
+            onReorder: { _ in snapshot },
+            onReview: { _ in }
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "MKV Magic Queue")
+        XCTAssertEqual(window.minSize, NSSize(width: 700, height: 420))
+        let table = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first
+        )
+        XCTAssertEqual(table.numberOfRows, 3)
+        XCTAssertEqual(
+            table.tableColumns.map(\.title),
+            ["#", "Workflow", "Input", "Work", "Status", "Tries"]
+        )
+        XCTAssertEqual(
+            (table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "1"
+        )
+        XCTAssertEqual(
+            (table.view(atColumn: 1, row: 0, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "Prepare for Jellyfin"
+        )
+        let controls = buttons(in: content)
+        XCTAssertNotNil(controls.first { $0.title == "Pause Automatic Starts" })
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains { $0.contains("Verify & Run remains an explicit start") })
+        XCTAssertEqual(QueuePresentation.stateLabel(running.state), "Running")
+        XCTAssertEqual(QueuePresentation.resourceLabel(failed.resourceClass), "Audio encode")
+        XCTAssertEqual(
+            QueuePresentation.summary(snapshot),
+            "1 active • 1 pending • 1 need review"
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Hold" }).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Cancel" }).isEnabled)
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+        XCTAssertFalse(try XCTUnwrap(controls.first { $0.title == "Hold" }).isEnabled)
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Cancel" }).isEnabled)
+        table.selectRowIndexes(IndexSet(integer: 2), byExtendingSelection: false)
+        XCTAssertTrue(
+            try XCTUnwrap(controls.first { $0.title == "Review Again…" }).isEnabled
+        )
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Cancel" }).isEnabled)
+
+        XCTAssertTrue(
+            QueueExecutionControl.shouldCancelActiveTask(
+                jobID: running.id,
+                transition: .cancelling,
+                activeJobID: running.id
+            )
+        )
+        XCTAssertFalse(
+            QueueExecutionControl.shouldCancelActiveTask(
+                jobID: waiting.id,
+                transition: .cancelling,
+                activeJobID: running.id
+            )
+        )
+        XCTAssertFalse(
+            QueueExecutionControl.shouldCancelActiveTask(
+                jobID: running.id,
+                transition: .failed,
+                activeJobID: running.id
+            )
+        )
+
+        for button in controls where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_QUEUE_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            window.setContentSize(NSSize(width: 840, height: 520))
+            content.layoutSubtreeIfNeeded()
+            try captureWindow(window: window, content: content, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testQueueWindowKeepsMutationFailureVisible() async throws {
+        struct ExpectedFailure: LocalizedError {
+            var errorDescription: String? { "simulated persistence failure" }
+        }
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        let snapshot = MediaQueueSnapshot(
+            jobs: [makeQueueJob(createdAt: base)],
+            updatedAt: base
+        )
+        let attempted = expectation(description: "queue mutation attempted")
+        let controller = QueueWindowController(
+            snapshot: snapshot,
+            onSetPaused: { _ in snapshot },
+            onTransition: { _, _, _ in
+                attempted.fulfill()
+                throw ExpectedFailure()
+            },
+            onReorder: { _ in snapshot },
+            onReview: { _ in }
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let table = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first
+        )
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+        let hold = try XCTUnwrap(buttons(in: content).first { $0.title == "Hold" })
+
+        hold.performClick(nil)
+        await fulfillment(of: [attempted], timeout: 1)
+        for _ in 0..<10 { await Task.yield() }
+
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains("Queue update failed: simulated persistence failure"))
+    }
+
     func testEncodingBenchmarkLocationSharesPrivateAppSupportDirectory() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-app-encoding-test-\(UUID().uuidString)",
@@ -3083,6 +3251,60 @@ final class AppPolicyTests: XCTestCase {
         content.cacheDisplay(in: bounds, to: representation)
         let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    @MainActor
+    private func captureWindow(window: NSWindow, content: NSView, at path: String) throws {
+        window.appearance = NSAppearance(named: .aqua)
+        content.wantsLayer = true
+        content.layer?.backgroundColor = NSColor.white.cgColor
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(nil)
+        window.displayIfNeeded()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        content.layoutSubtreeIfNeeded()
+        let bounds = content.bounds
+        let representation = try XCTUnwrap(content.bitmapImageRepForCachingDisplay(in: bounds))
+        content.cacheDisplay(in: bounds, to: representation)
+        let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
+        try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    private func makeQueueJob(
+        createdAt: Date,
+        videoEncodes: Int = 0,
+        audioEncodes: Int = 0
+    ) -> MediaQueueJob {
+        let workflow = SavedWorkflow(name: "Prepare for Jellyfin", steps: [])
+        let impact = PlanImpact(
+            videoEncodeCount: videoEncodes,
+            audioEncodeCount: audioEncodes,
+            copiesVideo: videoEncodes == 0
+        )
+        return MediaQueueJob(
+            createdAt: createdAt,
+            workflow: .saved(workflow),
+            inputs: [
+                MediaQueueFileReference(
+                    displayName: "Movie.mkv",
+                    securityScopedBookmark: Data([1, 2, 3])
+                )
+            ],
+            destinationDirectory: MediaQueueFileReference(
+                displayName: "Exports",
+                securityScopedBookmark: Data([4, 5, 6])
+            ),
+            outputDisplayName: "Movie — Prepared.mkv",
+            reviewedPlan: ExecutionPlan(
+                stages: [
+                    PlanStage(
+                        mechanism: videoEncodes > 0 ? .ffmpegEncode : .mkvMerge,
+                        summary: "Create one verified output"
+                    )
+                ],
+                impact: impact
+            )
+        )
     }
 }
 

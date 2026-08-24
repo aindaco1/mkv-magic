@@ -20,16 +20,89 @@ final class JobQueueTests: XCTestCase {
             at: base.addingTimeInterval(2),
             reason: .executionFailed
         )
-        try job.transition(
-            to: .waiting,
-            at: base.addingTimeInterval(3),
-            reason: .userAction
+        XCTAssertThrowsError(
+            try job.transition(
+                to: .waiting,
+                at: base.addingTimeInterval(3),
+                reason: .userAction
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .invalidTransition(from: .failed, to: .waiting)
+            )
+        }
+        try job.approveReplan(
+            workflow: job.workflow,
+            inputs: job.inputs,
+            destinationDirectory: job.destinationDirectory,
+            outputDisplayName: job.outputDisplayName,
+            sourceDisposition: job.sourceDisposition,
+            reviewedPlan: job.reviewedPlan,
+            at: base.addingTimeInterval(3)
         )
         try job.transition(to: .running, at: base.addingTimeInterval(4))
 
         XCTAssertEqual(job.attemptCount, 2)
         XCTAssertEqual(job.resourceClass, .videoHeavy)
         XCTAssertFalse(job.state.isFinished)
+    }
+
+    func testRetryRequiresACompleteFreshPlanAndBookmarkSet() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        var job = makeJob(id: id(1), createdAt: base, videoEncodes: 1)
+        let replacement = makeJob(id: id(2), createdAt: base, audioEncodes: 1)
+
+        XCTAssertThrowsError(
+            try job.approveReplan(
+                workflow: replacement.workflow,
+                inputs: replacement.inputs,
+                destinationDirectory: replacement.destinationDirectory,
+                outputDisplayName: replacement.outputDisplayName,
+                sourceDisposition: replacement.sourceDisposition,
+                reviewedPlan: replacement.reviewedPlan,
+                at: base
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .replanRequiresReviewState
+            )
+        }
+
+        try job.transition(to: .running, at: base)
+        try job.transition(to: .failed, at: base, reason: .executionFailed)
+        let beforeStaleReplan = job
+        XCTAssertThrowsError(
+            try job.approveReplan(
+                workflow: replacement.workflow,
+                inputs: replacement.inputs,
+                destinationDirectory: replacement.destinationDirectory,
+                outputDisplayName: "Must Not Leak.mkv",
+                sourceDisposition: .trashAfterVerifiedSuccess,
+                reviewedPlan: replacement.reviewedPlan,
+                at: base.addingTimeInterval(-1)
+            )
+        ) {
+            XCTAssertEqual($0 as? MediaQueueTransitionError, .timestampMovedBackward)
+        }
+        XCTAssertEqual(job, beforeStaleReplan)
+        try job.approveReplan(
+            workflow: replacement.workflow,
+            inputs: replacement.inputs,
+            destinationDirectory: replacement.destinationDirectory,
+            outputDisplayName: "Retried.mkv",
+            sourceDisposition: .trashAfterVerifiedSuccess,
+            reviewedPlan: replacement.reviewedPlan,
+            at: base.addingTimeInterval(1)
+        )
+
+        XCTAssertEqual(job.state, .waiting)
+        XCTAssertEqual(job.attemptCount, 1)
+        XCTAssertEqual(job.resourceClass, .audioHeavy)
+        XCTAssertEqual(job.outputDisplayName, "Retried.mkv")
+        XCTAssertEqual(job.sourceDisposition, .trashAfterVerifiedSuccess)
+        XCTAssertEqual(job.inputs, replacement.inputs)
     }
 
     func testInterruptedRunningAndCancellingJobsRequireReviewInsteadOfAutoRun() throws {
@@ -58,6 +131,39 @@ final class JobQueueTests: XCTestCase {
                 $0.events.last?.reason == .interruptedBeforeVerification
             }
         )
+    }
+
+    func testLateCancellationCanTruthfullyFinishAsVerifiedSuccess() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        var job = makeJob(id: id(1), createdAt: base)
+
+        try job.transition(to: .running, at: base.addingTimeInterval(1))
+        try job.transition(
+            to: .cancelling,
+            at: base.addingTimeInterval(2),
+            reason: .userAction
+        )
+        try job.transition(to: .succeeded, at: base.addingTimeInterval(3))
+
+        XCTAssertEqual(job.state, .succeeded)
+        XCTAssertEqual(job.attemptCount, 1)
+        XCTAssertTrue(job.state.isFinished)
+    }
+
+    func testSnapshotClampsOnlySubMillisecondClockSkew() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        var snapshot = MediaQueueSnapshot(
+            updatedAt: base.addingTimeInterval(0.0005)
+        )
+
+        try snapshot.setPaused(true, at: base)
+        XCTAssertEqual(snapshot.updatedAt, base.addingTimeInterval(0.0005))
+        XCTAssertThrowsError(
+            try snapshot.setPaused(false, at: base.addingTimeInterval(-0.001))
+        ) {
+            XCTAssertEqual($0 as? MediaQueueMutationError, .timestampMovedBackward)
+        }
+        XCTAssertTrue(snapshot.isPaused)
     }
 
     func testPendingReorderIsExactAndCannotSmuggleRunningOrDuplicateJobs() throws {

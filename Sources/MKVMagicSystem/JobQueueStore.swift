@@ -30,6 +30,17 @@ public protocol JobQueueManaging: JobQueuePersisting {
         reason: MediaQueueEventReason?
     ) async throws -> MediaQueueSnapshot
     @discardableResult
+    func approveReplan(
+        jobID: UUID,
+        workflow: MediaQueueWorkflowIntent,
+        inputs: [MediaQueueFileReference],
+        destinationDirectory: MediaQueueFileReference,
+        outputDisplayName: String,
+        sourceDisposition: MediaQueueSourceDisposition,
+        reviewedPlan: ExecutionPlan,
+        at timestamp: Date
+    ) async throws -> MediaQueueSnapshot
+    @discardableResult
     func reorderPending(_ orderedIDs: [UUID], at timestamp: Date) async throws
         -> MediaQueueSnapshot
     @discardableResult
@@ -101,6 +112,36 @@ public actor JSONJobQueueStore: JobQueueManaging {
                 to: state,
                 at: timestamp,
                 reason: reason
+            )
+        } catch MediaQueueMutationError.jobNotFound {
+            throw JobQueueStoreError.jobNotFound
+        }
+        try writeSnapshot(snapshot)
+        return snapshot
+    }
+
+    @discardableResult
+    public func approveReplan(
+        jobID: UUID,
+        workflow: MediaQueueWorkflowIntent,
+        inputs: [MediaQueueFileReference],
+        destinationDirectory: MediaQueueFileReference,
+        outputDisplayName: String,
+        sourceDisposition: MediaQueueSourceDisposition,
+        reviewedPlan: ExecutionPlan,
+        at timestamp: Date
+    ) async throws -> MediaQueueSnapshot {
+        var snapshot = try readSnapshot(defaultTimestamp: timestamp)
+        do {
+            try snapshot.approveReplan(
+                jobID: jobID,
+                workflow: workflow,
+                inputs: inputs,
+                destinationDirectory: destinationDirectory,
+                outputDisplayName: outputDisplayName,
+                sourceDisposition: sourceDisposition,
+                reviewedPlan: reviewedPlan,
+                at: timestamp
             )
         } catch MediaQueueMutationError.jobNotFound {
             throw JobQueueStoreError.jobNotFound
@@ -245,11 +286,28 @@ public actor JSONJobQueueStore: JobQueueManaging {
             )
             do {
                 for event in job.events.dropFirst() {
-                    try replay.transition(
-                        to: event.state,
-                        at: event.timestamp,
-                        reason: event.reason
-                    )
+                    if event.state == .waiting,
+                        replay.state == .failed || replay.state == .needsReview
+                    {
+                        guard event.reason == .userAction else {
+                            throw JobQueueStoreError.malformedQueue
+                        }
+                        try replay.approveReplan(
+                            workflow: job.workflow,
+                            inputs: job.inputs,
+                            destinationDirectory: job.destinationDirectory,
+                            outputDisplayName: job.outputDisplayName,
+                            sourceDisposition: job.sourceDisposition,
+                            reviewedPlan: job.reviewedPlan,
+                            at: event.timestamp
+                        )
+                    } else {
+                        try replay.transition(
+                            to: event.state,
+                            at: event.timestamp,
+                            reason: event.reason
+                        )
+                    }
                 }
             } catch {
                 throw JobQueueStoreError.malformedQueue

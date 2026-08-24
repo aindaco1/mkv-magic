@@ -7,8 +7,10 @@ import UniformTypeIdentifiers
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private struct PreparedSavedWorkflow {
+        let recipe: SavedWorkflow
         let compiled: CompiledSavedWorkflow
         let externalSubtitlePayload: ExternalSubtitleMuxPayload?
+        let retryingQueueJobID: UUID?
     }
 
     private struct ReviewedExternalSubtitle {
@@ -114,6 +116,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var pendingAssetID: UUID?
     private var preferredSelectionURL: URL?
     private var historyWindowController: HistoryWindowController?
+    private var queueWindowController: QueueWindowController?
     private var encodingBenchmarkWindowController: EncodingBenchmarkWindowController?
     private var trackEditorWindowController: TrackEditorWindowController?
     private var trackRemovalWindowController: TrackRemovalWindowController?
@@ -132,11 +135,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var commonFormatJoinWindowController: CommonFormatJoinWindowController?
     private var losslessJoinProgressWindowController: VerifiedOutputProgressWindowController?
     private var losslessJoinTask: Task<Void, Never>?
+    private var verifiedRunTask: Task<Void, Never>?
 
     init(model: AppModel) {
         self.model = model
         super.init(nibName: nil, bundle: nil)
         model.didChange = { [weak self] in self?.refresh() }
+        model.queueDidChange = { [weak self] in self?.refreshOpenQueue() }
     }
 
     @available(*, unavailable)
@@ -212,6 +217,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 action: #selector(showEncodingBenchmark)
             ),
             sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
+            sidebarButton(
+                "Queue",
+                symbol: "list.bullet.rectangle",
+                action: #selector(showQueue)
+            ),
             sidebarButton(
                 "History",
                 symbol: "clock.arrow.circlepath",
@@ -443,6 +453,56 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func showQueue() {
+        if let controller = queueWindowController,
+            controller.window?.isVisible == true
+        {
+            refreshOpenQueue()
+            controller.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        statusLabel.stringValue = "Loading queue…"
+        Task {
+            do {
+                let snapshot = try await model.loadQueue()
+                let controller = QueueWindowController(
+                    snapshot: snapshot,
+                    onSetPaused: { [model] paused in
+                        try await model.setQueuePaused(paused)
+                    },
+                    onTransition: { [weak self, model] jobID, state, reason in
+                        let snapshot = try await model.transitionQueueJob(
+                            jobID,
+                            to: state,
+                            reason: reason
+                        )
+                        if QueueExecutionControl.shouldCancelActiveTask(
+                            jobID: jobID,
+                            transition: state,
+                            activeJobID: model.activeQueueJobID
+                        ) {
+                            self?.verifiedRunTask?.cancel()
+                        }
+                        return snapshot
+                    },
+                    onReorder: { [model] orderedIDs in
+                        try await model.reorderPendingQueueJobs(orderedIDs)
+                    },
+                    onReview: { [weak self] job in
+                        self?.reviewQueueJob(job)
+                    }
+                )
+                queueWindowController = controller
+                controller.showWindow(nil)
+                controller.window?.makeKeyAndOrderFront(nil)
+                statusLabel.stringValue =
+                    snapshot.jobs.isEmpty ? "Queue is empty" : "Queue loaded"
+            } catch {
+                statusLabel.stringValue = "Could not load queue: \(error.localizedDescription)"
+            }
+        }
+    }
+
     @objc private func showEncodingBenchmark() {
         statusLabel.stringValue = "Loading the saved local encoding recommendation…"
         Task {
@@ -464,6 +524,21 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             } catch {
                 statusLabel.stringValue =
                     "Could not open Encoding Test: \(error.localizedDescription)"
+            }
+        }
+    }
+
+    private func refreshOpenQueue() {
+        guard let controller = queueWindowController,
+            controller.window?.isVisible == true
+        else { return }
+        Task { [weak self, model] in
+            do {
+                let snapshot = try await model.loadQueue()
+                self?.queueWindowController?.update(snapshot: snapshot)
+            } catch {
+                // The queue window keeps its last valid snapshot and exposes the
+                // next explicit mutation error without disturbing media work.
             }
         }
     }
@@ -857,7 +932,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         progress.onCancel = { [weak self] in self?.losslessJoinTask?.cancel() }
     }
 
-    private func previewSavedWorkflow(_ workflow: SavedWorkflow) {
+    private func previewSavedWorkflow(
+        _ workflow: SavedWorkflow,
+        retryingQueueJobID: UUID? = nil
+    ) {
         guard let asset = selectedAsset, let parentWindow = view.window else {
             impactLabel.stringValue = "Select an inspected file first."
             clearPendingChange()
@@ -873,7 +951,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 workflow,
                 asset: asset,
                 parentWindow: parentWindow,
-                externalSubtitle: nil
+                externalSubtitle: nil,
+                retryingQueueJobID: retryingQueueJobID
             )
             return
         }
@@ -895,7 +974,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 workflow,
                 asset: asset,
                 parentWindow: parentWindow,
-                externalSubtitle: reviewed
+                externalSubtitle: reviewed,
+                retryingQueueJobID: retryingQueueJobID
             )
         }
     }
@@ -904,7 +984,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         _ workflow: SavedWorkflow,
         asset: MediaAsset,
         parentWindow: NSWindow,
-        externalSubtitle: ReviewedExternalSubtitle?
+        externalSubtitle: ReviewedExternalSubtitle?,
+        retryingQueueJobID: UUID?
     ) {
         do {
             let preview = try SavedWorkflowCompiler().preview(
@@ -942,8 +1023,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     return
                 }
                 self.installPendingWorkflow(
+                    recipe: workflow,
                     compiled,
                     externalSubtitlePayload: externalSubtitle?.payload,
+                    retryingQueueJobID: retryingQueueJobID,
                     assetID: asset.id
                 )
             }
@@ -955,16 +1038,20 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func installPendingWorkflow(
+        recipe: SavedWorkflow,
         _ compiled: CompiledSavedWorkflow,
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
+        retryingQueueJobID: UUID?,
         assetID: UUID
     ) {
         impactLabel.stringValue = WorkflowPlanReviewPresentation.impactSummary(for: compiled)
         statusLabel.stringValue = "Workflow plan ready for verification"
         pendingChange = .savedWorkflow(
             PreparedSavedWorkflow(
+                recipe: recipe,
                 compiled: compiled,
-                externalSubtitlePayload: externalSubtitlePayload
+                externalSubtitlePayload: externalSubtitlePayload,
+                retryingQueueJobID: retryingQueueJobID
             )
         )
         pendingAssetID = assetID
@@ -1607,7 +1694,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         chaptersButton.isEnabled = false
         trimButton.isEnabled = false
         runButton.isEnabled = false
-        Task {
+        verifiedRunTask = Task { [weak self] in
+            guard let self else { return }
+            defer { self.verifiedRunTask = nil }
             do {
                 let outputURL: URL
                 switch pendingChange {
@@ -1640,7 +1729,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 case .savedWorkflow(let prepared):
                     outputURL = try await model.runSavedWorkflow(
                         prepared.compiled,
+                        recipe: prepared.recipe,
                         externalSubtitlePayload: prepared.externalSubtitlePayload,
+                        retryingQueueJobID: prepared.retryingQueueJobID,
                         in: asset,
                         destinationURL: destinationURL
                     ).sourceURL
@@ -1696,6 +1787,32 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 runButton.isEnabled =
                     self.pendingChange != nil
                     && pendingAssetID == asset.id
+            }
+        }
+    }
+
+    private func reviewQueueJob(_ job: MediaQueueJob) {
+        guard case .saved(let workflow) = job.workflow else {
+            statusLabel.stringValue = "This built-in queue job cannot be replanned yet."
+            return
+        }
+        queueWindowController?.close()
+        queueWindowController = nil
+        statusLabel.stringValue = "Restoring \(job.inputs.first?.displayName ?? "queued input")…"
+        Task {
+            do {
+                let sourceURL = try model.resolvePrimaryQueueInput(job)
+                await model.addFiles([sourceURL])
+                guard model.assets.contains(where: { $0.sourceURL == sourceURL }) else {
+                    statusLabel.stringValue = "The queued input could not be inspected."
+                    return
+                }
+                preferredSelectionURL = sourceURL
+                refresh()
+                previewSavedWorkflow(workflow, retryingQueueJobID: job.id)
+            } catch {
+                statusLabel.stringValue =
+                    "Could not restore queued input: \(error.localizedDescription)"
             }
         }
     }

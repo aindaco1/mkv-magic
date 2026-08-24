@@ -12,6 +12,11 @@ final class AppModel {
         let jobID: UUID
     }
 
+    private struct QueueExecution: Sendable {
+        let recorder: any JobQueueManaging
+        let jobID: UUID
+    }
+
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
@@ -111,10 +116,15 @@ final class AppModel {
 
     private(set) var assets: [MediaAsset] = []
     private(set) var state: State = .ready
+    private(set) var activeQueueJobID: UUID?
     var didChange: (() -> Void)?
+    var queueDidChange: (() -> Void)?
     private var cachedEncodingCapabilities: FFmpegEncodingCapabilities?
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
+    private let queueStoreFactory: @Sendable () throws -> any JobQueueManaging
+    private var queueStore: (any JobQueueManaging)?
+    private var queueRecoveryStarted = false
     private let encodingBenchmarkStoreFactory:
         @Sendable () throws -> any EncodingBenchmarkPersisting
 
@@ -125,6 +135,9 @@ final class AppModel {
         workflowStoreFactory: @escaping @Sendable () throws -> any SavedWorkflowPersisting = {
             try AppHistoryLocation.makeWorkflowStore()
         },
+        queueStoreFactory: @escaping @Sendable () throws -> any JobQueueManaging = {
+            try AppHistoryLocation.makeQueueStore()
+        },
         encodingBenchmarkStoreFactory:
             @escaping @Sendable () throws -> any EncodingBenchmarkPersisting = {
                 try AppHistoryLocation.makeEncodingBenchmarkStore()
@@ -132,6 +145,7 @@ final class AppModel {
     ) {
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
+        self.queueStoreFactory = queueStoreFactory
         self.encodingBenchmarkStoreFactory = encodingBenchmarkStoreFactory
     }
 
@@ -193,6 +207,52 @@ final class AppModel {
 
     func loadHistory() async throws -> [MediaJobRecord] {
         try await historyRecorderFactory().load()
+    }
+
+    func loadQueue() async throws -> MediaQueueSnapshot {
+        let recorder = try queueRecorder()
+        guard !queueRecoveryStarted else { return try await recorder.load() }
+        queueRecoveryStarted = true
+        do {
+            return try await recorder.recoverInterruptedJobs(at: Date())
+        } catch {
+            queueRecoveryStarted = false
+            throw error
+        }
+    }
+
+    func setQueuePaused(_ paused: Bool) async throws -> MediaQueueSnapshot {
+        let snapshot = try await queueRecorder().setPaused(paused, at: Date())
+        queueDidChange?()
+        return snapshot
+    }
+
+    func transitionQueueJob(
+        _ jobID: UUID,
+        to state: MediaQueueJobState,
+        reason: MediaQueueEventReason? = .userAction
+    ) async throws -> MediaQueueSnapshot {
+        let snapshot = try await queueRecorder().transition(
+            jobID: jobID,
+            to: state,
+            at: Date(),
+            reason: reason
+        )
+        queueDidChange?()
+        return snapshot
+    }
+
+    func reorderPendingQueueJobs(_ orderedIDs: [UUID]) async throws -> MediaQueueSnapshot {
+        let snapshot = try await queueRecorder().reorderPending(orderedIDs, at: Date())
+        queueDidChange?()
+        return snapshot
+    }
+
+    func resolvePrimaryQueueInput(_ job: MediaQueueJob) throws -> URL {
+        guard let input = job.inputs.first else {
+            throw JobQueueStoreError.malformedQueue
+        }
+        return try SecurityScopedBookmarkCodec().resolve(input, access: .readOnlyFile)
     }
 
     func exportPrivacySafeSupportReport(
@@ -1162,6 +1222,31 @@ final class AppModel {
     }
 
     @discardableResult
+    func runSavedWorkflow(
+        _ workflow: CompiledSavedWorkflow,
+        recipe: SavedWorkflow,
+        externalSubtitlePayload: ExternalSubtitleMuxPayload?,
+        retryingQueueJobID: UUID? = nil,
+        in asset: MediaAsset,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
+        let queueExecution = try await beginQueueExecution(
+            recipe: recipe,
+            plan: workflow.plan,
+            inputURLs: [asset.sourceURL] + externalURLs,
+            destinationURL: destinationURL,
+            retryingJobID: retryingQueueJobID
+        )
+        return try await executeVerifiedEdit(
+            in: asset,
+            destinationURL: destinationURL,
+            edit: .saved(workflow, externalSubtitlePayload),
+            queueExecution: queueExecution
+        )
+    }
+
+    @discardableResult
     func muxExternalSubtitle(
         in asset: MediaAsset,
         subtitlePreview: SubtitleCleanupFilePreview,
@@ -1339,7 +1424,8 @@ final class AppModel {
     private func executeVerifiedEdit(
         in asset: MediaAsset,
         destinationURL: URL,
-        edit: VerifiedEdit
+        edit: VerifiedEdit,
+        queueExecution: QueueExecution? = nil
     ) async throws -> MediaAsset {
         let scopedURLs = ([asset.sourceURL, destinationURL] + edit.externalInputURLs).map {
             ($0, $0.startAccessingSecurityScopedResource())
@@ -1506,11 +1592,135 @@ final class AppModel {
                 destinationURL: destinationURL,
                 successMessage: "Verified output committed and reopened."
             )
+            await finishQueue(queueExecution, destinationURL: destinationURL)
             return output
         } catch {
-            await failHistory(historyExecution, error: error)
+            await failQueue(queueExecution, error: error)
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
             throw error
         }
+    }
+
+    private func beginQueueExecution(
+        recipe: SavedWorkflow,
+        plan: ExecutionPlan,
+        inputURLs: [URL],
+        destinationURL: URL,
+        retryingJobID: UUID?
+    ) async throws -> QueueExecution {
+        _ = try await loadQueue()
+        let recorder = try queueRecorder()
+        let codec = SecurityScopedBookmarkCodec()
+        let inputs = try inputURLs.map {
+            try codec.makeReference(for: $0, access: .readOnlyFile)
+        }
+        let destinationDirectory = try codec.makeReference(
+            for: destinationURL.deletingLastPathComponent(),
+            access: .readWriteDirectory
+        )
+        let timestamp = Date()
+        let jobID: UUID
+        if let retryingJobID {
+            _ = try await recorder.approveReplan(
+                jobID: retryingJobID,
+                workflow: .saved(recipe),
+                inputs: inputs,
+                destinationDirectory: destinationDirectory,
+                outputDisplayName: destinationURL.lastPathComponent,
+                sourceDisposition: .keepOriginal,
+                reviewedPlan: plan,
+                at: timestamp
+            )
+            jobID = retryingJobID
+        } else {
+            let job = MediaQueueJob(
+                createdAt: timestamp,
+                workflow: .saved(recipe),
+                inputs: inputs,
+                destinationDirectory: destinationDirectory,
+                outputDisplayName: destinationURL.lastPathComponent,
+                reviewedPlan: plan
+            )
+            _ = try await recorder.append(job, at: timestamp)
+            jobID = job.id
+        }
+        _ = try await recorder.transition(
+            jobID: jobID,
+            to: .running,
+            at: Date(),
+            reason: nil
+        )
+        activeQueueJobID = jobID
+        queueDidChange?()
+        return QueueExecution(recorder: recorder, jobID: jobID)
+    }
+
+    private func finishQueue(_ execution: QueueExecution?, destinationURL: URL) async {
+        guard let execution else { return }
+        defer {
+            if activeQueueJobID == execution.jobID { activeQueueJobID = nil }
+            queueDidChange?()
+        }
+        do {
+            _ = try await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .succeeded,
+                at: Date(),
+                reason: nil
+            )
+        } catch {
+            state = .completedWithWarnings(
+                "Created \(destinationURL.lastPathComponent); original unchanged, but the queue could not record completion."
+            )
+            didChange?()
+        }
+    }
+
+    private func failQueue(_ execution: QueueExecution?, error: Error) async {
+        guard let execution else { return }
+        defer {
+            if activeQueueJobID == execution.jobID { activeQueueJobID = nil }
+            queueDidChange?()
+        }
+        if Self.isCancellation(error) {
+            guard
+                let job = try? await execution.recorder.load().jobs.first(where: {
+                    $0.id == execution.jobID
+                })
+            else { return }
+            if job.state == .running {
+                _ = try? await execution.recorder.transition(
+                    jobID: execution.jobID,
+                    to: .cancelling,
+                    at: Date(),
+                    reason: .userAction
+                )
+            }
+            _ = try? await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .cancelled,
+                at: Date(),
+                reason: .userAction
+            )
+        } else {
+            _ = try? await execution.recorder.transition(
+                jobID: execution.jobID,
+                to: .failed,
+                at: Date(),
+                reason: .executionFailed
+            )
+        }
+    }
+
+    private func queueRecorder() throws -> any JobQueueManaging {
+        if let queueStore { return queueStore }
+        let recorder = try queueStoreFactory()
+        queueStore = recorder
+        return recorder
     }
 
     private func beginHistory(

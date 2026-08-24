@@ -54,11 +54,16 @@ final class JobQueueStoreTests: XCTestCase {
             at: base,
             reason: .executionFailed
         )
-        _ = try await store.transition(
+        let replacement = makeJob(id: id(3), outputDisplayName: "Retried.mkv")
+        _ = try await store.approveReplan(
             jobID: id(2),
-            to: .waiting,
-            at: base,
-            reason: .userAction
+            workflow: replacement.workflow,
+            inputs: replacement.inputs,
+            destinationDirectory: replacement.destinationDirectory,
+            outputDisplayName: replacement.outputDisplayName,
+            sourceDisposition: replacement.sourceDisposition,
+            reviewedPlan: replacement.reviewedPlan,
+            at: base
         )
         let snapshot = try await store.transition(
             jobID: id(1),
@@ -71,6 +76,7 @@ final class JobQueueStoreTests: XCTestCase {
         XCTAssertEqual(snapshot.jobs.map(\.id), [id(2), id(1)])
         XCTAssertEqual(snapshot.jobs.map(\.state), [.waiting, .cancelled])
         XCTAssertEqual(snapshot.jobs[0].attemptCount, 1)
+        XCTAssertEqual(snapshot.jobs[0].outputDisplayName, "Retried.mkv")
         let loaded = try await store.load()
         XCTAssertEqual(loaded, snapshot)
     }

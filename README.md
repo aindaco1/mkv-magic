@@ -244,9 +244,19 @@ running or cancelling work becomes **Needs Review** after relaunch and is never
 silently restarted. Its pure scheduler starts at most one video-heavy job,
 bounds audio-heavy and zero-encode lightweight work separately, stops new starts
 under serious thermal pressure, and reduces battery operation to one lightweight
-job. This foundation is not yet
-connected to the app's Verify & Run flow or a queue window, so it is not claimed
-as user-operable production queue execution.
+job. Saved-workflow **Verify & Run** now records fresh, narrow security-scoped
+bookmarks and the exact reviewed plan before starting tools, then advances the
+durable job through verified success, recoverable failure, or cooperative
+cancellation. The native **Queue** window shows resource cost, status, and
+attempts; it offers hold/resume, pending reorder, cancel, review-again retry, and
+a persistent pause for future automatic starts. Opening the window refreshes
+current work without treating it as a relaunch interruption.
+
+This is a user-operable execution bridge, not the completed automatic production
+scheduler: an explicit **Verify & Run** starts immediately even while automatic
+starts are paused, built-in quick actions are not queued yet, and battery/thermal
+admission plus unattended batch startup remain open. See
+[docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md).
 
 ## Design promises
 

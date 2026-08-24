@@ -110,6 +110,7 @@ public enum MediaQueueTransitionError: Error, Equatable, Sendable {
     case timestampMovedBackward
     case missingFailureReason
     case unexpectedReason
+    case replanRequiresReviewState
 }
 
 public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
@@ -118,13 +119,13 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
     public let schemaVersion: Int
     public let id: UUID
     public let createdAt: Date
-    public let workflow: MediaQueueWorkflowIntent
-    public let inputs: [MediaQueueFileReference]
-    public let destinationDirectory: MediaQueueFileReference
-    public let outputDisplayName: String
-    public let sourceDisposition: MediaQueueSourceDisposition
-    public let reviewedPlan: ExecutionPlan
-    public let resourceClass: MediaQueueResourceClass
+    public private(set) var workflow: MediaQueueWorkflowIntent
+    public private(set) var inputs: [MediaQueueFileReference]
+    public private(set) var destinationDirectory: MediaQueueFileReference
+    public private(set) var outputDisplayName: String
+    public private(set) var sourceDisposition: MediaQueueSourceDisposition
+    public private(set) var reviewedPlan: ExecutionPlan
+    public private(set) var resourceClass: MediaQueueResourceClass
     public private(set) var events: [MediaQueueJobEvent]
     public private(set) var attemptCount: Int
 
@@ -200,13 +201,44 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         return true
     }
 
+    public mutating func approveReplan(
+        workflow: MediaQueueWorkflowIntent,
+        inputs: [MediaQueueFileReference],
+        destinationDirectory: MediaQueueFileReference,
+        outputDisplayName: String,
+        sourceDisposition: MediaQueueSourceDisposition,
+        reviewedPlan: ExecutionPlan,
+        at timestamp: Date
+    ) throws {
+        guard state == .failed || state == .needsReview else {
+            throw MediaQueueTransitionError.replanRequiresReviewState
+        }
+        guard timestamp >= updatedAt else {
+            throw MediaQueueTransitionError.timestampMovedBackward
+        }
+        var replacement = self
+        replacement.workflow = workflow
+        replacement.inputs = inputs
+        replacement.destinationDirectory = destinationDirectory
+        replacement.outputDisplayName = outputDisplayName
+        replacement.sourceDisposition = sourceDisposition
+        replacement.reviewedPlan = reviewedPlan
+        replacement.resourceClass = MediaQueueResourceClass(impact: reviewedPlan.impact)
+        replacement.events.append(
+            MediaQueueJobEvent(state: .waiting, timestamp: timestamp, reason: .userAction)
+        )
+        self = replacement
+    }
+
     private static let allowedTransitions: [MediaQueueJobState: Set<MediaQueueJobState>] = [
         .waiting: [.held, .running, .cancelled, .needsReview],
         .held: [.waiting, .cancelled, .needsReview],
         .running: [.cancelling, .succeeded, .failed, .needsReview],
-        .cancelling: [.cancelled, .failed, .needsReview],
-        .needsReview: [.waiting, .cancelled],
-        .failed: [.waiting, .cancelled],
+        // Cancellation is cooperative. A job may cross its verified commit boundary
+        // before the runner observes cancellation; that truthful outcome is success.
+        .cancelling: [.cancelled, .succeeded, .failed, .needsReview],
+        .needsReview: [.cancelled],
+        .failed: [.cancelled],
     ]
 }
 
@@ -231,13 +263,13 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
     }
 
     public mutating func setPaused(_ paused: Bool, at timestamp: Date) throws {
-        try validateTimestamp(timestamp)
+        let timestamp = try normalizedTimestamp(timestamp)
         isPaused = paused
         updatedAt = timestamp
     }
 
     public mutating func append(_ job: MediaQueueJob, at timestamp: Date) throws {
-        try validateTimestamp(timestamp)
+        let timestamp = try normalizedTimestamp(timestamp)
         guard !jobs.contains(where: { $0.id == job.id }) else {
             throw MediaQueueMutationError.duplicateJob
         }
@@ -251,7 +283,7 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
         at timestamp: Date,
         reason: MediaQueueEventReason? = nil
     ) throws {
-        try validateTimestamp(timestamp)
+        let timestamp = try normalizedTimestamp(timestamp)
         guard let index = jobs.firstIndex(where: { $0.id == jobID }) else {
             throw MediaQueueMutationError.jobNotFound
         }
@@ -259,8 +291,34 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
         updatedAt = timestamp
     }
 
+    public mutating func approveReplan(
+        jobID: UUID,
+        workflow: MediaQueueWorkflowIntent,
+        inputs: [MediaQueueFileReference],
+        destinationDirectory: MediaQueueFileReference,
+        outputDisplayName: String,
+        sourceDisposition: MediaQueueSourceDisposition,
+        reviewedPlan: ExecutionPlan,
+        at timestamp: Date
+    ) throws {
+        let timestamp = try normalizedTimestamp(timestamp)
+        guard let index = jobs.firstIndex(where: { $0.id == jobID }) else {
+            throw MediaQueueMutationError.jobNotFound
+        }
+        try jobs[index].approveReplan(
+            workflow: workflow,
+            inputs: inputs,
+            destinationDirectory: destinationDirectory,
+            outputDisplayName: outputDisplayName,
+            sourceDisposition: sourceDisposition,
+            reviewedPlan: reviewedPlan,
+            at: timestamp
+        )
+        updatedAt = timestamp
+    }
+
     public mutating func reorderPending(_ orderedIDs: [UUID], at timestamp: Date) throws {
-        try validateTimestamp(timestamp)
+        let timestamp = try normalizedTimestamp(timestamp)
         let pending = jobs.filter { $0.state.isPending }
         guard orderedIDs.count == pending.count,
             Set(orderedIDs).count == orderedIDs.count,
@@ -276,7 +334,7 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
 
     @discardableResult
     public mutating func recoverInterruptedJobs(at timestamp: Date) throws -> Int {
-        try validateTimestamp(timestamp)
+        let timestamp = try normalizedTimestamp(timestamp)
         var recovered = 0
         for index in jobs.indices {
             if try jobs[index].recoverAfterInterruption(at: timestamp) { recovered += 1 }
@@ -285,10 +343,15 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
         return recovered
     }
 
-    private func validateTimestamp(_ timestamp: Date) throws {
-        guard timestamp >= updatedAt else {
+    private func normalizedTimestamp(_ timestamp: Date) throws -> Date {
+        if timestamp >= updatedAt { return timestamp }
+        // JSON date round trips and wall-clock reads can differ by a fraction of
+        // a millisecond. Clamp only that serialization-sized skew; larger
+        // rollback remains a hard failure.
+        guard updatedAt.timeIntervalSince(timestamp) <= 0.001 else {
             throw MediaQueueMutationError.timestampMovedBackward
         }
+        return updatedAt
     }
 }
 

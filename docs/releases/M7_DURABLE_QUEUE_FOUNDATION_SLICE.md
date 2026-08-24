@@ -5,6 +5,11 @@ the production queue. It is deliberately separate from sanitized execution
 History and does not claim a queue window, background execution, or automatic
 retry.
 
+This document records the boundary of that foundation slice. The later
+[queue UI and execution bridge](M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md) connects
+saved-workflow Verify & Run, real bookmarks, cooperative cancellation, and
+review-again retry while still leaving automatic scheduler admission open.
+
 ## Durable intent boundary
 
 - Each queued job stores a saved-workflow snapshot or stable built-in workflow

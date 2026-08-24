@@ -132,7 +132,13 @@ final class RealToolAppHistoryTests: XCTestCase {
         let store = try AppHistoryLocation.makeStore(
             applicationSupportURL: applicationSupport
         )
-        let model = AppModel(historyRecorderFactory: { store })
+        let queueStore = try AppHistoryLocation.makeQueueStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(
+            historyRecorderFactory: { store },
+            queueStoreFactory: { queueStore }
+        )
         await model.addFiles([source])
         let asset = try XCTUnwrap(model.assets.first)
         let subtitlePreview = try await model.previewSubtitleCleanup(at: externalSubtitle)
@@ -170,6 +176,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         let outputAsset = try await model.runSavedWorkflow(
             compiled,
+            recipe: workflow,
             externalSubtitlePayload: .reviewedCleanup(
                 .subRip(subtitlePreview),
                 restoringIDs: []
@@ -222,6 +229,35 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(
             record.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+
+        let queue = try await queueStore.load()
+        XCTAssertEqual(queue.jobs.count, 1)
+        let queuedJob = try XCTUnwrap(queue.jobs.first)
+        XCTAssertEqual(queuedJob.workflow, .saved(workflow))
+        XCTAssertEqual(queuedJob.inputs.map(\.displayName), ["Movie.mkv", "Movie.en.srt"])
+        XCTAssertEqual(queuedJob.outputDisplayName, "Movie — Prepared.mkv")
+        XCTAssertEqual(queuedJob.sourceDisposition, .keepOriginal)
+        XCTAssertEqual(queuedJob.reviewedPlan, compiled.plan)
+        XCTAssertEqual(queuedJob.resourceClass, .lightweight)
+        XCTAssertEqual(queuedJob.attemptCount, 1)
+        XCTAssertEqual(queuedJob.events.map(\.state), [.waiting, .running, .succeeded])
+        XCTAssertEqual(model.activeQueueJobID, nil)
+        let bookmarkCodec = SecurityScopedBookmarkCodec()
+        XCTAssertEqual(
+            try bookmarkCodec.resolve(queuedJob.inputs[0], access: .readOnlyFile),
+            source
+        )
+        XCTAssertEqual(
+            try bookmarkCodec.resolve(queuedJob.inputs[1], access: .readOnlyFile),
+            externalSubtitle
+        )
+        XCTAssertEqual(
+            try bookmarkCodec.resolve(
+                queuedJob.destinationDirectory,
+                access: .readWriteDirectory
+            ),
+            fixtureRoot
         )
     }
 
