@@ -14,6 +14,7 @@ actionlint -color
 ./scripts/ci/test-downloaded-release-verification.sh
 ./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-tool-tree-layout.sh
+./scripts/ci/test-reseal-tool-manifests.sh
 
 shell_files=()
 while IFS= read -r -d '' shell_file; do

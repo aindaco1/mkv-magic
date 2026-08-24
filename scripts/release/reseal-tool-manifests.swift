@@ -19,82 +19,142 @@ func sha256(_ url: URL) throws -> String {
     return hasher.finalize().map { String(format: "%02x", $0) }.joined()
 }
 
-guard CommandLine.arguments.count == 2 else { throw ResealError.invalidArguments }
-let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true).standardizedFileURL
-let rootValues = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
-guard root.path.hasPrefix("/"), rootValues.isDirectory == true, rootValues.isSymbolicLink != true
-else {
-    throw ResealError.unsafeRoot
+func isSHA256(_ value: Any?) -> Bool {
+    guard let value = value as? String else { return false }
+    return value.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil
 }
 
-let expectedTools = Set(["ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit", "mkvextract"])
-for architecture in ["arm64", "x86_64"] {
-    let architectureRoot = root.appendingPathComponent(architecture, isDirectory: true)
-    let manifestURL = architectureRoot.appendingPathComponent("manifest.json")
-    let buildManifestURL = architectureRoot.appendingPathComponent("build-manifest.json")
-    guard !FileManager.default.fileExists(atPath: buildManifestURL.path) else {
-        throw ResealError.invalidManifest("build manifest already exists for \(architecture)")
-    }
-    let sourceData = try Data(contentsOf: manifestURL)
-    guard var manifest = try JSONSerialization.jsonObject(with: sourceData) as? [String: Any],
-        Set(manifest.keys) == Set(["schema", "platform", "architecture", "tools", "libraries"]),
-        manifest["schema"] as? String == "mkv-magic-tool-manifest-v1",
-        manifest["platform"] as? String == "macos",
-        manifest["architecture"] as? String == architecture,
-        var tools = manifest["tools"] as? [[String: Any]],
-        var libraries = manifest["libraries"] as? [[String: Any]],
-        tools.count == expectedTools.count
+func inventoryData(_ manifest: [String: Any]) throws -> Data {
+    guard var tools = manifest["tools"] as? [[String: Any]],
+        var libraries = manifest["libraries"] as? [[String: Any]]
     else {
-        throw ResealError.invalidManifest(architecture)
+        throw ResealError.invalidManifest("inventory")
     }
-    let names = Set(tools.compactMap { $0["name"] as? String })
-    guard names == expectedTools else { throw ResealError.invalidManifest(architecture) }
+    for index in tools.indices { tools[index].removeValue(forKey: "sha256") }
+    for index in libraries.indices { libraries[index].removeValue(forKey: "sha256") }
+    var inventory = manifest
+    inventory["tools"] = tools
+    inventory["libraries"] = libraries
+    return try JSONSerialization.data(
+        withJSONObject: inventory,
+        options: [.sortedKeys, .withoutEscapingSlashes]
+    )
+}
 
-    try FileManager.default.copyItem(at: manifestURL, to: buildManifestURL)
-    try FileManager.default.setAttributes(
-        [.posixPermissions: 0o644],
-        ofItemAtPath: buildManifestURL.path
-    )
-    for index in tools.indices {
-        guard let name = tools[index]["name"] as? String,
-            tools[index]["path"] as? String == name
+func reseal() throws {
+    guard CommandLine.arguments.count == 2 else { throw ResealError.invalidArguments }
+    let root = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)
+        .standardizedFileURL
+    let rootValues = try root.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey])
+    guard root.path.hasPrefix("/"), rootValues.isDirectory == true,
+        rootValues.isSymbolicLink != true
+    else {
+        throw ResealError.unsafeRoot
+    }
+
+    let expectedTools = Set(["ffmpeg", "ffprobe", "mkvmerge", "mkvpropedit", "mkvextract"])
+    for architecture in ["arm64", "x86_64"] {
+        let architectureRoot = root.appendingPathComponent(architecture, isDirectory: true)
+        let manifestURL = architectureRoot.appendingPathComponent("manifest.json")
+        let buildManifestURL = architectureRoot.appendingPathComponent("build-manifest.json")
+        let sourceData = try Data(contentsOf: manifestURL)
+        guard var manifest = try JSONSerialization.jsonObject(with: sourceData) as? [String: Any],
+            Set(manifest.keys)
+                == Set(["schema", "platform", "architecture", "tools", "libraries"]),
+            manifest["schema"] as? String == "mkv-magic-tool-manifest-v1",
+            manifest["platform"] as? String == "macos",
+            manifest["architecture"] as? String == architecture,
+            var tools = manifest["tools"] as? [[String: Any]],
+            var libraries = manifest["libraries"] as? [[String: Any]],
+            tools.count == expectedTools.count
         else {
             throw ResealError.invalidManifest(architecture)
         }
-        let toolURL = architectureRoot.appendingPathComponent(name)
-        let values = try toolURL.resourceValues(forKeys: [
+        let names = Set(tools.compactMap { $0["name"] as? String })
+        guard names == expectedTools else { throw ResealError.invalidManifest(architecture) }
+
+        if let buildValues = try? buildManifestURL.resourceValues(forKeys: [
             .isRegularFileKey, .isSymbolicLinkKey,
-        ])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
-            throw ResealError.missingTool("\(architecture)/\(name)")
+        ]) {
+            guard buildValues.isRegularFile == true, buildValues.isSymbolicLink != true else {
+                throw ResealError.invalidManifest("unsafe build manifest for \(architecture)")
+            }
+            let buildData = try Data(contentsOf: buildManifestURL)
+            guard
+                let buildManifest = try JSONSerialization.jsonObject(with: buildData)
+                    as? [String: Any],
+                Set(buildManifest.keys)
+                    == Set(["schema", "platform", "architecture", "tools", "libraries"]),
+                buildManifest["schema"] as? String == "mkv-magic-tool-manifest-v1",
+                buildManifest["platform"] as? String == "macos",
+                buildManifest["architecture"] as? String == architecture,
+                let buildTools = buildManifest["tools"] as? [[String: Any]],
+                let buildLibraries = buildManifest["libraries"] as? [[String: Any]],
+                buildTools.count == expectedTools.count,
+                buildLibraries.count == libraries.count,
+                Set(buildTools.compactMap { $0["name"] as? String }) == expectedTools,
+                buildTools.allSatisfy({ isSHA256($0["sha256"]) }),
+                buildLibraries.allSatisfy({ isSHA256($0["sha256"]) }),
+                try inventoryData(buildManifest) == inventoryData(manifest)
+            else {
+                throw ResealError.invalidManifest("existing build manifest for \(architecture)")
+            }
+        } else {
+            try FileManager.default.copyItem(at: manifestURL, to: buildManifestURL)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o644],
+                ofItemAtPath: buildManifestURL.path
+            )
         }
-        tools[index]["sha256"] = try sha256(toolURL)
+        for index in tools.indices {
+            guard let name = tools[index]["name"] as? String,
+                tools[index]["path"] as? String == name
+            else {
+                throw ResealError.invalidManifest(architecture)
+            }
+            let toolURL = architectureRoot.appendingPathComponent(name)
+            let values = try toolURL.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey,
+            ])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw ResealError.missingTool("\(architecture)/\(name)")
+            }
+            tools[index]["sha256"] = try sha256(toolURL)
+        }
+        manifest["tools"] = tools
+        for index in libraries.indices {
+            guard let path = libraries[index]["path"] as? String,
+                path.hasPrefix("libs/"),
+                !path.contains("..")
+            else {
+                throw ResealError.invalidManifest(architecture)
+            }
+            let libraryURL = architectureRoot.appendingPathComponent(path)
+            let values = try libraryURL.resourceValues(forKeys: [
+                .isRegularFileKey, .isSymbolicLinkKey,
+            ])
+            guard values.isRegularFile == true, values.isSymbolicLink != true else {
+                throw ResealError.missingTool("\(architecture)/\(path)")
+            }
+            libraries[index]["sha256"] = try sha256(libraryURL)
+        }
+        manifest["libraries"] = libraries
+        let replacement =
+            try JSONSerialization.data(
+                withJSONObject: manifest,
+                options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            ) + Data("\n".utf8)
+        try replacement.write(to: manifestURL, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o644],
+            ofItemAtPath: manifestURL.path
+        )
     }
-    manifest["tools"] = tools
-    for index in libraries.indices {
-        guard let path = libraries[index]["path"] as? String,
-            path.hasPrefix("libs/"),
-            !path.contains("..")
-        else {
-            throw ResealError.invalidManifest(architecture)
-        }
-        let libraryURL = architectureRoot.appendingPathComponent(path)
-        let values = try libraryURL.resourceValues(forKeys: [
-            .isRegularFileKey, .isSymbolicLinkKey,
-        ])
-        guard values.isRegularFile == true, values.isSymbolicLink != true else {
-            throw ResealError.missingTool("\(architecture)/\(path)")
-        }
-        libraries[index]["sha256"] = try sha256(libraryURL)
-    }
-    manifest["libraries"] = libraries
-    let replacement = try JSONSerialization.data(
-        withJSONObject: manifest,
-        options: [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
-    ) + Data("\n".utf8)
-    try replacement.write(to: manifestURL, options: .atomic)
-    try FileManager.default.setAttributes(
-        [.posixPermissions: 0o644],
-        ofItemAtPath: manifestURL.path
-    )
+}
+
+do {
+    try reseal()
+} catch {
+    FileHandle.standardError.write(Data("tool manifest resealing failed: \(error)\n".utf8))
+    exit(1)
 }

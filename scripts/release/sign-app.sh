@@ -57,6 +57,10 @@ fi
 
 tool_root="$app_path/Contents/Resources/Tools"
 if [[ -d "$tool_root" ]]; then
+    # Prove the copied runtime inventory before codesign changes any bytes. This
+    # also permits a previously signed release tree to be safely re-signed:
+    # its build manifest remains the immutable pre-sign provenance record.
+    "$repo_root/scripts/ci/check-tool-tree.sh" "$tool_root"
     for architecture in arm64 x86_64; do
         while IFS= read -r library_path; do
             codesign "${common_flags[@]}" \
