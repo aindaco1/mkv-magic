@@ -442,6 +442,24 @@ changing the six-channel count, and discloses the final reviewed layout.
 - Preserve a source container during a copy-only operation when the workflow requests it and all planned changes are supported.
 - Treat less-common FFmpeg output containers as Advanced choices added only after fixture and playback validation; “any container” does not mean bypassing compatibility rules.
 
+Current implementation: **Remux to MKV…** accepts an inspected MP4, M4V, MOV,
+or chapter-free WebM with one video track and a known positive duration when
+every media codec is approved for Matroska packet copy. The current allowlist
+covers AV1, H.264, HEVC, ProRes, VP8, VP9, MPEG video; AAC, AC-3, E-AC-3, Opus,
+Vorbis, FLAC, ALAC, PCM, MP3, DTS, and TrueHD audio; and SRT, ASS, SSA, WebVTT,
+PGS, and VobSub subtitles. One shell-free `mkvmerge` invocation preserves media
+order and promotes an inspected MP4/MOV chapter carrier into Matroska chapters.
+The immutable review records zero video and audio encodes. Before commit and
+after reopening, verification compares duration, codec and technical facts,
+track language/name/roles, title, chapter count/titles/timing, attachment
+absence, and a new segment identity, then performs a streaming ordered-packet
+fingerprint for every copied track. The source revision is checked throughout,
+and the original is never replaced. MP4 TX3G timed text requires the separate
+explicit text-conversion action specified in section 5.13. Chaptered WebM,
+attachments, arbitrary data, multiple video tracks, and unknown codecs fail
+closed rather than receiving a partial preservation claim. Alternate output
+containers and preserve-container copy remain roadmap work.
+
 ### 5.11 HDR and Dolby Vision safety
 
 - Stream copy preserves the encoded stream and its metadata.

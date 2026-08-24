@@ -47,6 +47,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case fastTrim
     case exactTrim
     case videoTranscode
+    case remuxToMKV
     case savedOrUnknown
 
     init(workflowID: UUID) {
@@ -68,6 +69,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
         case .fastTrim: self = .fastTrim
         case .exactTrim: self = .exactTrim
         case .videoTranscode: self = .videoTranscode
+        case .remuxToMKV: self = .remuxToMKV
         }
     }
 }

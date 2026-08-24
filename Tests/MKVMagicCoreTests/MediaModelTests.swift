@@ -156,6 +156,7 @@ final class MediaModelTests: XCTestCase {
         XCTAssertEqual(facts.tracks.audio, 2)
         XCTAssertEqual(facts.tracks.subtitle, 1)
         XCTAssertEqual(facts.codecs, [.eac3, .hevc, .mp3, .pgs])
+        XCTAssertEqual(MediaCodecFamily(codec: "A_VORBIS", kind: .audio), .vorbis)
         XCTAssertEqual(facts.maximumAudioChannels, 6)
         XCTAssertTrue(facts.hasHDR)
         XCTAssertEqual(facts.chapterCount, 3)
@@ -201,6 +202,10 @@ final class MediaModelTests: XCTestCase {
         XCTAssertEqual(
             BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.videoTranscode),
             .videoTranscode
+        )
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.remuxToMKV),
+            .remuxToMKV
         )
     }
 

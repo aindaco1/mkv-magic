@@ -71,7 +71,7 @@ final class FFprobeInspectorTests: XCTestCase {
                   "channels": 6,
                   "channel_layout": "5.1",
                   "disposition": {"default": 1, "forced": 0},
-                  "tags": {"language": "eng"}
+                  "tags": {"language": "eng", "name": "Main Audio"}
                 }
               ],
               "chapters": [
@@ -136,6 +136,7 @@ final class FFprobeInspectorTests: XCTestCase {
             )
         )
         XCTAssertEqual(asset.tracks[1].channelLayout, "5.1")
+        XCTAssertEqual(asset.tracks[1].title, "Main Audio")
         XCTAssertEqual(asset.chapters.first?.title, "Part 1")
         XCTAssertEqual(asset.metadata["title"], "Example")
     }

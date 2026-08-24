@@ -50,6 +50,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
+        case remuxToMKV(MKVRemuxPreview)
     }
 
     private enum SubtitleCleanupCandidate {
@@ -118,6 +119,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
     private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
+    private let remuxButton = NSButton(title: "Remux to MKV…", target: nil, action: nil)
     private let convertButton = NSButton(title: "Convert Video…", target: nil, action: nil)
     private let joinButton = NSButton(title: "Join Files…", target: nil, action: nil)
     private let queueButton = NSButton(title: "Add to Queue", target: nil, action: nil)
@@ -386,6 +388,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         trimButton.target = self
         trimButton.action = #selector(trimFile)
         trimButton.isEnabled = false
+        remuxButton.target = self
+        remuxButton.action = #selector(remuxToMKV)
+        remuxButton.isEnabled = false
+        remuxButton.setAccessibilityHelp(
+            "Copy compatible MP4, MOV, M4V, or WebM streams into a verified MKV without encoding."
+        )
         convertButton.target = self
         convertButton.action = #selector(convertVideo)
         convertButton.isEnabled = false
@@ -401,7 +409,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
         chapterButtons.orientation = .horizontal
         chapterButtons.spacing = 8
-        let videoButtons = NSStackView(views: [convertButton])
+        let videoButtons = NSStackView(views: [remuxButton, convertButton])
         videoButtons.orientation = .horizontal
         videoButtons.spacing = 8
 
@@ -669,6 +677,37 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     @objc private func convertVideo() {
         prepareVideoProcessing(operation: .transcode)
+    }
+
+    @objc private func remuxToMKV() {
+        guard let asset = selectedAsset else { return }
+        clearPendingChange()
+        do {
+            let preview = try model.previewRemuxToMKV(source: asset)
+            let chapterSummary =
+                preview.plan.chapterCarrierTrackIDs.isEmpty
+                ? "preserve chapters"
+                : "convert the MP4 chapter carrier to Matroska chapters"
+            impactLabel.stringValue =
+                "No transcoding • Copy \(preview.plan.copiedTrackCount) track(s) • \(chapterSummary)"
+            pendingChange = .remuxToMKV(preview)
+            pendingAssetID = asset.id
+            runButton.isEnabled = true
+            runButton.toolTip =
+                "Create one MKV, verify every copied packet and reviewed chapter, then commit it."
+        } catch {
+            AccessibleStatusPresentation.present(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the zero-encode MKV remux.",
+                    recovery:
+                        "The original is unchanged; inspect the disabled action explanation or choose conversion for incompatible tracks.",
+                    error: error
+                ),
+                in: impactLabel,
+                returningFocusTo: remuxButton
+            )
+            clearPendingChange()
+        }
     }
 
     private func prepareVideoProcessing(operation: ExactVideoOperation) {
@@ -2022,6 +2061,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         desired: desired,
                         destinationURL: destination.url
                     ).sourceURL
+                case .remuxToMKV(let preview):
+                    outputURL = try await model.executeRemuxToMKV(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).sourceURL
                 }
                 preferredSelectionURL =
                     model.assets.contains { $0.sourceURL == outputURL }
@@ -2110,6 +2154,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isEmbeddedSubtitleCleanup = false
         }
+        let isRemuxToMKV: Bool
+        if case .remuxToMKV = pendingChange {
+            isRemuxToMKV = true
+        } else {
+            isRemuxToMKV = false
+        }
         panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = prompt
         panel.canCreateDirectories = true
@@ -2128,6 +2178,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             panel.nameFieldStringValue = OutputNamingPolicy.subtitledFilename(for: asset.sourceURL)
         } else if isEmbeddedSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedMKVFilename(for: asset.sourceURL)
+        } else if isRemuxToMKV {
+            panel.nameFieldStringValue = OutputNamingPolicy.remuxedFilename(for: asset.sourceURL)
         } else {
             panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
         }
@@ -2135,7 +2187,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let outputExtension =
             isSubtitleCleanup
             ? asset.sourceURL.pathExtension.lowercased()
-            : ((isSubtitleMux || isEmbeddedSubtitleCleanup)
+            : ((isSubtitleMux || isEmbeddedSubtitleCleanup || isRemuxToMKV)
                 ? "mkv" : asset.sourceURL.pathExtension)
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
@@ -2166,6 +2218,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
         trimButton.isEnabled = false
+        remuxButton.isEnabled = false
         convertButton.isEnabled = false
         queueButton.isEnabled = false
         runButton.isEnabled = false
@@ -2183,6 +2236,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
         trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
+        remuxButton.isEnabled = MKVRemuxPlanner().canOffer(for: asset)
         convertButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
         runButton.isEnabled = pendingChange != nil && pendingAssetID == asset.id
         updateQueueButton()
@@ -2279,6 +2333,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             trimButton.isEnabled = false
+            remuxButton.isEnabled = false
             convertButton.isEnabled = false
             joinButton.isEnabled = false
             queueButton.isEnabled = false
@@ -2305,6 +2360,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             trimButton.isEnabled = false
+            remuxButton.isEnabled = false
             convertButton.isEnabled = false
             return
         }
@@ -2392,6 +2448,18 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             trimButton.isEnabled
             ? "Choose numeric in/out points, preview keyframe adjustments, or encode video once for exact boundaries."
             : "Trim currently requires an inspected MKV with exactly one video track and a known duration."
+        let remuxResolution = Result { try MKVRemuxPlanner().resolve(source: asset) }
+        remuxButton.isEnabled = (try? remuxResolution.get()) != nil
+        let remuxHelp =
+            switch remuxResolution {
+            case .success:
+                "Copy compatible streams and chapters into a verified MKV without video or audio encoding."
+            case .failure(let error):
+                (error as? MKVRemuxPlanningError)?.userFacingReason
+                    ?? "This file does not meet the verified zero-encode MKV contract."
+            }
+        remuxButton.toolTip = remuxHelp
+        remuxButton.setAccessibilityHelp(remuxHelp)
         convertButton.isEnabled =
             !isPreparingVideoProcessing && TrimPresentationPolicy.canOfferTrim(for: asset)
         convertButton.toolTip =
@@ -2630,6 +2698,10 @@ enum OutputNamingPolicy {
 
     static func convertedFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Converted.mkv"
+    }
+
+    static func remuxedFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Remuxed.mkv"
     }
 
     static func savedWorkflowFilename(

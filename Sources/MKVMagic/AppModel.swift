@@ -930,6 +930,116 @@ final class AppModel {
         }
     }
 
+    func previewRemuxToMKV(source: MediaAsset) throws -> MKVRemuxPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try MKVRemuxExecutor(
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source)
+    }
+
+    @discardableResult
+    func executeRemuxToMKV(
+        preview: MKVRemuxPreview,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Copying compatible streams into one temporary MKV…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let chapterCarrierSummary =
+                preview.plan.chapterCarrierTrackIDs.isEmpty
+                ? "preserve the reviewed chapter table"
+                : "translate the MP4 chapter carrier into verified Matroska chapters"
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.remuxToMKV,
+                workflowName: "Remux to MKV without encoding",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed common-media inspection.",
+                planningMessage:
+                    "Zero encodes; packet-copy \(preview.plan.copiedTrackCount) media track(s) and \(chapterCarrierSummary).",
+                runningMessage: "Creating one temporary MKV with the reviewed stream order."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let output = try await MKVRemuxExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                runner: runner,
+                inspector: inspector
+            ).execute(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying copied packet payloads, tracks, title, and chapters…"
+                                : "Saving and reopening the verified MKV…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            registerInspectedAsset(output)
+            await finishHistory(
+                execution,
+                destinationURL: destinationURL,
+                successMessage:
+                    "Verified exact copied packet payloads, track order and metadata, duration, title, and chapter timing; committed and reopened output."
+            )
+            return output
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeTrim(
         preview: TrimExecutionPreview,

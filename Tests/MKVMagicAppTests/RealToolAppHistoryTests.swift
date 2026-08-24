@@ -69,6 +69,112 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testRemuxToMKVRecordsZeroEncodeVerifiedLifecycle() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("The bundled H.264 fixture encoder is unavailable")
+        }
+
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-remux-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawVideo = fixtureRoot.appendingPathComponent("frames.yuv")
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mp4")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature — Remuxed.mkv")
+        let width = 96
+        let height = 64
+        let frameCount = 20
+        try Data(repeating: 48, count: width * height * 3 / 2 * frameCount).write(to: rawVideo)
+        try Data(repeating: 0, count: 48_000 * 2 * 2 * 2).write(to: rawAudio)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideo.path,
+                    "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", rawAudio.path,
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-g", "10", "-bf", "0", "-b:v", "300000",
+                    "-pix_fmt", "yuv420p",
+                    "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-color_range", "tv",
+                    "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:a", "aac", "-b:a", "128000",
+                    "-metadata", "title=Preserve Me",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:a:0", "title=Main Audio",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let preview = try model.previewRemuxToMKV(source: source)
+        XCTAssertEqual(preview.plan.videoEncodeCount, 0)
+        XCTAssertEqual(preview.plan.audioEncodeCount, 0)
+
+        let output = try await model.executeRemuxToMKV(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+
+        XCTAssertEqual(output.sourceURL, destinationURL)
+        XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])
+        XCTAssertEqual(output.metadata["title"], "Preserve Me")
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        XCTAssertTrue(model.assets.contains { $0.sourceURL == destinationURL })
+        let records = try await historyStore.load()
+        XCTAssertEqual(records.count, 1)
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, BuiltInWorkflowCatalog.remuxToMKV)
+        XCTAssertEqual(record.workflowName, "Remux to MKV without encoding")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testQueuedSavedWorkflowConversionRecompilesAndRecordsOneGeneration() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

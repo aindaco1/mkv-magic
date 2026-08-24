@@ -497,6 +497,14 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testRemuxedOutputNameAlwaysUsesMKV() {
+        XCTAssertEqual(
+            OutputNamingPolicy.remuxedFilename(
+                for: URL(fileURLWithPath: "/Media/Movie.MP4")),
+            "Movie — Remuxed.mkv"
+        )
+    }
+
     func testTrimPresentationRequiresOneMKVVideoAndCreatesBoundedOverviewTimes() {
         let duration = MediaTime(nanoseconds: 60_000_000_000)
         let source = MediaAsset(
@@ -3401,6 +3409,11 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(splitView.arrangedSubviews.count, 3)
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
         XCTAssertTrue(buttons(in: controller.view).contains { $0.title == "Trim…" })
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Remux to MKV…" && !button.isEnabled
+            }
+        )
         XCTAssertTrue(
             buttons(in: controller.view).contains { $0.title == "Encoding Test…" }
         )

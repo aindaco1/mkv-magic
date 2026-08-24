@@ -13,6 +13,10 @@ final class PrivacySafeSupportReportTests: XCTestCase {
             SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.videoTranscode),
             .videoTranscode
         )
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.remuxToMKV),
+            .remuxToMKV
+        )
     }
 
     override func setUpWithError() throws {

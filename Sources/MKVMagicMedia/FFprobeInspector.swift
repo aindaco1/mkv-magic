@@ -171,7 +171,9 @@ private struct FFprobeStream: Decodable {
             profile: profile,
             level: level,
             language: tags?["language"],
-            title: tags?["title"],
+            // ISO Base Media stores the user-visible per-track name under
+            // `name`; Matroska exposes the same concept as `title`.
+            title: tags?["title"] ?? tags?["name"],
             isDefault: disposition?["default"] == 1,
             isForced: disposition?["forced"] == 1,
             isCommentary: disposition?["comment"] == 1,

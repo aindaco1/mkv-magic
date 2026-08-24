@@ -57,12 +57,14 @@ public enum MediaCodecFamily: String, Codable, CaseIterable, Hashable, Sendable 
     case h264
     case hevc
     case proRes
+    case vp8
     case vp9
     case mpegVideo
     case aac
     case ac3
     case eac3
     case opus
+    case vorbis
     case flac
     case alac
     case pcm
@@ -77,6 +79,44 @@ public enum MediaCodecFamily: String, Codable, CaseIterable, Hashable, Sendable 
     case webVTT
     case timedText
     case other
+
+    public init(codec rawValue: String, kind: MediaTrackKind) {
+        let normalized =
+            rawValue.lowercased()
+            .replacingOccurrences(of: "-", with: "_")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: ".", with: "_")
+        self =
+            switch normalized {
+            case "av1", "a_av1", "v_av1": .av1
+            case "h264", "avc", "avc1", "v_mpeg4_iso_avc": .h264
+            case "hevc", "h265", "hev1", "hvc1", "v_mpegh_iso_hevc": .hevc
+            case let value where value.contains("prores"): .proRes
+            case "vp8", "v_vp8": .vp8
+            case "vp9", "v_vp9": .vp9
+            case "aac", "a_aac": .aac
+            case "ac3", "ac_3", "a_ac3": .ac3
+            case "eac3", "e_ac_3", "a_eac3": .eac3
+            case "opus", "a_opus": .opus
+            case "vorbis", "a_vorbis": .vorbis
+            case "flac", "a_flac": .flac
+            case "alac", "a_alac": .alac
+            case let value where value.contains("pcm"): .pcm
+            case "mp3", "a_mpeg_l3": .mp3
+            case let value where value.contains("dts"): .dts
+            case let value where value.contains("truehd"): .trueHD
+            case "srt", "subrip", "s_text_utf8": .subRip
+            case "ass", "s_text_ass": .ass
+            case "ssa", "s_text_ssa": .ssa
+            case let value where value.contains("pgs") || value.contains("hdmv_pgs"): .pgs
+            case let value where value.contains("vobsub") || value.contains("dvd_subtitle"):
+                .vobSub
+            case "webvtt", "vtt", "s_text_webvtt": .webVTT
+            case "tx3g", "mov_text", "timed_text": .timedText
+            case let value where value.contains("mpeg") && kind == .video: .mpegVideo
+            default: .other
+            }
+    }
 }
 
 public struct MediaTrackCountFacts: Codable, Hashable, Sendable {
@@ -158,7 +198,7 @@ public struct MediaJobInputFacts: Codable, Hashable, Sendable {
                 attachment: trackCounts[.attachment, default: 0],
                 unknown: trackCounts[.unknown, default: 0]
             ),
-            codecs: asset.tracks.map { Self.codecFamily($0.codec, kind: $0.kind) },
+            codecs: asset.tracks.map { MediaCodecFamily(codec: $0.codec, kind: $0.kind) },
             maximumAudioChannels: asset.tracks.filter { $0.kind == .audio }.compactMap(\.channels)
                 .max(),
             hasHDR: asset.tracks.contains { !$0.hdrFormats.isEmpty },
@@ -176,7 +216,7 @@ public struct MediaJobInputFacts: Codable, Hashable, Sendable {
             size: MediaSizeBucket(byteCount: fileSize),
             duration: .unknown,
             tracks: MediaTrackCountFacts(subtitle: 1),
-            codecs: [codecFamily(pathExtension, kind: .subtitle)],
+            codecs: [MediaCodecFamily(codec: pathExtension, kind: .subtitle)],
             maximumAudioChannels: nil,
             hasHDR: false,
             chapterCount: 0,
@@ -199,43 +239,6 @@ public struct MediaJobInputFacts: Codable, Hashable, Sendable {
         }
         if value.contains("avi") { return .avi }
         return value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .unknown : .other
-    }
-
-    private static func codecFamily(
-        _ rawValue: String,
-        kind: MediaTrackKind
-    ) -> MediaCodecFamily {
-        let normalized =
-            rawValue.lowercased()
-            .replacingOccurrences(of: "-", with: "_")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: ".", with: "_")
-        return switch normalized {
-        case "av1", "a_av1": .av1
-        case "h264", "avc", "avc1", "v_mpeg4_iso_avc": .h264
-        case "hevc", "h265", "hev1", "hvc1", "v_mpegh_iso_hevc": .hevc
-        case let value where value.contains("prores"): .proRes
-        case "vp9", "v_vp9": .vp9
-        case "aac", "a_aac": .aac
-        case "ac3", "ac_3", "a_ac3": .ac3
-        case "eac3", "e_ac_3", "a_eac3": .eac3
-        case "opus", "a_opus": .opus
-        case "flac", "a_flac": .flac
-        case "alac", "a_alac": .alac
-        case let value where value.contains("pcm"): .pcm
-        case "mp3", "a_mpeg_l3": .mp3
-        case let value where value.contains("dts"): .dts
-        case let value where value.contains("truehd"): .trueHD
-        case "srt", "subrip", "s_text/utf8": .subRip
-        case "ass", "s_text/ass": .ass
-        case "ssa", "s_text/ssa": .ssa
-        case let value where value.contains("pgs") || value.contains("hdmv_pgs"): .pgs
-        case let value where value.contains("vobsub") || value.contains("dvd_subtitle"): .vobSub
-        case "webvtt", "vtt", "s_text/webvtt": .webVTT
-        case "tx3g", "mov_text", "timed_text": .timedText
-        case let value where value.contains("mpeg") && kind == .video: .mpegVideo
-        default: .other
-        }
     }
 
     private static func chapterCount(_ chapters: [ChapterNode]) -> Int {
@@ -267,6 +270,7 @@ public enum BuiltInWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case fastTrim
     case exactTrim
     case videoTranscode
+    case remuxToMKV
 }
 
 public enum BuiltInWorkflowCatalog {
@@ -296,6 +300,9 @@ public enum BuiltInWorkflowCatalog {
     public static let videoTranscode = UUID(
         uuidString: "64FBC4F1-5764-4F44-89A4-E6B6A4A68940"
     )!
+    public static let remuxToMKV = UUID(
+        uuidString: "17A7AC0B-5184-42D7-ABAF-33269767A597"
+    )!
 
     public static func kind(for id: UUID) -> BuiltInWorkflowKind? {
         switch id {
@@ -312,6 +319,7 @@ public enum BuiltInWorkflowCatalog {
         case fastTrim: .fastTrim
         case exactTrim: .exactTrim
         case videoTranscode: .videoTranscode
+        case remuxToMKV: .remuxToMKV
         default: nil
         }
     }

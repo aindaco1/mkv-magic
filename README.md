@@ -223,6 +223,20 @@ after reopen. It intentionally fails closed for data tracks, multiple video
 tracks, source tags, unsupported HDR, incomplete facts, and non-MKV inputs or
 outputs.
 
+For a compatible inspected MP4, M4V, MOV, or chapter-free WebM,
+**Remux to MKV…** now provides the lossless container-change path that
+**Convert Video…** deliberately does not. It copies the reviewed video, audio,
+and supported subtitle streams in their original order with zero encodes. MP4
+and MOV chapter carriers become ordinary Matroska chapters; the segment title,
+track names, languages, technical facts, HDR facts, and playback/accessibility
+roles are checked on the result. MKV Magic fingerprints every ordered encoded
+packet promised as copied, validates the source revision throughout one private
+temporary-output transaction, commits atomically, and repeats the semantic and
+packet audits after reopening `— Remuxed.mkv`. MP4 timed text (TX3G) remains an
+explicit future conversion instead of being silently rewritten. Attachments,
+arbitrary data tracks, multiple video tracks, unknown codecs, and chaptered
+WebM fail closed until their exact preservation contracts are available.
+
 Exact Trim keeps **Balanced** as the default but also offers plain-language
 **Smaller File** and **Higher Quality** choices. An optional disclosure reveals
 the exact bounded control: AV1 RF 0–63 plus SVT speed preset 0–13, or HEVC/H.264
