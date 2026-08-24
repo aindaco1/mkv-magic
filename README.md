@@ -389,6 +389,13 @@ evolve. A source gate keeps future windows on that policy. This is automated
 AppKit coverage, not a claimed manual Full Keyboard Access traversal. See
 [docs/releases/M8_DYNAMIC_KEY_VIEW_LOOP_SLICE.md](docs/releases/M8_DYNAMIC_KEY_VIEW_LOOP_SLICE.md).
 
+Common-format video and audio cards now resolve their native separator border
+against the view's effective appearance and refresh it when that appearance
+changes. This fixes stale Light/Dark borders without adding custom themes or
+motion, and the source gate rejects future one-shot semantic-color conversion.
+See
+[docs/releases/M8_ADAPTIVE_APPEARANCE_FOUNDATION_SLICE.md](docs/releases/M8_ADAPTIVE_APPEARANCE_FOUNDATION_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

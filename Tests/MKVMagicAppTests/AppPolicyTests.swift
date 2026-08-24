@@ -25,6 +25,32 @@ private struct FixedAppQueueEnvironmentReader: MediaQueueSchedulingEnvironmentRe
 
 final class AppPolicyTests: XCTestCase {
     @MainActor
+    func testAppearanceAwareBorderTracksSemanticSeparatorAcrossAppearances() throws {
+        let view = AppearanceAwareBorderStackView(frame: .zero)
+        let lightAppearance = try XCTUnwrap(NSAppearance(named: .aqua))
+        let darkAppearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+
+        view.appearance = lightAppearance
+        view.viewDidChangeEffectiveAppearance()
+        let lightComponents = try XCTUnwrap(view.layer?.borderColor?.components)
+        var expectedLightColor: CGColor?
+        lightAppearance.performAsCurrentDrawingAppearance {
+            expectedLightColor = NSColor.separatorColor.cgColor
+        }
+        XCTAssertEqual(lightComponents, expectedLightColor?.components)
+
+        view.appearance = darkAppearance
+        view.viewDidChangeEffectiveAppearance()
+        let darkComponents = try XCTUnwrap(view.layer?.borderColor?.components)
+        var expectedDarkColor: CGColor?
+        darkAppearance.performAsCurrentDrawingAppearance {
+            expectedDarkColor = NSColor.separatorColor.cgColor
+        }
+        XCTAssertEqual(darkComponents, expectedDarkColor?.components)
+        XCTAssertNotEqual(lightComponents, darkComponents)
+    }
+
+    @MainActor
     func testKeyboardNavigationPolicyEnablesAutomaticRecalculationAndKeepsInitialResponder() {
         let content = NSViewController()
         let firstResponder = NSButton(title: "Start here", target: nil, action: nil)

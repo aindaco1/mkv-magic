@@ -39,6 +39,12 @@ if rg -n 'NSAccessibility\.post' Sources/MKVMagic --glob '*.swift' \
     failure=1
 fi
 
+if rg -n 'NSColor\.[A-Za-z0-9_]+Color\.cgColor' Sources/MKVMagic --glob '*.swift' \
+    --glob '!AppearanceAwareBorderStackView.swift' >&2; then
+    echo "layer borders must use the shared appearance-aware semantic view" >&2
+    failure=1
+fi
+
 if [[ "$failure" -ne 0 ]]; then
     exit 1
 fi

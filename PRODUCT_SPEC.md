@@ -1340,6 +1340,16 @@ properties, and the auto-discovered source gate rejects future windows that
 bypass it. Explicit Tab/Shift-Tab ordering with Full Keyboard Access on and off
 remains manual M8 acceptance.
 
+The adaptive-appearance foundation removes the only production conversion of a
+semantic AppKit color directly into a one-shot layer color. Common-format video
+and audio cards now share an appearance-aware native stack view that resolves
+the system separator color against its effective Light or Dark appearance and
+refreshes the border when that appearance changes. A runtime regression checks
+both appearances, and the source gate rejects future unscoped semantic-color to
+`CGColor` conversion outside that shared view. This is deterministic AppKit
+evidence, not a claimed manual Increase Contrast, Reduce Transparency, or
+visual contrast pass.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

@@ -415,7 +415,7 @@ final class CommonFormatJoinWindowController: NSWindowController {
 @MainActor
 private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDelegate {
     let laneIndex: Int
-    let view = NSStackView()
+    let view = AppearanceAwareBorderStackView(frame: .zero)
     var onChange: (() -> Void)?
 
     private let lane: JoinVideoLaneProposal
@@ -527,10 +527,6 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
         view.alignment = .leading
         view.spacing = 7
         view.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 6
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
         choiceRow.translatesAutoresizingMaskIntoConstraints = false
         advancedControls.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
@@ -712,7 +708,7 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
 @MainActor
 private final class CommonFormatJoinAudioLaneControls: NSObject {
     let laneIndex: Int
-    let view = NSStackView()
+    let view = AppearanceAwareBorderStackView(frame: .zero)
     var onChange: (() -> Void)?
 
     private let lane: JoinAudioLaneProposal
@@ -763,10 +759,6 @@ private final class CommonFormatJoinAudioLaneControls: NSObject {
         view.alignment = .leading
         view.spacing = 7
         view.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
-        view.wantsLayer = true
-        view.layer?.cornerRadius = 6
-        view.layer?.borderWidth = 1
-        view.layer?.borderColor = NSColor.separatorColor.cgColor
         refreshDetail()
     }
 
