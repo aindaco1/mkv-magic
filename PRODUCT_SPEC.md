@@ -358,9 +358,14 @@ encodes directly to the final verified output. When deterministic track,
 subtitle, or title steps also apply, MKV Magic first creates a private
 verified packet-copy/metadata intermediate and then performs exactly one final
 video encode. It never chains conversion generations. Audio and text subtitles
-remain packet-copied, and queue reinspection must reproduce the codec-bearing
-semantic plan before automatic execution. The reviewed source revision is
-retained through both immediate and queued starts.
+remain packet-copied by default. Once a video card exists, one dependent audio
+card may instead choose AAC, Opus, AC-3, E-AC-3, or FLAC for every retained audio
+track. The active probe and exact layout/rate policy must approve that format;
+each retained audio track is then encoded once inside the same FFmpeg process as
+the one video generation. Queue reinspection must reproduce the codec-bearing,
+audio-policy-bearing semantic plan before automatic execution. The reviewed
+source revision is retained through both immediate and queued starts. This
+dependent card does not yet claim a standalone audio-only workflow path.
 
 #### Video presets
 
@@ -532,7 +537,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v5 preserves that boundary. v1-v4 workflows
+identifier—and current schema v6 preserves that boundary. v1-v5 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 
@@ -1135,12 +1140,13 @@ static-HDR10 target. Each change invalidates approval, resolves a fresh immutabl
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
 Portable saved workflows now share the complete-file conversion path. Their
-schema-v5 cards choose the local recommendation or one explicit video preset,
-bind the resolved codec into plan review, and compose deterministic cleanup into
-a private verified intermediate followed by one final encode. A pinned-runtime
-integration proves the edit precedes the only FFmpeg video invocation, the final
-metadata/track/chapter/attachment contract passes, and the source digest is
-unchanged.
+schema-v6 cards choose the local recommendation or one explicit video preset,
+plus an optional dependent AAC, Opus, AC-3, E-AC-3, or FLAC audio policy. Plan
+review binds both locally verified choices and composes deterministic cleanup
+into a private verified intermediate followed by one final FFmpeg process. A
+pinned-runtime integration proves the edit precedes that only invocation, each
+retained audio track is encoded at most once, the final metadata/track/chapter/
+attachment contract passes, and the source digest is unchanged.
 Mixed BT.709 SDR and validated static HDR10 Join lanes now default to BT.709 SDR.
 The compiler preserves each SDR Part's BT.709 path, converts each HDR10 Part from
 PQ to linear light, applies bounded Mobius tone mapping with a peak derived from
@@ -1189,8 +1195,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v5
-retains that boundary and strictly migrates v1-v4 without allowing an older
+only the naming intent, never a source or generated filename; current schema v6
+retains that boundary and strictly migrates v1-v5 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 

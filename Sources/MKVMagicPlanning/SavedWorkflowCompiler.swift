@@ -14,9 +14,12 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case externalSubtitleCleanupRequiresAddStep
     case missingExternalSubtitleCleanupReview
     case multipleVideoConversions
+    case multipleAudioConversions
+    case audioConversionRequiresVideoConversion
     case noAvailableVideoEncoder
     case unavailableVideoPreset(VideoPreset)
-    case unsupportedVideoConversion(ExactTrimPlanningError)
+    case unavailableAudioPreset(AudioTranscodePreset)
+    case unsupportedMediaConversion(ExactTrimPlanningError)
     case unstableTrackIdentity
     case wouldRemoveAllTracks
     case noApplicableChanges
@@ -42,11 +45,17 @@ extension SavedWorkflowCompilationError: LocalizedError {
             "Review the external subtitle cleanup suggestions before previewing this workflow."
         case .multipleVideoConversions:
             "A saved workflow can contain only one enabled video-conversion step."
+        case .multipleAudioConversions:
+            "A saved workflow can contain only one enabled audio-conversion step."
+        case .audioConversionRequiresVideoConversion:
+            "Add and enable one video-conversion step before converting audio in the same pass."
         case .noAvailableVideoEncoder:
             "No bundled video encoder passed the local capability check on this Mac."
         case .unavailableVideoPreset(let preset):
             "The selected \(preset.displayName) encoder did not pass the local capability check on this Mac."
-        case .unsupportedVideoConversion(let error):
+        case .unavailableAudioPreset(let preset):
+            "The selected \(preset.displayName) audio encoder did not pass the local capability check on this Mac."
+        case .unsupportedMediaConversion(let error):
             error.localizedDescription
         case .unstableTrackIdentity:
             "This file does not expose stable Matroska identifiers for every track."
@@ -80,13 +89,16 @@ public struct SavedWorkflowResolvedInputs: Equatable, Sendable {
     /// Ordered by the active local recommendation. Paths and probe details never
     /// enter the portable recipe.
     public let availableVideoPresets: [VideoPreset]
+    public let availableAudioPresets: [AudioTranscodePreset]
 
     public init(
         externalSubtitle: SavedWorkflowExternalSubtitleInput? = nil,
-        availableVideoPresets: [VideoPreset] = []
+        availableVideoPresets: [VideoPreset] = [],
+        availableAudioPresets: [AudioTranscodePreset] = []
     ) {
         self.externalSubtitle = externalSubtitle
         self.availableVideoPresets = availableVideoPresets
+        self.availableAudioPresets = availableAudioPresets
     }
 }
 
@@ -202,6 +214,10 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public var hasDeterministicMediaOperations: Bool {
         trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
     }
+
+    public var audioConversionPreset: AudioTranscodePreset? {
+        videoConversionChoice?.audioPolicy.transcodePreset
+    }
 }
 
 public struct SavedWorkflowCompiler: Sendable {
@@ -258,6 +274,23 @@ public struct SavedWorkflowCompiler: Sendable {
         let enabledVideoConversions = enabledSteps.filter { $0.action.isVideoConversion }
         guard enabledVideoConversions.count <= 1 else {
             throw SavedWorkflowCompilationError.multipleVideoConversions
+        }
+        let enabledAudioConversions = enabledSteps.filter { $0.action.isAudioConversion }
+        guard enabledAudioConversions.count <= 1 else {
+            throw SavedWorkflowCompilationError.multipleAudioConversions
+        }
+        guard enabledAudioConversions.isEmpty || enabledVideoConversions.count == 1 else {
+            throw SavedWorkflowCompilationError.audioConversionRequiresVideoConversion
+        }
+        let audioTrackCount = asset.tracks.count { $0.kind == .audio }
+        var audioPolicy = ExactTrimAudioPolicy.packetCopy
+        if audioTrackCount > 0,
+            let preset = enabledAudioConversions.first?.action.audioTranscodePreset
+        {
+            guard inputs.availableAudioPresets.contains(preset) else {
+                throw SavedWorkflowCompilationError.unavailableAudioPreset(preset)
+            }
+            audioPolicy = ExactTrimAudioPolicy(preset: preset)
         }
         if enabledActions.contains(.cleanExternalSubtitleText),
             !enabledActions.contains(.addExternalSubtitle)
@@ -403,7 +436,9 @@ public struct SavedWorkflowCompiler: Sendable {
                 let choice = try resolveVideoConversionChoice(
                     for: step.action,
                     asset: asset,
-                    availableVideoPresets: inputs.availableVideoPresets
+                    audioPolicy: audioPolicy,
+                    availableVideoPresets: inputs.availableVideoPresets,
+                    availableAudioPresets: inputs.availableAudioPresets
                 )
                 videoConversionChoice = choice
                 operations.append(.transcodeVideo(choice.videoPreset))
@@ -411,10 +446,33 @@ public struct SavedWorkflowCompiler: Sendable {
                     outcome(
                         for: step,
                         disposition: .applied,
-                        detail:
-                            "Encode video once as \(choice.videoPreset.displayName); packet-copy every audio and subtitle track"
+                        detail: videoConversionDetail(choice, audioTrackCount: audioTrackCount)
                     )
                 )
+            case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+                .convertAudioEAC3, .convertAudioFLAC:
+                guard let preset = step.action.audioTranscodePreset else {
+                    preconditionFailure("A non-audio action reached audio conversion review")
+                }
+                if audioTrackCount == 0 {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No audio tracks are present."
+                        )
+                    )
+                } else {
+                    let noun = audioTrackCount == 1 ? "track" : "tracks"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail:
+                                "Encode \(audioTrackCount) audio \(noun) once as \(preset.displayName), preserving each channel layout"
+                        )
+                    )
+                }
             }
         }
         if !removalTrackUIDs.isEmpty {
@@ -472,7 +530,8 @@ public struct SavedWorkflowCompiler: Sendable {
             )
             plan = reviewedPlan(
                 try WorkflowPlanner().plan(asset: asset, workflow: resolved),
-                videoConversionChoice: videoConversionChoice
+                videoConversionChoice: videoConversionChoice,
+                audioTrackCount: audioTrackCount
             )
         }
         let compiled = CompiledSavedWorkflow(
@@ -545,6 +604,9 @@ public struct SavedWorkflowCompiler: Sendable {
         case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
             .convertVideoH264, .convertVideoProRes:
             "Convert video once"
+        case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+            .convertAudioEAC3, .convertAudioFLAC:
+            "Convert audio in the same pass"
         }
     }
 
@@ -567,13 +629,18 @@ public struct SavedWorkflowCompiler: Sendable {
         case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
             .convertVideoH264, .convertVideoProRes:
             "No video conversion was selected."
+        case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+            .convertAudioEAC3, .convertAudioFLAC:
+            "No audio conversion was selected."
         }
     }
 
     private func resolveVideoConversionChoice(
         for action: SavedWorkflowAction,
         asset: MediaAsset,
-        availableVideoPresets: [VideoPreset]
+        audioPolicy: ExactTrimAudioPolicy,
+        availableVideoPresets: [VideoPreset],
+        availableAudioPresets: [AudioTranscodePreset]
     ) throws -> ExactTrimChoice {
         let orderedPresets = availableVideoPresets.reduce(into: [VideoPreset]()) {
             if !$0.contains($1) { $0.append($1) }
@@ -604,21 +671,27 @@ public struct SavedWorkflowCompiler: Sendable {
         }
         let planner = ExactTrimPlanner()
         guard let duration = asset.duration else {
-            throw SavedWorkflowCompilationError.unsupportedVideoConversion(.invalidDuration)
+            throw SavedWorkflowCompilationError.unsupportedMediaConversion(.invalidDuration)
         }
         guard asset.tracks.contains(where: { $0.kind == .video }) else {
-            throw SavedWorkflowCompilationError.unsupportedVideoConversion(.unsupportedTracks)
+            throw SavedWorkflowCompilationError.unsupportedMediaConversion(.unsupportedTracks)
         }
         guard
-            let choice = planner.recommendedChoice(
+            let recommended = planner.recommendedChoice(
                 for: asset,
                 availableVideoPresets: candidatePresets
             )
         else {
-            throw SavedWorkflowCompilationError.unsupportedVideoConversion(
+            throw SavedWorkflowCompilationError.unsupportedMediaConversion(
                 .unsupportedDynamicRange
             )
         }
+        let choice = ExactTrimChoice(
+            videoPreset: recommended.videoPreset,
+            videoRateControl: recommended.videoRateControl,
+            encoderTuning: recommended.encoderTuning,
+            audioPolicy: audioPolicy
+        )
         do {
             _ = try planner.resolve(
                 source: asset,
@@ -626,25 +699,36 @@ public struct SavedWorkflowCompiler: Sendable {
                 choice: choice,
                 operation: .transcode,
                 availableVideoPresets: Set(orderedPresets),
-                aacAvailable: false
+                aacAvailable: availableAudioPresets.contains(.aacCompatibility),
+                availableAudioPresets: Set(availableAudioPresets)
             )
         } catch let error as ExactTrimPlanningError {
-            throw SavedWorkflowCompilationError.unsupportedVideoConversion(error)
+            throw SavedWorkflowCompilationError.unsupportedMediaConversion(error)
         }
         return choice
     }
 
     private func reviewedPlan(
         _ plan: ExecutionPlan,
-        videoConversionChoice: ExactTrimChoice?
+        videoConversionChoice: ExactTrimChoice?,
+        audioTrackCount: Int
     ) -> ExecutionPlan {
         guard let videoConversionChoice else { return plan }
+        let audioPreset = videoConversionChoice.audioPolicy.transcodePreset
+        let encodeSummary: String
+        if let audioPreset {
+            let noun = audioTrackCount == 1 ? "track" : "tracks"
+            encodeSummary =
+                "Encode video once as \(videoConversionChoice.videoPreset.displayName) and \(audioTrackCount) audio \(noun) once as \(audioPreset.displayName); packet-copy subtitles"
+        } else {
+            encodeSummary =
+                "Encode video once as \(videoConversionChoice.videoPreset.displayName) while packet-copying audio and subtitles"
+        }
         let encode = plan.stages.filter { $0.mechanism == .ffmpegEncode }.map {
             PlanStage(
                 id: $0.id,
                 mechanism: $0.mechanism,
-                summary:
-                    "Encode video once as \(videoConversionChoice.videoPreset.displayName) while packet-copying audio and subtitles"
+                summary: encodeSummary
             )
         }
         let preparation = plan.stages.filter {
@@ -655,7 +739,26 @@ public struct SavedWorkflowCompiler: Sendable {
         }
         return ExecutionPlan(
             stages: preparation + encode + completion,
-            impact: plan.impact
+            impact: PlanImpact(
+                videoEncodeCount: plan.impact.videoEncodeCount,
+                audioEncodeCount: audioPreset == nil ? 0 : audioTrackCount,
+                copiesVideo: plan.impact.copiesVideo,
+                changesSourceBeforeVerification: plan.impact.changesSourceBeforeVerification,
+                warnings: plan.impact.warnings
+            )
         )
+    }
+
+    private func videoConversionDetail(
+        _ choice: ExactTrimChoice,
+        audioTrackCount: Int
+    ) -> String {
+        guard let preset = choice.audioPolicy.transcodePreset else {
+            return
+                "Encode video once as \(choice.videoPreset.displayName); packet-copy every audio and subtitle track"
+        }
+        let noun = audioTrackCount == 1 ? "track" : "tracks"
+        return
+            "Encode video once as \(choice.videoPreset.displayName) and \(audioTrackCount) audio \(noun) once as \(preset.displayName); packet-copy subtitles"
     }
 }

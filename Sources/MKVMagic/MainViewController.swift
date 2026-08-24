@@ -1155,6 +1155,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 parentWindow: parentWindow,
                 externalSubtitle: externalSubtitle,
                 availableVideoPresets: [],
+                availableAudioPresets: [],
                 sourceDisposition: sourceDisposition,
                 retryingQueueJobID: retryingQueueJobID
             )
@@ -1177,6 +1178,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 parentWindow: parentWindow,
                 externalSubtitle: externalSubtitle,
                 availableVideoPresets: capabilities.availableVideoPresets,
+                availableAudioPresets: capabilities.availableAudioPresets,
                 sourceDisposition: sourceDisposition,
                 retryingQueueJobID: retryingQueueJobID
             )
@@ -1189,6 +1191,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         parentWindow: NSWindow,
         externalSubtitle: ReviewedExternalSubtitle?,
         availableVideoPresets: [VideoPreset],
+        availableAudioPresets: [AudioTranscodePreset],
         sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?
     ) {
@@ -1204,7 +1207,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 for: asset,
                 inputs: SavedWorkflowResolvedInputs(
                     externalSubtitle: externalSubtitle?.resolvedInput,
-                    availableVideoPresets: availableVideoPresets
+                    availableVideoPresets: availableVideoPresets,
+                    availableAudioPresets: availableAudioPresets
                 )
             )
             let controller = WorkflowPlanReviewWindowController(

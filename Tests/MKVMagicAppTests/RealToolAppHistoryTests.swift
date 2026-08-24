@@ -162,21 +162,25 @@ final class RealToolAppHistoryTests: XCTestCase {
         let reviewedRevision = try XCTUnwrap(model.reviewedSourceRevision(for: source))
         XCTAssertEqual(reviewedRevision, try MediaFileRevisionReader().read(sourceURL))
         let capabilities = await model.probeEncodingCapabilities()
-        guard capabilities.h264VideoToolbox == .verified else {
-            throw XCTSkip("The bundled H.264 encoder is unavailable")
+        guard capabilities.h264VideoToolbox == .verified,
+            capabilities.availableAudioPresets.contains(.flacLossless)
+        else {
+            throw XCTSkip("The bundled H.264 and FLAC encoders are unavailable")
         }
         let recipe = SavedWorkflow(
             name: "Clean and convert once",
             steps: [
                 SavedWorkflowStep(action: .removeSegmentTitle),
                 SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .convertAudioFLAC),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(
             recipe,
             for: source,
             inputs: SavedWorkflowResolvedInputs(
-                availableVideoPresets: capabilities.availableVideoPresets
+                availableVideoPresets: capabilities.availableVideoPresets,
+                availableAudioPresets: capabilities.availableAudioPresets
             )
         )
         try await queueStore.save(MediaQueueSnapshot(isPaused: true, updatedAt: Date()))
@@ -195,13 +199,14 @@ final class RealToolAppHistoryTests: XCTestCase {
         let output = try XCTUnwrap(model.assets.first { $0.sourceURL == destinationURL })
 
         XCTAssertEqual(output.tracks.first?.codec, "h264")
+        XCTAssertEqual(output.tracks.dropFirst().first?.codec, "flac")
         XCTAssertNil(output.metadata["title"])
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
         let records = try await historyStore.load()
         let record = try XCTUnwrap(records.first)
         XCTAssertEqual(
             record.privacySafePlan,
-            MediaJobPlanFacts(videoEncodeGenerations: 1, audioTracksEncoded: 0)
+            MediaJobPlanFacts(videoEncodeGenerations: 1, audioTracksEncoded: 1)
         )
         XCTAssertEqual(
             record.events.map(\.state),

@@ -103,18 +103,41 @@ final class SavedWorkflowStoreTests: XCTestCase {
     func testPortableFileStoresConversionIntentWithoutLocalProbeOrEncodingDetails() throws {
         let workflow = SavedWorkflow(
             name: "Recommended conversion",
-            steps: [SavedWorkflowStep(action: .convertVideoRecommended)]
+            steps: [
+                SavedWorkflowStep(action: .convertVideoRecommended),
+                SavedWorkflowStep(action: .convertAudioFLAC),
+            ]
         )
 
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
         XCTAssertTrue(json.contains("convertVideoRecommended"))
+        XCTAssertTrue(json.contains("convertAudioFLAC"))
         XCTAssertFalse(json.contains("availableVideoPresets"))
         XCTAssertFalse(json.contains("videoRateControl"))
         XCTAssertFalse(json.contains("encoderTuning"))
         XCTAssertFalse(json.contains("ffmpeg"))
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionFiveMigratesButCannotClaimVersionSixAudioAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":5,"name":"Convert video","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"convertVideoAV1"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":5,"name":"Invalid audio backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"convertAudioAAC"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
     }
 
     func testVersionFourMigratesButCannotClaimVersionFiveConversionAction() throws {

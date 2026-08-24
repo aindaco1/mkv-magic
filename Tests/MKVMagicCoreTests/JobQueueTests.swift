@@ -81,7 +81,10 @@ final class JobQueueTests: XCTestCase {
             MediaQueueAutomaticWorkflowPolicy.supports(
                 SavedWorkflow(
                     name: "Convert once",
-                    steps: [SavedWorkflowStep(action: .convertVideoRecommended)]
+                    steps: [
+                        SavedWorkflowStep(action: .convertVideoRecommended),
+                        SavedWorkflowStep(action: .convertAudioAAC),
+                    ]
                 ),
                 inputCount: 1
             )

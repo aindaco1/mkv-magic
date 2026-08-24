@@ -2568,6 +2568,23 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testWorkflowEditorKeepsAudioConversionDependentOnVideoConversion() {
+        var workflow = SavedWorkflow(name: "One fused conversion", steps: [])
+
+        XCTAssertFalse(WorkflowEditorPolicy.add(.convertAudioAAC, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.add(.convertVideoRecommended, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 0, in: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.add(.convertAudioAAC, to: &workflow))
+        XCTAssertTrue(workflow.steps[0].isEnabled)
+        XCTAssertFalse(WorkflowEditorPolicy.add(.convertAudioOpus, to: &workflow))
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(false, at: 0, in: &workflow))
+        XCTAssertFalse(workflow.steps[1].isEnabled)
+        XCTAssertTrue(WorkflowEditorPolicy.setStepEnabled(true, at: 1, in: &workflow))
+        XCTAssertTrue(workflow.steps[0].isEnabled)
+        XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
+        XCTAssertTrue(workflow.steps.isEmpty)
+    }
+
     func testWorkflowEditorKeepsExternalSubtitleCleanupDependencyIntuitive() {
         var workflow = SavedWorkflow(name: "Subtitle recipe", steps: [])
 

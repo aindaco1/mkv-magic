@@ -471,8 +471,10 @@ final class RealToolExactTrimTests: XCTestCase {
             ffmpegURL: ffmpegURL,
             runner: fixtureRunner
         ).probe()
-        guard capabilities.h264VideoToolbox == .verified else {
-            throw XCTSkip("The bundled H.264 fixture and conversion encoder is unavailable")
+        guard capabilities.h264VideoToolbox == .verified,
+            capabilities.availableAudioPresets.contains(.flacLossless)
+        else {
+            throw XCTSkip("The bundled H.264 and FLAC conversion encoders are unavailable")
         }
 
         try await PrivateTemporaryDirectory.withDirectory(
@@ -500,13 +502,15 @@ final class RealToolExactTrimTests: XCTestCase {
                 steps: [
                     SavedWorkflowStep(action: .removeSegmentTitle),
                     SavedWorkflowStep(action: .convertVideoH264),
+                    SavedWorkflowStep(action: .convertAudioFLAC),
                 ]
             )
             let compiled = try SavedWorkflowCompiler().compile(
                 workflow,
                 for: source,
                 inputs: SavedWorkflowResolvedInputs(
-                    availableVideoPresets: capabilities.availableVideoPresets
+                    availableVideoPresets: capabilities.availableVideoPresets,
+                    availableAudioPresets: capabilities.availableAudioPresets
                 )
             )
             let destination = root.appendingPathComponent("Workflow Converted.mkv")
@@ -536,6 +540,8 @@ final class RealToolExactTrimTests: XCTestCase {
             XCTAssertNil(segmentTitle(output))
             XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
             XCTAssertEqual(output.tracks[0].codec, "h264")
+            XCTAssertEqual(output.tracks[1].codec, "flac")
+            XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
             XCTAssertEqual(output.attachments.count, 1)
             XCTAssertEqual(output.chapterEntryCount, 1)
             XCTAssertEqual(

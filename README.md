@@ -57,15 +57,20 @@ The reviewed plan binds the actual local preset and its one-generation impact.
 If cleanup, track removal, title removal, or subtitle muxing is also applicable,
 MKV Magic commits those packet-copy changes only to a private verified
 intermediate, then performs one complete-file video encode into the final
-destination. Audio and subtitles remain exact packet copies, nested chapters,
-attachments, HDR10, and reviewed metadata are verified, and the source revision
-is bound from plan acceptance through queueing or immediate execution. A
-conversion-only recipe skips the intermediate. Automatic queue reinspection
-must resolve the same codec-bearing semantic plan or move the job to Needs
-Review.
-Workflow schema v5 still stores only portable action intent—never paths, local
+destination. Audio and subtitles remain exact packet copies by default. After
+adding a video card, an optional single audio card can explicitly convert every
+retained audio track once to locally verified AAC, Opus, AC-3, E-AC-3, or FLAC
+while preserving each known channel layout. Unsafe layout/rate choices fail
+before execution, and video plus audio remain fused in the same single FFmpeg
+process. Nested chapters, attachments, HDR10, and reviewed metadata are
+verified, and the source revision is bound from plan acceptance through queueing
+or immediate execution. A conversion-only recipe skips the intermediate.
+Automatic queue reinspection must resolve the same codec-bearing semantic plan
+or move the job to Needs Review. Standalone audio-only workflow conversion is
+not claimed by this fused card.
+Workflow schema v6 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v4 workflow files migrate
+Original v1-v5 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,

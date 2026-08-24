@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 5
+    public static let currentSchemaVersion = 6
 
     public let id: UUID
     public var schemaVersion: Int
@@ -52,6 +52,11 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case convertVideoHEVC
     case convertVideoH264
     case convertVideoProRes
+    case convertAudioAAC
+    case convertAudioOpus
+    case convertAudioAC3
+    case convertAudioEAC3
+    case convertAudioFLAC
 
     public var isVideoConversion: Bool {
         switch self {
@@ -60,6 +65,36 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             true
         default:
             false
+        }
+    }
+
+    public var isAudioConversion: Bool {
+        audioTranscodePreset != nil
+    }
+
+    public var audioTranscodePreset: AudioTranscodePreset? {
+        switch self {
+        case .convertAudioAAC: .aacCompatibility
+        case .convertAudioOpus: .opusQuality
+        case .convertAudioAC3: .ac3Compatibility
+        case .convertAudioEAC3: .eac3Compatibility
+        case .convertAudioFLAC: .flacLossless
+        default: nil
+        }
+    }
+
+    public var minimumSchemaVersion: Int {
+        switch self {
+        case .addExternalSubtitle: 2
+        case .cleanExternalSubtitleText: 3
+        case .normalizeFilename: 4
+        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
+            .convertVideoH264, .convertVideoProRes:
+            5
+        case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+            .convertAudioEAC3, .convertAudioFLAC:
+            6
+        default: 1
         }
     }
 
@@ -77,11 +112,20 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .convertVideoHEVC: "Convert video: HEVC 10-bit"
         case .convertVideoH264: "Convert video: H.264 8-bit"
         case .convertVideoProRes: "Convert video: ProRes 10-bit"
+        case .convertAudioAAC: "With video conversion: Convert audio to AAC"
+        case .convertAudioOpus: "With video conversion: Convert audio to Opus"
+        case .convertAudioAC3: "With video conversion: Convert audio to AC-3"
+        case .convertAudioEAC3: "With video conversion: Convert audio to E-AC-3"
+        case .convertAudioFLAC: "With video conversion: Convert audio to FLAC"
         }
     }
 
     public var explanation: String {
-        switch self {
+        if let preset = audioTranscodePreset {
+            return
+                "During the same reviewed full-file video conversion, encode every retained audio track once as \(preset.displayName) while preserving each known channel layout."
+        }
+        return switch self {
         case .englishLibraryCleanup:
             "Suggest removable subtitle tracks while preserving audio, commentary, signs, and unknown languages."
         case .removeNonEnglishSubtitles:
@@ -97,15 +141,18 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .cleanExternalSubtitleText:
             "Review deterministic ad, whitespace, and English OCR suggestions for the added subtitle, then feed only accepted edits into the same remux."
         case .convertVideoRecommended:
-            "Choose the first compatible encoder recommended by this Mac's verified capability check and optional Encoding Test. Copy audio and subtitles exactly, preserve HDR10 when present, and encode video once."
+            "Choose the first compatible encoder recommended by this Mac's verified capability check and optional Encoding Test. Encode video once, preserve HDR10 when present, and packet-copy audio and subtitles unless an explicit audio card is added."
         case .convertVideoAV1:
-            "Encode video once as compact 10-bit AV1 when the bundled encoder passes its local check. Copy audio and subtitles exactly and preserve HDR10 when present."
+            "Encode video once as compact 10-bit AV1 when the bundled encoder passes its local check. Preserve HDR10 when present and packet-copy audio and subtitles unless an explicit audio card is added."
         case .convertVideoHEVC:
-            "Encode video once as 10-bit HEVC with VideoToolbox when it passes its local check. This is the faster choice for many Intel Macs. Copy audio and subtitles exactly."
+            "Encode video once as 10-bit HEVC with VideoToolbox when it passes its local check. This is the faster choice for many Intel Macs. Packet-copy audio and subtitles unless an explicit audio card is added."
         case .convertVideoH264:
-            "Encode video once as broadly compatible 8-bit H.264 when it passes its local check. This step is limited to SDR sources and copies audio and subtitles exactly."
+            "Encode video once as broadly compatible 8-bit H.264 when it passes its local check. This step is limited to SDR sources and packet-copies audio and subtitles unless an explicit audio card is added."
         case .convertVideoProRes:
-            "Encode video once as edit-friendly 10-bit ProRes when it passes its local check. This step is limited to SDR sources and copies audio and subtitles exactly."
+            "Encode video once as edit-friendly 10-bit ProRes when it passes its local check. This step is limited to SDR sources and packet-copies audio and subtitles unless an explicit audio card is added."
+        case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
+            .convertAudioEAC3, .convertAudioFLAC:
+            preconditionFailure("Audio actions return their shared explanation above")
         }
     }
 }
@@ -118,55 +165,18 @@ public struct SavedWorkflowMigrator: Sendable {
     public init() {}
 
     public func migrate(_ workflow: SavedWorkflow) throws -> SavedWorkflow {
-        switch workflow.schemaVersion {
-        case SavedWorkflow.currentSchemaVersion:
-            return workflow
-        case 4:
-            guard workflow.steps.allSatisfy({ !$0.action.isVideoConversion }) else {
-                throw SavedWorkflowMigrationError.unsupportedSchema
-            }
-            var migrated = workflow
-            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
-            return migrated
-        case 3:
-            guard
-                workflow.steps.allSatisfy({
-                    $0.action != .normalizeFilename && !$0.action.isVideoConversion
-                })
-            else {
-                throw SavedWorkflowMigrationError.unsupportedSchema
-            }
-            var migrated = workflow
-            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
-            return migrated
-        case 2:
-            guard
-                workflow.steps.allSatisfy({
-                    $0.action != .cleanExternalSubtitleText && $0.action != .normalizeFilename
-                        && !$0.action.isVideoConversion
-                })
-            else {
-                throw SavedWorkflowMigrationError.unsupportedSchema
-            }
-            var migrated = workflow
-            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
-            return migrated
-        case 1:
-            guard
-                workflow.steps.allSatisfy({
-                    $0.action != .addExternalSubtitle
-                        && $0.action != .cleanExternalSubtitleText
-                        && $0.action != .normalizeFilename
-                        && !$0.action.isVideoConversion
-                })
-            else {
-                throw SavedWorkflowMigrationError.unsupportedSchema
-            }
-            var migrated = workflow
-            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
-            return migrated
-        default:
+        guard (1...SavedWorkflow.currentSchemaVersion).contains(workflow.schemaVersion),
+            workflow.steps.allSatisfy({
+                $0.action.minimumSchemaVersion <= workflow.schemaVersion
+            })
+        else {
             throw SavedWorkflowMigrationError.unsupportedSchema
         }
+        guard workflow.schemaVersion != SavedWorkflow.currentSchemaVersion else {
+            return workflow
+        }
+        var migrated = workflow
+        migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
+        return migrated
     }
 }

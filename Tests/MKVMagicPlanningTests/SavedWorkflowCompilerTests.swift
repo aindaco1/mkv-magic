@@ -104,6 +104,118 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         }
     }
 
+    func testAudioConversionRequiresExactlyOneVideoConversion() {
+        let audioOnly = SavedWorkflow(
+            name: "Audio only is not fused yet",
+            steps: [SavedWorkflowStep(action: .convertAudioAAC)]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                audioOnly,
+                for: makeConvertibleAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableAudioPresets: [.aacCompatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .audioConversionRequiresVideoConversion
+            )
+        }
+
+        let multiple = SavedWorkflow(
+            name: "Ambiguous audio",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .convertAudioAAC),
+                SavedWorkflowStep(action: .convertAudioOpus),
+            ]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                multiple,
+                for: makeConvertibleAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.h264Compatibility],
+                    availableAudioPresets: [.aacCompatibility, .opusQuality]
+                )
+            )
+        ) {
+            XCTAssertEqual($0 as? SavedWorkflowCompilationError, .multipleAudioConversions)
+        }
+    }
+
+    func testAudioConversionFusesIntoVideoPassAndRequiresCompatibleLocalEncoder() throws {
+        let workflow = SavedWorkflow(
+            name: "Compact audio and video",
+            steps: [
+                SavedWorkflowStep(action: .convertAudioOpus),
+                SavedWorkflowStep(action: .convertVideoH264),
+            ]
+        )
+        let inputs = SavedWorkflowResolvedInputs(
+            availableVideoPresets: [.h264Compatibility],
+            availableAudioPresets: [.opusQuality]
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeConvertibleAsset(),
+            inputs: inputs
+        )
+
+        XCTAssertEqual(compiled.audioConversionPreset, .opusQuality)
+        XCTAssertEqual(compiled.videoConversionChoice?.audioPolicy, .opusPreserveLayout)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+        XCTAssertEqual(
+            compiled.plan.stages.first(where: { $0.mechanism == .ffmpegEncode })?.summary,
+            "Encode video once as H.264 8-bit and 1 audio track once as Opus; packet-copy subtitles"
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeConvertibleAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.h264Compatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unavailableAudioPreset(.opusQuality)
+            )
+        }
+    }
+
+    func testAudioConversionRejectsImplicitDownmixOrRematrix() {
+        let workflow = SavedWorkflow(
+            name: "Unsafe AC-3",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .convertAudioAC3),
+            ]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeConvertibleAsset(audioChannels: 8, audioLayout: "7.1"),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.h264Compatibility],
+                    availableAudioPresets: [.ac3Compatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unsupportedMediaConversion(.incompleteAudioFacts(trackID: 1))
+            )
+        }
+    }
+
     func testFilenameOnlyWorkflowCreatesReviewedUnchangedCopyPlan() throws {
         let workflow = SavedWorkflow(
             name: "Jellyfin filename",
@@ -619,7 +731,12 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
     }
 
-    private func makeConvertibleAsset(title: String? = nil, hdr10: Bool = false) -> MediaAsset {
+    private func makeConvertibleAsset(
+        title: String? = nil,
+        hdr10: Bool = false,
+        audioChannels: Int = 2,
+        audioLayout: String = "stereo"
+    ) -> MediaAsset {
         MediaAsset(
             sourceURL: URL(fileURLWithPath: "/private/media/Feature.mkv"),
             container: "matroska,webm",
@@ -657,8 +774,8 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                     uid: 101,
                     language: "en",
                     isDefault: true,
-                    channels: 2,
-                    channelLayout: "stereo",
+                    channels: audioChannels,
+                    channelLayout: audioLayout,
                     sampleRate: 48_000
                 ),
             ],

@@ -60,45 +60,63 @@ final class AppModel {
 
         var planningMessage: String {
             switch self {
-            case .metadata: "Zero video encodes; mkvpropedit on a verified clone."
-            case .trackRemoval: "Zero video encodes; mkvmerge copies the retained streams."
+            case .metadata:
+                return "Zero video encodes; mkvpropedit on a verified clone."
+            case .trackRemoval:
+                return "Zero video encodes; mkvmerge copies the retained streams."
             case .saved(let workflow, _):
-                workflow.createsUnchangedCopy
-                    ? "Zero encodes; create and verify one unchanged output copy."
-                    : workflow.plan.impact.videoEncodeCount == 0
-                        ? "Zero video encodes; all enabled steps share one verified output pipeline."
-                        : "All video-affecting steps are fused into one encode."
+                if workflow.createsUnchangedCopy {
+                    return "Zero encodes; create and verify one unchanged output copy."
+                }
+                guard workflow.plan.impact.videoEncodeCount > 0 else {
+                    return
+                        "Zero video encodes; all enabled steps share one verified output pipeline."
+                }
+                let audioCount = workflow.plan.impact.audioEncodeCount
+                guard audioCount > 0 else {
+                    return "All video-affecting steps are fused into one encode."
+                }
+                let noun = audioCount == 1 ? "track" : "tracks"
+                return
+                    "One video generation and \(audioCount) audio \(noun) are fused into one FFmpeg process."
             case .externalSubtitle(let preview, _):
-                "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
+                return
+                    "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
             case .embeddedSubtitle(let preview, _):
-                "Zero encodes; replace one reviewed embedded \(preview.format.displayName) track at its original position in one verified remux."
+                return
+                    "Zero encodes; replace one reviewed embedded \(preview.format.displayName) track at its original position in one verified remux."
             case .chapters(_, let document):
-                "Zero encodes; replace the chapter document with \(document.chapterCount) reviewed nested entries on a verified clone."
+                return
+                    "Zero encodes; replace the chapter document with \(document.chapterCount) reviewed nested entries on a verified clone."
             }
         }
 
         var runningMessage: String {
             switch self {
-            case .metadata: "Editing a temporary clone."
-            case .trackRemoval: "Remuxing retained tracks to a temporary output."
+            case .metadata: return "Editing a temporary clone."
+            case .trackRemoval: return "Remuxing retained tracks to a temporary output."
             case .saved(let workflow, _):
                 if workflow.videoConversionChoice != nil {
-                    workflow.hasDeterministicMediaOperations
-                        ? "Preparing one verified private remux, then encoding video once."
-                        : "Encoding video once while copying audio and subtitles."
+                    let encoding =
+                        workflow.audioConversionPreset == nil
+                        ? "encoding video once"
+                        : "encoding video once and each retained audio track once"
+                    return workflow.hasDeterministicMediaOperations
+                        ? "Preparing one verified private remux, then \(encoding)."
+                        : "\(encoding.prefix(1).uppercased())\(encoding.dropFirst()) while copying every retained subtitle."
                 } else if workflow.createsUnchangedCopy {
-                    "Creating one unchanged temporary clone."
+                    return "Creating one unchanged temporary clone."
                 } else if workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil {
-                    "Editing one temporary clone."
+                    return "Editing one temporary clone."
                 } else {
-                    "Applying all workflow steps to one temporary remux."
+                    return "Applying all workflow steps to one temporary remux."
                 }
             case .externalSubtitle:
-                "Adding one reviewed subtitle to a temporary MKV remux."
+                return "Adding one reviewed subtitle to a temporary MKV remux."
             case .embeddedSubtitle:
-                "Replacing one reviewed embedded subtitle in a temporary MKV remux."
+                return "Replacing one reviewed embedded subtitle in a temporary MKV remux."
             case .chapters:
-                "Replacing chapters in one temporary MKV clone."
+                return "Replacing chapters in one temporary MKV clone."
             }
         }
 
@@ -2160,10 +2178,14 @@ final class AppModel {
         )
         let asset = try await inspector.inspect(sourceURL)
         let availableVideoPresets: [VideoPreset]
+        let availableAudioPresets: [AudioTranscodePreset]
         if workflow.steps.contains(where: { $0.isEnabled && $0.action.isVideoConversion }) {
-            availableVideoPresets = await probeEncodingCapabilities().availableVideoPresets
+            let capabilities = await probeEncodingCapabilities()
+            availableVideoPresets = capabilities.availableVideoPresets
+            availableAudioPresets = capabilities.availableAudioPresets
         } else {
             availableVideoPresets = []
+            availableAudioPresets = []
         }
         let compiled: CompiledSavedWorkflow
         do {
@@ -2171,7 +2193,8 @@ final class AppModel {
                 workflow,
                 for: asset,
                 inputs: SavedWorkflowResolvedInputs(
-                    availableVideoPresets: availableVideoPresets
+                    availableVideoPresets: availableVideoPresets,
+                    availableAudioPresets: availableAudioPresets
                 )
             )
         } catch is SavedWorkflowCompilationError {
