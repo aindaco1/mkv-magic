@@ -78,7 +78,7 @@ public release.
 
 ## Still pending
 
-- Attachment add, replace, remove, multi-select extraction, saved-workflow and
+- Attachment add, replace, multi-select extraction, saved-workflow and
   queue execution, and tag export or clearing.
 - Real-library beta acceptance and physical Intel/Apple Silicon user-flow
   acceptance.

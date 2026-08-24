@@ -115,6 +115,15 @@ reviewed byte count and streaming SHA-256 digest; the final file is checked
 before commit and after reopen. Attachments must be non-empty and no larger
 than 512 MiB. History records zero video/audio encodes and the MKV is never
 changed.
+For inspected Matroska files, **Remove Attachments…** provides an explicit
+multi-selection list and creates a new MKV containing only the retained
+attachments. It re-inspects the complete source snapshot, resolves choices by
+stable unique attachment UID and ID, and uses bundled `mkvmerge` to copy every
+media track without encoding. Verification permits the attachment IDs that
+Matroska remuxing normally renumbers, but requires each retained UID, filename,
+MIME type, description, size, and order plus all tracks, tags, nested chapters,
+duration, and metadata to match before commit and after reopen. Removing every
+attachment is supported when media remains; the original MKV is never changed.
 For inspected MP4, M4V, and MOV files, **Convert MP4 Subtitle…** exposes each
 TX3G/`mov_text` track in a readable chooser and converts one selected track into
 a separate editable UTF-8 ASS sidecar. Review runs bundled FFmpeg privately and

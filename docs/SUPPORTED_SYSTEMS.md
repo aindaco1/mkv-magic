@@ -78,8 +78,17 @@ MiB independently of video-encoder hardware. Bundled `mkvextract` writes one
 selected attachment privately; MKV Magic repeats the extraction, compares the
 exact byte count and streaming SHA-256 digest, binds the source revision and
 stable attachment UID through commit, and reopens the separate regular file.
-The MKV remains unchanged. Adding, replacing, removing, batch-extracting, and
+The MKV remains unchanged. Adding, replacing, batch-extracting, and
 workflow-driven attachment operations are not included in this direct action.
+
+**Remove Attachments…** supports explicit removal of one or more attachments
+from an inspected Matroska file independently of video-encoder hardware.
+Bundled `mkvmerge` creates a new zero-encode MKV containing only the retained
+attachment IDs. MKV Magic binds the reviewed selection to stable unique UIDs,
+checks the source revision throughout execution, and verifies every retained
+attachment fact, media track, tag, nested chapter, duration, and metadata value
+before commit and after reopen. Normal attachment-ID renumbering is allowed;
+UID or content-fact drift is not. The original remains unchanged.
 
 **Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
 M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg

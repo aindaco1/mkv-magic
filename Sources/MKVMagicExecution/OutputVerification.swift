@@ -214,6 +214,62 @@ public struct TrackRemovalOutputVerifier: Sendable {
     }
 }
 
+public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        removal: MatroskaAttachmentRemoval
+    ) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container == original.container else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard remuxDurationsMatch(original.duration, output.duration) else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        guard
+            outputTracks.map(RemuxTrackSnapshot.init)
+                == originalTracks.map(RemuxTrackSnapshot.init)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+
+        let resolution = try MatroskaAttachmentRemovalPolicy.resolve(removal, in: original)
+        let outputAttachments = output.attachments.sorted { $0.id < $1.id }
+        let outputIDs = outputAttachments.map(\.id)
+        guard outputIDs.allSatisfy({ $0 >= 0 }),
+            Set(outputIDs).count == outputIDs.count,
+            outputAttachments.allSatisfy({ $0.uid != nil }),
+            outputAttachments.map(RemuxAttachmentSnapshot.init)
+                == resolution.retainedAttachments.map(RemuxAttachmentSnapshot.init)
+        else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID != nil,
+            original.segmentUID == nil || output.segmentUID != original.segmentUID
+        else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public struct ExternalSubtitleMuxOutputVerifier: Sendable {
     public init() {}
 
@@ -1437,6 +1493,22 @@ private struct RemuxTrackSnapshot: Equatable {
         contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
         tags = track.tags.removingTrackRemuxProvenance
+    }
+}
+
+private struct RemuxAttachmentSnapshot: Equatable {
+    let filename: String
+    let mimeType: String?
+    let size: Int64?
+    let description: String?
+    let uid: UInt64?
+
+    init(_ attachment: MediaAttachment) {
+        filename = attachment.filename
+        mimeType = attachment.mimeType
+        size = attachment.size
+        description = attachment.description
+        uid = attachment.uid
     }
 }
 

@@ -523,8 +523,20 @@ extraction, requires exact size and digest equality, and audits the separate
 regular file before commit and after reopen. Suggested embedded filenames are
 path-contained, control-character-free, and byte-bounded. The source remains
 byte-unchanged and History records zero video/audio encodes. Adding, replacing,
-removing, or batch-extracting attachments and exporting tags remain separate
-work.
+or batch-extracting attachments and exporting tags remain separate work.
+
+**Remove Attachments…** accepts an inspected Matroska attachment table only
+when every entry has one stable unique UID and unambiguous nonnegative ID. The
+user explicitly checks one or more entries; unknown sizes and uncommon types
+remain removable because their payload is never loaded. Review re-inspects the
+complete media snapshot and binds the source revision plus the exact removed
+and retained sets. Execution uses one bundled-`mkvmerge` zero-encode remux,
+explicitly selects retained IDs or `--no-attachments`, and writes through the
+verified-output transaction. Verification allows normal attachment-ID
+renumbering but requires retained UID, filename, MIME type, description, size,
+and order plus all media tracks, tags, nested chapters, duration, and metadata
+to match before commit and after reopen. The source remains byte-unchanged and
+History records zero video/audio encodes.
 
 **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable

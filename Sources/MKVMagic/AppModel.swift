@@ -1100,6 +1100,114 @@ final class AppModel {
         }
     }
 
+    func previewMatroskaAttachmentRemoval(
+        in source: MediaAsset,
+        removal: MatroskaAttachmentRemoval
+    ) async throws -> MatroskaAttachmentRemovalPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try await MatroskaAttachmentRemovalExecutor(
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source, removal: removal)
+    }
+
+    @discardableResult
+    func executeMatroskaAttachmentRemoval(
+        preview: MatroskaAttachmentRemovalPreview,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Removing and verifying selected attachments…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let removedCount = preview.removedAttachments.count
+            let noun = removedCount == 1 ? "attachment" : "attachments"
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.attachmentRemoval,
+                workflowName: "Remove Matroska attachments",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed Matroska media inspection.",
+                planningMessage:
+                    "Zero video and audio encodes; omit \(removedCount) reviewed \(noun) while copying every media track.",
+                runningMessage:
+                    "Creating one temporary MKV with only the reviewed retained attachments."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let result = try await MatroskaAttachmentRemovalExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner,
+                inspector: inspector
+            ).execute(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying tracks, tags, chapters, and retained attachments…"
+                                : "Saving and reopening the verified attachment-cleaned MKV…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            registerInspectedAsset(result)
+            await finishHistory(
+                execution,
+                destinationURL: result.sourceURL,
+                successMessage:
+                    "Verified the reviewed attachment omissions and every retained media, metadata, tag, and nested chapter fact before commit and after reopen."
+            )
+            return result
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeMatroskaTextSubtitleExtraction(
         preview: MatroskaTextSubtitleExtractionPreview,
@@ -2994,6 +3102,11 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? MatroskaAttachmentExtractionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? MatroskaAttachmentRemovalError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."

@@ -3329,6 +3329,66 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testAttachmentRemovalUsesExplicitMultiSelectionAndAccessibleNativeSheet() throws {
+        let attachments = [
+            MediaAttachment(
+                id: 2,
+                filename: "Poster.jpg",
+                mimeType: "image/jpeg",
+                size: 12,
+                uid: 22
+            ),
+            MediaAttachment(
+                id: 4,
+                filename: "Font.ttf",
+                mimeType: "font/ttf",
+                size: 14,
+                uid: 44
+            ),
+        ]
+        let removal = try AttachmentRemovalPresentation.removal(
+            attachments: attachments,
+            selectedIndexes: [0, 1]
+        )
+        XCTAssertEqual(removal.attachmentUIDs, [22, 44])
+        XCTAssertThrowsError(
+            try AttachmentRemovalPresentation.removal(
+                attachments: attachments,
+                selectedIndexes: []
+            )
+        ) { error in
+            XCTAssertEqual(error as? AttachmentRemovalPresentationError, .emptySelection)
+        }
+
+        let controller = AttachmentRemovalWindowController(attachments: attachments)
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Remove Attachments")
+        XCTAssertTrue(window.contentViewController is AttachmentRemovalViewController)
+        XCTAssertEqual(content.frame.size.width, 660, accuracy: 1)
+        XCTAssertEqual(content.frame.size.height, 460, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 560)
+        XCTAssertEqual(window.minSize.height, 400)
+        let labels = descendants(in: content).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Attachment removal status"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Review Removal" })
+        XCTAssertEqual(
+            buttons(in: content).filter {
+                $0.accessibilityHelp()?.contains("Remove this attachment") == true
+            }.count,
+            attachments.count
+        )
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_ATTACHMENT_REMOVAL_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureWindow(window: window, content: content, at: capturePath)
+            window.close()
+        }
+    }
+
+    @MainActor
     func testEmbeddedSRTUsesSharedReviewWindowAndTrackLanguageExplanation() throws {
         let cue = SubRipCue(
             id: 0,
@@ -3682,6 +3742,11 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(
             buttons(in: controller.view).contains { button in
                 button.title == "Attachments…" && !button.isEnabled
+            }
+        )
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Remove Attachments…" && !button.isEnabled
             }
         )
         XCTAssertTrue(

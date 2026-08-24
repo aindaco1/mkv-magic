@@ -472,6 +472,116 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testRemovesSelectedMatroskaAttachmentAndRecordsZeroEncodeHistory() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-attachment-removal-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        let subtitleURL = fixtureRoot.appendingPathComponent("source.srt")
+        let posterURL = fixtureRoot.appendingPathComponent("poster.bin")
+        let fontURL = fixtureRoot.appendingPathComponent("font.bin")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let destinationURL = fixtureRoot.appendingPathComponent(
+            "Feature — Attachment Removed.mkv"
+        )
+        try Data("1\n00:00:00,000 --> 00:00:01,000\nFixture\n".utf8).write(
+            to: subtitleURL
+        )
+        try Data([0, 1, 2, 3, 255]).write(to: posterURL)
+        try Data([9, 8, 7, 6]).write(to: fontURL)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvmerge),
+                arguments: [
+                    "--output", sourceURL.path,
+                    "--attachment-name", "Poster Artwork.bin",
+                    "--attachment-mime-type", "application/octet-stream",
+                    "--attachment-description", "Remove this fixture",
+                    "--attach-file", posterURL.path,
+                    "--attachment-name", "Subtitle Font.bin",
+                    "--attachment-mime-type", "application/octet-stream",
+                    "--attachment-description", "Retain this fixture",
+                    "--attach-file", fontURL.path,
+                    subtitleURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let attachments = MatroskaAttachmentRemovalPolicy.removableAttachments(in: source)
+        XCTAssertEqual(
+            attachments.map(\.filename),
+            [
+                "Poster Artwork.bin", "Subtitle Font.bin",
+            ])
+        let removed = try XCTUnwrap(
+            attachments.first(where: { $0.filename == "Poster Artwork.bin" })
+        )
+        let removedUID = try XCTUnwrap(removed.uid)
+        let retainedUID = try XCTUnwrap(
+            attachments.first(where: { $0.filename == "Subtitle Font.bin" })?.uid
+        )
+
+        let preview = try await model.previewMatroskaAttachmentRemoval(
+            in: source,
+            removal: MatroskaAttachmentRemoval(attachmentUIDs: [removedUID])
+        )
+        XCTAssertEqual(preview.removedAttachments.map(\.uid), [removedUID])
+        XCTAssertEqual(preview.retainedAttachments.map(\.uid), [retainedUID])
+        let output = try await model.executeMatroskaAttachmentRemoval(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+
+        XCTAssertEqual(output.sourceURL, destinationURL)
+        XCTAssertEqual(output.attachments.map(\.uid), [retainedUID])
+        XCTAssertEqual(output.attachments.map(\.filename), ["Subtitle Font.bin"])
+        XCTAssertEqual(output.tracks.map(\.uid), source.tracks.map(\.uid))
+        XCTAssertEqual(output.tracks.map(\.kind), source.tracks.map(\.kind))
+        XCTAssertEqual(output.tracks.map(\.codecID), source.tracks.map(\.codecID))
+        XCTAssertEqual(output.tracks.map(\.language), source.tracks.map(\.language))
+        XCTAssertEqual(output.chapters, source.chapters)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        let records = try await historyStore.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, BuiltInWorkflowCatalog.attachmentRemoval)
+        XCTAssertEqual(record.workflowName, "Remove Matroska attachments")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

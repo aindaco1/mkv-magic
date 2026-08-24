@@ -51,6 +51,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case timedTextSubtitleConversion
     case textSubtitleExtraction
     case attachmentExtraction
+    case attachmentRemoval
     case savedOrUnknown
 
     init(workflowID: UUID) {
@@ -76,6 +77,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
         case .timedTextSubtitleConversion: self = .timedTextSubtitleConversion
         case .textSubtitleExtraction: self = .textSubtitleExtraction
         case .attachmentExtraction: self = .attachmentExtraction
+        case .attachmentRemoval: self = .attachmentRemoval
         }
     }
 }

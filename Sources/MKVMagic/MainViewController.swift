@@ -54,6 +54,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case timedTextSubtitle(TimedTextSubtitleConversionPreview)
         case textSubtitleExtraction(MatroskaTextSubtitleExtractionPreview)
         case attachmentExtraction(MatroskaAttachmentExtractionPreview)
+        case attachmentRemoval(MatroskaAttachmentRemovalPreview)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
         case remuxToMKV(MKVRemuxPreview)
     }
@@ -120,6 +121,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
     private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
+    private let removeAttachmentsButton = NSButton(
+        title: "Remove Attachments…", target: nil, action: nil)
     private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
     private let extractSubtitleButton = NSButton(
         title: "Extract Subtitle…", target: nil, action: nil)
@@ -151,6 +154,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
     private var attachmentPickerWindowController: AttachmentPickerWindowController?
+    private var attachmentRemovalWindowController: AttachmentRemovalWindowController?
     private var chapterStudioWindowController: ChapterStudioWindowController?
     private var trimWindowController: TrimWindowController?
     private var trimProgressWindowController: VerifiedOutputProgressWindowController?
@@ -387,6 +391,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         removeTracksButton.target = self
         removeTracksButton.action = #selector(removeTracks)
         removeTracksButton.isEnabled = false
+        removeAttachmentsButton.target = self
+        removeAttachmentsButton.action = #selector(removeMatroskaAttachments)
+        removeAttachmentsButton.isEnabled = false
+        removeAttachmentsButton.setAccessibilityHelp(
+            "Choose embedded Matroska attachments to omit from a new verified zero-encode MKV copy."
+        )
         cleanSubtitleButton.target = self
         cleanSubtitleButton.action = #selector(cleanSubtitle)
         cleanSubtitleButton.isEnabled = false
@@ -440,16 +450,20 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         ])
         subtitleConversionButtons.orientation = .horizontal
         subtitleConversionButtons.spacing = 8
-        let chapterButtons = NSStackView(views: [chaptersButton, attachmentsButton, trimButton])
+        let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
         chapterButtons.orientation = .horizontal
         chapterButtons.spacing = 8
+        let attachmentButtons = NSStackView(views: [attachmentsButton, removeAttachmentsButton])
+        attachmentButtons.orientation = .horizontal
+        attachmentButtons.spacing = 8
         let videoButtons = NSStackView(views: [remuxButton, convertButton])
         videoButtons.orientation = .horizontal
         videoButtons.spacing = 8
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
-            subtitleButtons, subtitleConversionButtons, chapterButtons, videoButtons,
+            subtitleButtons, subtitleConversionButtons, chapterButtons, attachmentButtons,
+            videoButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1848,6 +1862,75 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func removeMatroskaAttachments() {
+        guard let asset = selectedAsset,
+            let parentWindow = view.window
+        else { return }
+        let attachments = MatroskaAttachmentRemovalPolicy.removableAttachments(in: asset)
+        guard !attachments.isEmpty else { return }
+        clearPendingChange()
+        let controller = AttachmentRemovalWindowController(attachments: attachments)
+        attachmentRemovalWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] removal in
+            guard let self else { return }
+            self.attachmentRemovalWindowController = nil
+            guard let removal else {
+                self.refresh()
+                return
+            }
+            guard self.selectedAsset?.id == asset.id else {
+                self.clearPendingChange()
+                self.refresh()
+                return
+            }
+            self.previewMatroskaAttachmentRemoval(asset: asset, removal: removal)
+        }
+    }
+
+    private func previewMatroskaAttachmentRemoval(
+        asset: MediaAsset,
+        removal: MatroskaAttachmentRemoval
+    ) {
+        statusLabel.stringValue = "Re-inspecting attachment removal for review…"
+        removeAttachmentsButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewMatroskaAttachmentRemoval(
+                    in: asset,
+                    removal: removal
+                )
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                pendingChange = .attachmentRemoval(preview)
+                pendingAssetID = asset.id
+                let count = preview.removedAttachments.count
+                let noun = count == 1 ? "attachment" : "attachments"
+                impactLabel.stringValue =
+                    "0 video/audio encodes • mkvmerge • remove \(count) \(noun)"
+                statusLabel.stringValue = "Attachment removal plan ready"
+                runButton.isEnabled = true
+                runButton.toolTip =
+                    "Copy every media track and only the retained attachments, verify the complete MKV, then commit and reopen it."
+            } catch {
+                removeAttachmentsButton.isEnabled =
+                    !MatroskaAttachmentRemovalPolicy.removableAttachments(in: asset).isEmpty
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare attachment removal.",
+                        recovery: "The MKV is unchanged; inspect it again and retry.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: removeAttachmentsButton
+                )
+                clearPendingChange()
+            }
+        }
+    }
+
     private func previewTimedTextSubtitleConversion(asset: MediaAsset, trackID: Int) {
         statusLabel.stringValue = "Converting MP4 timed text privately for review…"
         convertTimedTextButton.isEnabled = false
@@ -2324,6 +2407,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         preview: preview,
                         destinationURL: destination.url
                     ).outputURL
+                case .attachmentRemoval(let preview):
+                    outputURL = try await model.executeMatroskaAttachmentRemoval(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).sourceURL
                 case .chapters(let preview, let desired):
                     outputURL = try await model.editChapters(
                         preview: preview,
@@ -2446,7 +2534,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             isEmbeddedSubtitleCleanup = false
         }
         let requiresMKVOutput: Bool
-        if case .remuxToMKV = pendingChange {
+        if case .attachmentRemoval = pendingChange {
+            requiresMKVOutput = true
+        } else if case .remuxToMKV = pendingChange {
             requiresMKVOutput = true
         } else if case .savedWorkflow(let prepared) = pendingChange {
             requiresMKVOutput = prepared.compiled.requiresMKVOutputExtension
@@ -2542,6 +2632,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         editTrackButton.isEnabled = false
         cleanMKVButton.isEnabled = false
         removeTracksButton.isEnabled = false
+        removeAttachmentsButton.isEnabled = false
         cleanSubtitleButton.isEnabled = false
         extractSubtitleButton.isEnabled = false
         convertTimedTextButton.isEnabled = false
@@ -2562,6 +2653,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         removeTracksButton.isEnabled = TrackRemovalPresentation.canOfferRemoval(
             for: asset.tracks)
+        removeAttachmentsButton.isEnabled =
+            !MatroskaAttachmentRemovalPolicy.removableAttachments(in: asset).isEmpty
         cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
         cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
         extractSubtitleButton.isEnabled =
@@ -2666,6 +2759,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
+            removeAttachmentsButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
             extractSubtitleButton.isEnabled = false
             convertTimedTextButton.isEnabled = false
@@ -2696,6 +2790,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
+            removeAttachmentsButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
             extractSubtitleButton.isEnabled = false
             convertTimedTextButton.isEnabled = false
@@ -2763,6 +2858,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             removeTracksButton.isEnabled
             ? "Choose tracks to omit from a verified zero-encode MKV copy."
             : "Removal requires at least two tracks with stable Matroska UIDs."
+        removeAttachmentsButton.isEnabled =
+            !MatroskaAttachmentRemovalPolicy.removableAttachments(in: asset).isEmpty
+        removeAttachmentsButton.toolTip =
+            removeAttachmentsButton.isEnabled
+            ? "Choose one or more attachments to omit from a verified zero-encode MKV copy."
+            : "Attachment removal requires a Matroska file whose attachments have stable unique IDs and UIDs."
         cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
         cleanMKVButton.toolTip =
             cleanMKVButton.isEnabled
