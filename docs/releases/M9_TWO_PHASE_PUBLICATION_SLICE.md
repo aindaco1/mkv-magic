@@ -41,6 +41,16 @@ manual evidence, so the operator must obtain each digest only after completing
 the corresponding acceptance path. Repository automation cannot manufacture a
 physical Intel or clean-account result.
 
+## Repository environment
+
+The GitHub `release-publication` environment is configured to accept only `v*`
+tag refs. The current private-repository plan does not support required-reviewer
+or wait-timer rules; GitHub rejected that stronger setting without changing the
+environment. The manual-only workflow, exact tag/source checks, draft-state
+requirement, and three digest attestations therefore remain the active controls.
+Required reviewers should be added when the repository visibility or plan makes
+that protection available.
+
 ## Regression evidence
 
 The publication validator rejects missing acceptance, a digest from another
@@ -51,5 +61,5 @@ matching the workflow-validation practice used by the Record and Podcast
 Visualizer projects.
 
 Remaining release acceptance requires actually running the hardware and updater
-checks, configuring required reviewers for the `release-publication`
-environment, choosing a real release version, and executing the two workflows.
+checks, choosing a real release version, adding required reviewers when GitHub
+supports them for the repository, and executing the two workflows.
