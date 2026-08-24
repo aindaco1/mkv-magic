@@ -120,6 +120,25 @@ if [[ -d "$tool_root" ]]; then
     jq --argjson component "$dav1d_component" \
         '.components += [$component]' "$temporary" > "$temporary.next"
     mv "$temporary.next" "$temporary"
+    opus_component="$(
+        jq -c '
+          .opus | {
+            type: "library",
+            name: "libopus",
+            version: .version,
+            purl: ("pkg:generic/opus@" + .version),
+            hashes: [{alg: "SHA-256", content: .sha256}],
+            licenses: [{license: {id: .license}}],
+            externalReferences: [{type: "distribution", url: .url}],
+            properties: [
+              {name: "mkv-magic:linkage", value: "static-in-ffmpeg"}
+            ]
+          }
+        ' "$sources"
+    )"
+    jq --argjson component "$opus_component" \
+        '.components += [$component]' "$temporary" > "$temporary.next"
+    mv "$temporary.next" "$temporary"
 fi
 jq -S . "$temporary" > "$output"
 chmod 0644 "$output"

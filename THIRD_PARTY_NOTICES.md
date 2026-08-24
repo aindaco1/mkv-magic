@@ -51,6 +51,18 @@ Macs without hardware AV1 decoding can reopen and process AV1 files, including
 files created by MKV Magic. The license is included in every tool bundle, and
 the matching source archive is included in corresponding source releases.
 
+## libopus 1.6.1
+
+- Project: https://opus-codec.org/
+- License: BSD-3-Clause
+- Purpose: stable Opus audio encoding through the bundled FFmpeg
+- Distribution: architecture-specific static library linked into `ffmpeg`
+
+MKV Magic builds separate checksum-pinned ARM64 and x86_64 static libraries and
+does not expose FFmpeg's experimental native Opus encoder. The Opus license is
+included in every tool bundle, and the matching source archive is included in
+corresponding source releases.
+
 ## MKVToolNix 100.0
 
 - Project: https://codeberg.org/mbunkus/mkvtoolnix

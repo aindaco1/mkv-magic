@@ -16,6 +16,9 @@ svtav1_url="https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v$svtav1_version/S
 dav1d_version=1.5.4
 dav1d_sha256=2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011
 dav1d_url="https://code.videolan.org/videolan/dav1d/-/archive/$dav1d_version/dav1d-$dav1d_version.tar.bz2"
+opus_version=1.6.1
+opus_sha256=6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
+opus_url="https://downloads.xiph.org/releases/opus/opus-$opus_version.tar.gz"
 mkvtoolnix_version=100.0
 mkvtoolnix_dmg_sha256=114e85cd42f3b0ea7ea0e194c5409d66dfdd49f4663a9d572009fd312dd279f1
 mkvtoolnix_dmg_url="https://mkvtoolnix.download/macos/releases/$mkvtoolnix_version/MKVToolNix-$mkvtoolnix_version-1-universal.dmg"
@@ -66,6 +69,7 @@ ffmpeg_archive="$cache_root/ffmpeg-$ffmpeg_version/ffmpeg-$ffmpeg_version.tar.xz
 nasm_archive="$cache_root/nasm-$nasm_version/nasm-$nasm_version.tar.xz"
 svtav1_archive="$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz"
 dav1d_archive="$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.bz2"
+opus_archive="$cache_root/opus-$opus_version/opus-$opus_version.tar.gz"
 mkvtoolnix_dmg="$cache_root/mkvtoolnix-$mkvtoolnix_version/MKVToolNix-$mkvtoolnix_version-1-universal.dmg"
 mkvtoolnix_source="$cache_root/mkvtoolnix-$mkvtoolnix_version/mkvtoolnix-$mkvtoolnix_version.tar.xz"
 qtbase_archive="$cache_root/qtbase-$qt_version/qtbase-everywhere-src-$qt_version.tar.xz"
@@ -73,6 +77,7 @@ download_verified "$ffmpeg_url" "$ffmpeg_sha256" "$ffmpeg_archive"
 download_verified "$nasm_url" "$nasm_sha256" "$nasm_archive"
 download_verified "$svtav1_url" "$svtav1_sha256" "$svtav1_archive"
 download_verified "$dav1d_url" "$dav1d_sha256" "$dav1d_archive"
+download_verified "$opus_url" "$opus_sha256" "$opus_archive"
 download_verified "$mkvtoolnix_dmg_url" "$mkvtoolnix_dmg_sha256" "$mkvtoolnix_dmg"
 download_verified "$mkvtoolnix_source_url" "$mkvtoolnix_source_sha256" "$mkvtoolnix_source"
 download_verified "$qtbase_url" "$qtbase_sha256" "$qtbase_archive"
@@ -269,11 +274,51 @@ for architecture in arm64 x86_64; do
     fi
 done
 
+# Build the stable Opus reference encoder separately for both runtime slices.
+# It is linked statically into FFmpeg so MKV Magic never falls back to FFmpeg's
+# experimental native Opus encoder.
+for architecture in arm64 x86_64; do
+    opus_source="$build_root/opus-$architecture"
+    opus_prefix="$build_root/opus-install-$architecture"
+    mkdir "$opus_source"
+    tar -xzf "$opus_archive" -C "$opus_source" --strip-components 1
+    if [[ "$architecture" == arm64 ]]; then
+        opus_host=arm64-apple-darwin
+    else
+        opus_host=x86_64-apple-darwin
+    fi
+    (
+        cd "$opus_source"
+        CC="$clang" \
+        AR="$ar" \
+        RANLIB="$ranlib" \
+        CFLAGS="-arch $architecture -mmacosx-version-min=13.0 -isysroot $sdk_root -O2" \
+        LDFLAGS="-arch $architecture -mmacosx-version-min=13.0 -isysroot $sdk_root" \
+            ./configure \
+                --host="$opus_host" \
+                --prefix="$opus_prefix" \
+                --disable-shared \
+                --enable-static \
+                --disable-extra-programs \
+                --disable-doc \
+                > "$build_root/opus-$architecture-configure.log"
+        make -j"$(sysctl -n hw.ncpu)" \
+            > "$build_root/opus-$architecture-build.log"
+        make install >> "$build_root/opus-$architecture-build.log"
+    )
+    opus_library="$opus_prefix/lib/libopus.a"
+    if [[ ! -f "$opus_library" || -L "$opus_library" || \
+          "$(lipo -archs "$opus_library")" != "$architecture" ]]; then
+        echo "invalid $architecture Opus static library" >&2
+        exit 1
+    fi
+done
+
 # Build static FFmpeg/FFprobe for each runtime architecture with no network
 # protocols or ambient package discovery. The enabled external libraries come
-# only from the checksum-pinned SVT-AV1 and dav1d prefixes selected through a
-# constrained pkg-config search path. The x86_64 build retains optimized NASM
-# paths.
+# only from the checksum-pinned SVT-AV1, dav1d, and Opus prefixes selected
+# through a constrained pkg-config search path. The x86_64 build retains
+# optimized NASM paths.
 ffmpeg_flags=(
     --target-os=darwin
     --sysroot="$sdk_root"
@@ -300,6 +345,7 @@ ffmpeg_flags=(
     --enable-videotoolbox
     --enable-audiotoolbox
     --enable-libdav1d
+    --enable-libopus
     --enable-libsvtav1
     --enable-optimizations
     --enable-pic
@@ -318,10 +364,11 @@ for architecture in arm64 x86_64; do
     fi
     svt_prefix="$build_root/svt-av1-install-$architecture"
     dav1d_prefix="$build_root/dav1d-install-$architecture"
+    opus_prefix="$build_root/opus-install-$architecture"
     (
         cd "$source_root"
         PATH="$nasm_prefix/bin:/usr/bin:/bin" \
-        PKG_CONFIG_LIBDIR="$svt_prefix/lib/pkgconfig:$dav1d_prefix/lib/pkgconfig" \
+        PKG_CONFIG_LIBDIR="$svt_prefix/lib/pkgconfig:$dav1d_prefix/lib/pkgconfig:$opus_prefix/lib/pkgconfig" \
         PKG_CONFIG_PATH='' \
             ./configure "${ffmpeg_flags[@]}" "${architecture_flags[@]}" \
             > "$build_root/ffmpeg-$architecture-configure.log"
@@ -361,6 +408,9 @@ tar -xOf "$svtav1_archive" "SVT-AV1-v$svtav1_version/PATENTS.md" \
 mkdir "$output_root/Licenses/dav1d"
 tar -xOjf "$dav1d_archive" "dav1d-$dav1d_version/COPYING" \
     > "$output_root/Licenses/dav1d/COPYING"
+mkdir "$output_root/Licenses/Opus"
+tar -xOf "$opus_archive" "opus-$opus_version/COPYING" \
+    > "$output_root/Licenses/Opus/COPYING"
 mkdir "$output_root/Licenses/Qt"
 tar -xJf "$qtbase_archive" -C "$output_root/Licenses/Qt" \
     --strip-components 1 "qtbase-everywhere-src-$qt_version/LICENSES"
@@ -368,7 +418,8 @@ chmod 0644 "$output_root/Licenses/FFmpeg-GPLv3.txt" \
     "$output_root/Licenses/MKVToolNix-GPL.txt" \
     "$output_root/Licenses/SVT-AV1/LICENSE.md" \
     "$output_root/Licenses/SVT-AV1/PATENTS.md" \
-    "$output_root/Licenses/dav1d/COPYING"
+    "$output_root/Licenses/dav1d/COPYING" \
+    "$output_root/Licenses/Opus/COPYING"
 find "$output_root/Licenses/Qt" -type f -exec chmod 0644 {} +
 
 for architecture in arm64 x86_64; do
@@ -423,6 +474,9 @@ jq -n \
     --arg dav1dVersion "$dav1d_version" \
     --arg dav1dURL "$dav1d_url" \
     --arg dav1dSha256 "$dav1d_sha256" \
+    --arg opusVersion "$opus_version" \
+    --arg opusURL "$opus_url" \
+    --arg opusSha256 "$opus_sha256" \
     --arg mkvVersion "$mkvtoolnix_version" \
     --arg mkvDMGURL "$mkvtoolnix_dmg_url" \
     --arg mkvDMGSha256 "$mkvtoolnix_dmg_sha256" \
@@ -451,6 +505,7 @@ jq -n \
           "--enable-videotoolbox",
           "--enable-audiotoolbox",
           "--enable-libdav1d",
+          "--enable-libopus",
           "--enable-libsvtav1"
         ]
       },
@@ -486,6 +541,19 @@ jq -n \
         ],
         license: "BSD-2-Clause"
       },
+      opus: {
+        version: $opusVersion,
+        url: $opusURL,
+        sha256: $opusSha256,
+        linkedStatically: true,
+        build: [
+          "disable_shared=true",
+          "enable_static=true",
+          "disable_extra_programs=true",
+          "disable_doc=true"
+        ],
+        license: "BSD-3-Clause"
+      },
       mkvtoolnix: {version: $mkvVersion, binaryURL: $mkvDMGURL, binarySha256: $mkvDMGSha256, sourceURL: $mkvSourceURL, sourceSha256: $mkvSourceSha256, license: "GPL-2.0-or-later"},
       qtbase: {version: $qtVersion, url: $qtURL, sha256: $qtSha256, license: "LGPL-3.0-only"}
     }' > "$output_root/SOURCES.json"
@@ -494,6 +562,8 @@ chmod 0644 "$output_root/SOURCES.json"
 "$repo_root/scripts/ci/check-tool-tree.sh" "$output_root"
 smoke_frame="$build_root/black-64x64-yuv420p10le.raw"
 dd if=/dev/zero of="$smoke_frame" bs=12288 count=1 status=none
+smoke_audio="$build_root/silence-stereo-s16le.raw"
+dd if=/dev/zero of="$smoke_audio" bs=9600 count=1 status=none
 for architecture in arm64 x86_64; do
     if [[ "$architecture" == arm64 ]]; then
         runner=(/usr/bin/arch -arm64)
@@ -507,7 +577,7 @@ for architecture in arm64 x86_64; do
     "${runner[@]}" "$output_root/$architecture/mkvextract" --version >/dev/null
 
     encoders="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -encoders)"
-    for encoder in aac aac_at h264_videotoolbox hevc_videotoolbox libsvtav1 prores_ks; do
+    for encoder in aac aac_at ac3 eac3 flac h264_videotoolbox hevc_videotoolbox libopus libsvtav1 prores_ks; do
         if ! grep -Eq "[[:space:]]${encoder}[[:space:]]" <<< "$encoders"; then
             echo "missing required $architecture FFmpeg encoder: $encoder" >&2
             exit 1
@@ -535,6 +605,12 @@ for architecture in arm64 x86_64; do
     "${runner[@]}" "$output_root/$architecture/ffmpeg" \
         -hide_banner -loglevel error -nostdin -c:v libdav1d \
         -i "$smoke_av1" -map 0:v:0 -f null - >/dev/null
+    for encoder in libopus ac3 eac3 flac; do
+        "${runner[@]}" "$output_root/$architecture/ffmpeg" \
+            -hide_banner -loglevel error -nostdin \
+            -f s16le -ar 48000 -ac 2 -i "$smoke_audio" \
+            -frames:a 1 -c:a "$encoder" -f null - >/dev/null
+    done
     protocols="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -protocols)"
     if grep -Eq '^[[:space:]]*(http|https|tcp|udp|rtmp|srtp|sctp|tls)[[:space:]]*$' \
         <<< "$protocols"; then

@@ -13,6 +13,10 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
                  V..... h264_videotoolbox   H.264 VideoToolbox
                  V..... prores_ks            ProRes
                  A..... aac_at               AAC AudioToolbox
+                 A..... libopus              libopus Opus
+                 A..... ac3                  AC-3
+                 A..... eac3                 E-AC-3
+                 A..... flac                 FLAC
                 """,
             filters: Self.requiredFilters
         )
@@ -27,6 +31,12 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(capabilities.h264VideoToolbox, .verified)
         XCTAssertEqual(capabilities.proRes, .verified)
         XCTAssertEqual(capabilities.aac, .verified)
+        XCTAssertEqual(
+            capabilities.availableAudioPresets,
+            AudioTranscodePreset.allCases
+        )
+        XCTAssertEqual(capabilities.verifiedAudioEncoder(for: .opusQuality), "libopus")
+        XCTAssertEqual(capabilities.verifiedAudioEncoder(for: .flacLossless), "flac")
         XCTAssertEqual(
             capabilities.availableVideoPresets,
             [.av1Quality, .hevcCompatibility, .h264Compatibility, .proRes]
@@ -54,7 +64,7 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
             }
             return request.arguments[inputIndex + 1]
         }
-        XCTAssertEqual(inputPaths.count, 5)
+        XCTAssertEqual(inputPaths.count, 9)
         XCTAssertTrue(inputPaths.allSatisfy { !FileManager.default.fileExists(atPath: $0) })
         XCTAssertTrue(
             requests.filter { $0.arguments.contains("-c:v") || $0.arguments.contains("-c:a") }
@@ -82,8 +92,34 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(capabilities.hevc10VideoToolbox, .declared)
         XCTAssertEqual(capabilities.h264VideoToolbox, .verified)
         XCTAssertEqual(capabilities.aac, .verified)
+        XCTAssertEqual(capabilities.availableAudioPresets, [.aacCompatibility])
         XCTAssertEqual(capabilities.availableVideoPresets, [.h264Compatibility])
         XCTAssertEqual(capabilities.recommendedVideoPreset, .h264Compatibility)
+    }
+
+    func testExperimentalNativeOpusIsNeverOfferedAndFailedLibopusFailsClosed() async throws {
+        let runner = CapabilityRunner(
+            encoders: """
+                 A..... aac_at   AAC AudioToolbox
+                 A..... opus     Experimental native Opus
+                 A..... libopus  Stable libopus
+                """,
+            filters: Self.requiredFilters,
+            failingEncoders: ["libopus"]
+        )
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: URL(fileURLWithPath: "/tools/ffmpeg"),
+            runner: runner
+        ).probe()
+
+        XCTAssertEqual(capabilities.availableAudioPresets, [.aacCompatibility])
+        XCTAssertEqual(capabilities.audioCapability(for: .opusQuality).status, .declared)
+        XCTAssertNil(capabilities.verifiedAudioEncoder(for: .opusQuality))
+        let requestedEncoders = await runner.requests().compactMap {
+            $0.arguments.value(after: "-c:a")
+        }
+        XCTAssertTrue(requestedEncoders.contains("libopus"))
+        XCTAssertFalse(requestedEncoders.contains("opus"))
     }
 
     func testTruncatedListingFailsClosedBeforeAnySmokeEncode() async throws {
@@ -124,6 +160,11 @@ final class FFmpegCapabilityProbeTests: XCTestCase {
         XCTAssertEqual(capabilities.h264VideoToolbox, .verified)
         XCTAssertEqual(capabilities.proRes, .verified)
         XCTAssertEqual(capabilities.aac, .verified)
+        XCTAssertEqual(
+            capabilities.availableAudioPresets,
+            AudioTranscodePreset.allCases
+        )
+        XCTAssertEqual(capabilities.verifiedAudioEncoder(for: .opusQuality), "libopus")
         XCTAssertEqual(capabilities.recommendedVideoPreset, .av1Quality)
         XCTAssertTrue(capabilities.missingJoinFilters.isEmpty)
     }
@@ -187,5 +228,12 @@ private actor CapabilityRunner: CommandRunning {
             standardOutput: CommandOutput(data: Data(text.utf8), wasTruncated: truncated),
             standardError: CommandOutput(data: Data(), wasTruncated: false)
         )
+    }
+}
+
+extension Array where Element == String {
+    fileprivate func value(after flag: String) -> String? {
+        guard let index = firstIndex(of: flag), indices.contains(index + 1) else { return nil }
+        return self[index + 1]
     }
 }

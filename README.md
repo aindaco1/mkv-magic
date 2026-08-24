@@ -185,8 +185,10 @@ decoding to reopen the app's preferred outputs. MKV Magic still offers an
 encoder only after its one-frame local smoke probe succeeds on the running Mac:
 verified AV1 is the preferred quality/size choice, while verified HEVC 10-bit
 VideoToolbox remains the faster fallback for slow or unsupported Intel hardware.
-H.264 VideoToolbox, ProRes, AAC, and every required join filter are independently
-probed as well.
+H.264 VideoToolbox, ProRes, AAC, stable statically linked libopus, AC-3, E-AC-3,
+FLAC, and every required join filter are independently probed as well. Packet
+copy remains the application default; an audio encoder is eligible for later
+explicit conversion choices only after its bounded local encode succeeds.
 The sidebar's explicit **Encoding Test…** action can refine that initial choice
 without touching user media. It encodes one private three-second synthetic
 10-bit clip with the verified AV1 and HEVC paths, measures speed, bitrate, and

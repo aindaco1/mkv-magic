@@ -17,6 +17,7 @@ required_license_files=(
     "$tool_root/Licenses/SVT-AV1/LICENSE.md"
     "$tool_root/Licenses/SVT-AV1/PATENTS.md"
     "$tool_root/Licenses/dav1d/COPYING"
+    "$tool_root/Licenses/Opus/COPYING"
     "$tool_root/Licenses/Qt/LICENSES/LGPL-3.0-only.txt"
 )
 if [[ ! -f "$sources" || -L "$sources" ]]; then
@@ -30,7 +31,7 @@ for license_file in "${required_license_files[@]}"; do
     fi
 done
 if ! jq -e '
-    (keys | sort) == ["dav1d", "ffmpeg", "minimumMacOS", "mkvtoolnix", "nasm", "qtbase", "schema", "svtav1"] and
+    (keys | sort) == ["dav1d", "ffmpeg", "minimumMacOS", "mkvtoolnix", "nasm", "opus", "qtbase", "schema", "svtav1"] and
     .schema == "mkv-magic-tool-sources-v2" and
     .minimumMacOS == "13.0" and
     .ffmpeg.network == false and
@@ -40,7 +41,7 @@ if ! jq -e '
     (.ffmpeg.configuration | sort) == ([
       "--disable-autodetect", "--disable-avdevice", "--disable-network",
       "--disable-shared", "--enable-audiotoolbox", "--enable-gpl",
-      "--enable-libdav1d", "--enable-libsvtav1", "--enable-static", "--enable-version3",
+      "--enable-libdav1d", "--enable-libopus", "--enable-libsvtav1", "--enable-static", "--enable-version3",
       "--enable-videotoolbox"
     ] | sort) and
     .nasm.buildOnly == true and
@@ -64,6 +65,14 @@ if ! jq -e '
       "b_lto=false", "default_library=static", "enable_docs=false",
       "enable_examples=false", "enable_tests=false", "enable_tools=false"
     ] | sort) and
+    .opus.linkedStatically == true and
+    .opus.license == "BSD-3-Clause" and
+    (.opus.url | startswith("https://downloads.xiph.org/releases/opus/")) and
+    (.opus.sha256 | test("^[a-f0-9]{64}$")) and
+    (.opus.build | sort) == ([
+      "disable_doc=true", "disable_extra_programs=true",
+      "disable_shared=true", "enable_static=true"
+    ] | sort) and
     .mkvtoolnix.license == "GPL-2.0-or-later" and
     (.mkvtoolnix.binaryURL | startswith("https://mkvtoolnix.download/")) and
     (.mkvtoolnix.sourceURL | startswith("https://mkvtoolnix.download/")) and
@@ -72,7 +81,7 @@ if ! jq -e '
     .qtbase.license == "LGPL-3.0-only" and
     (.qtbase.url | startswith("https://download.qt.io/")) and
     (.qtbase.sha256 | test("^[a-f0-9]{64}$")) and
-    ([.ffmpeg.version, .nasm.version, .svtav1.version, .dav1d.version,
+    ([.ffmpeg.version, .nasm.version, .svtav1.version, .dav1d.version, .opus.version,
       .mkvtoolnix.version, .qtbase.version]
       | all(type == "string" and length > 0))
 ' "$sources" >/dev/null; then

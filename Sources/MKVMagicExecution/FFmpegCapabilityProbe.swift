@@ -8,6 +8,16 @@ public enum FFmpegCapabilityStatus: String, Codable, Hashable, Sendable {
     case verified
 }
 
+public struct FFmpegAudioEncodingCapability: Equatable, Sendable {
+    public let status: FFmpegCapabilityStatus
+    public let encoder: String?
+
+    public init(status: FFmpegCapabilityStatus, encoder: String?) {
+        self.status = status
+        self.encoder = encoder
+    }
+}
+
 public enum FFmpegCapabilityProbeError: Error, Equatable, Sendable {
     case toolFailed(arguments: [String], exitCode: Int32)
     case truncatedListing
@@ -52,6 +62,7 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
     public let aacEncoder: String?
     public let availableFilters: Set<String>
     public let preferredVideoPreset: VideoPreset?
+    private let explicitAudioCapabilities: [AudioTranscodePreset: FFmpegAudioEncodingCapability]
 
     public init(
         softwareAV1: FFmpegCapabilityStatus,
@@ -63,7 +74,8 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         aac: FFmpegCapabilityStatus,
         aacEncoder: String?,
         availableFilters: Set<String>,
-        preferredVideoPreset: VideoPreset? = nil
+        preferredVideoPreset: VideoPreset? = nil,
+        audioCapabilities: [AudioTranscodePreset: FFmpegAudioEncodingCapability] = [:]
     ) {
         self.softwareAV1 = softwareAV1
         self.softwareAV1Encoder = softwareAV1Encoder
@@ -75,6 +87,7 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         self.aacEncoder = aacEncoder
         self.availableFilters = availableFilters
         self.preferredVideoPreset = preferredVideoPreset
+        explicitAudioCapabilities = audioCapabilities
     }
 
     public var missingJoinFilters: [String] {
@@ -98,6 +111,27 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
 
     public var recommendedVideoPreset: VideoPreset? {
         availableVideoPresets.first
+    }
+
+    public var availableAudioPresets: [AudioTranscodePreset] {
+        AudioTranscodePreset.allCases.filter {
+            audioCapability(for: $0).status == .verified
+        }
+    }
+
+    public func audioCapability(
+        for preset: AudioTranscodePreset
+    ) -> FFmpegAudioEncodingCapability {
+        if let explicit = explicitAudioCapabilities[preset] { return explicit }
+        if preset == .aacCompatibility {
+            return FFmpegAudioEncodingCapability(status: aac, encoder: aacEncoder)
+        }
+        return FFmpegAudioEncodingCapability(status: .unavailable, encoder: nil)
+    }
+
+    public func verifiedAudioEncoder(for preset: AudioTranscodePreset) -> String? {
+        let capability = audioCapability(for: preset)
+        return capability.status == .verified ? capability.encoder : nil
     }
 
     public func verifiedEncoder(for preset: VideoPreset) -> String? {
@@ -127,7 +161,8 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
             aac: aac,
             aacEncoder: aacEncoder,
             availableFilters: availableFilters,
-            preferredVideoPreset: usablePreference
+            preferredVideoPreset: usablePreference,
+            audioCapabilities: explicitAudioCapabilities
         )
     }
 }
@@ -165,6 +200,15 @@ public struct FFmpegCapabilityProbe<Runner: CommandRunning>: Sendable {
                 in: encoderNames
             )
             let aacEncoder = Self.firstAvailable(["aac_at", "aac"], in: encoderNames)
+            let audioEncoders: [AudioTranscodePreset: String?] = [
+                .aacCompatibility: aacEncoder,
+                // FFmpeg's native Opus encoder is experimental. Only expose
+                // the stable, statically linked libopus path.
+                .opusQuality: encoderNames.contains("libopus") ? "libopus" : nil,
+                .ac3Compatibility: encoderNames.contains("ac3") ? "ac3" : nil,
+                .eac3Compatibility: encoderNames.contains("eac3") ? "eac3" : nil,
+                .flacLossless: encoderNames.contains("flac") ? "flac" : nil,
+            ]
 
             let av1 = try await status(name: av1Encoder) { encoder in
                 try await smokeVideo(
@@ -204,9 +248,20 @@ public struct FFmpegCapabilityProbe<Runner: CommandRunning>: Sendable {
                     outputArguments: ["-profile:v", "3"]
                 )
             }
-            let aac = try await status(name: aacEncoder) { encoder in
-                try await smokeAudio(inputURL: audio, encoder: encoder)
+            var audioCapabilities = [
+                AudioTranscodePreset: FFmpegAudioEncodingCapability
+            ]()
+            for preset in AudioTranscodePreset.allCases {
+                let encoder = audioEncoders[preset] ?? nil
+                let capabilityStatus = try await status(name: encoder) { encoder in
+                    try await smokeAudio(inputURL: audio, encoder: encoder, preset: preset)
+                }
+                audioCapabilities[preset] = FFmpegAudioEncodingCapability(
+                    status: capabilityStatus,
+                    encoder: encoder
+                )
             }
+            let aac = audioCapabilities[.aacCompatibility]?.status ?? .unavailable
             return FFmpegEncodingCapabilities(
                 softwareAV1: av1,
                 softwareAV1Encoder: av1Encoder,
@@ -216,7 +271,8 @@ public struct FFmpegCapabilityProbe<Runner: CommandRunning>: Sendable {
                 proResEncoder: proResEncoder,
                 aac: aac,
                 aacEncoder: aacEncoder,
-                availableFilters: filterNames
+                availableFilters: filterNames,
+                audioCapabilities: audioCapabilities
             )
         }
     }
@@ -275,12 +331,21 @@ public struct FFmpegCapabilityProbe<Runner: CommandRunning>: Sendable {
             ] + outputArguments + ["-f", "null", "-"])
     }
 
-    private func smokeAudio(inputURL: URL, encoder: String) async throws -> Bool {
-        try await smoke([
+    private func smokeAudio(
+        inputURL: URL,
+        encoder: String,
+        preset: AudioTranscodePreset
+    ) async throws -> Bool {
+        var arguments = [
             "-hide_banner", "-loglevel", "error",
             "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", inputURL.path,
-            "-frames:a", "1", "-c:a", encoder, "-f", "null", "-",
-        ])
+            "-frames:a", "1", "-c:a", encoder,
+        ]
+        if let bitrate = preset.recommendedBitrate(channels: 2) {
+            arguments += ["-b:a", String(bitrate)]
+        }
+        arguments += ["-f", "null", "-"]
+        return try await smoke(arguments)
     }
 
     private func smoke(_ arguments: [String]) async throws -> Bool {

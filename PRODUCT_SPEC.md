@@ -976,7 +976,8 @@ Deliverables:
 Gate: multi-step video workflows use one encoded generation, and tested HDR outputs retain the required metadata or fail safely.
 
 Current implementation: the pinned Universal runtime now builds separate
-`arm64` and `x86_64` SVT-AV1 4.1.0 and dav1d 1.5.4 static libraries, links them
+`arm64` and `x86_64` SVT-AV1 4.1.0, dav1d 1.5.4, and libopus 1.6.1 static
+libraries, links them
 into the network-disabled FFmpeg, bundles the required notices, publishes the
 matching source archives and SBOM components, and proves real 10-bit AV1 encode
 and software decode for both slices. Join and Exact Trim already route a
@@ -1001,8 +1002,14 @@ and permits any actively verified codec compatible with the reviewed SDR or
 static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
+The runtime additionally requires FFmpeg's AC-3, E-AC-3, and FLAC encoders and
+statically links checksum-pinned stable libopus. The app capability probe smoke
+encodes AAC, Opus, AC-3, E-AC-3, and FLAC independently and fails each choice
+closed; FFmpeg's experimental native Opus encoder is never eligible. Packet copy
+remains the product default. User-facing typed audio choices, layout validation,
+single-generation command compilation, and output audit remain the next slice.
 Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding,
-representative beta-corpus tuning, advanced audio formats, and physical Intel
+representative beta-corpus tuning, advanced audio execution, and physical Intel
 performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
