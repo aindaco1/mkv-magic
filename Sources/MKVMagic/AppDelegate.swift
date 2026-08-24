@@ -78,9 +78,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         update.target = self
         appMenu.addItem(update)
         appMenu.addItem(.separator())
+        let services = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
+        let servicesMenu = NSMenu(title: "Services")
+        services.submenu = servicesMenu
+        appMenu.addItem(services)
+        NSApp.servicesMenu = servicesMenu
+        appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Hide MKV Magic", action: #selector(NSApplication.hide(_:)),
             keyEquivalent: "h")
+        let hideOthers = appMenu.addItem(
+            withTitle: "Hide Others",
+            action: #selector(NSApplication.hideOtherApplications(_:)),
+            keyEquivalent: "h"
+        )
+        hideOthers.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(
+            withTitle: "Show All",
+            action: #selector(NSApplication.unhideAllApplications(_:)),
+            keyEquivalent: ""
+        )
+        appMenu.addItem(.separator())
         appMenu.addItem(
             withTitle: "Quit MKV Magic", action: #selector(NSApplication.terminate(_:)),
             keyEquivalent: "q")

@@ -112,6 +112,17 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(openItem.keyEquivalent, "o")
         XCTAssertEqual(openItem.action, #selector(MainViewController.chooseFiles))
         XCTAssertTrue(openItem.target === window.contentViewController)
+        let appMenu = try XCTUnwrap(NSApp.mainMenu?.item(at: 0)?.submenu)
+        let servicesItem = try XCTUnwrap(appMenu.item(withTitle: "Services"))
+        XCTAssertTrue(NSApp.servicesMenu === servicesItem.submenu)
+        let hideOthers = try XCTUnwrap(appMenu.item(withTitle: "Hide Others"))
+        XCTAssertEqual(hideOthers.keyEquivalent, "h")
+        XCTAssertEqual(hideOthers.keyEquivalentModifierMask, [.command, .option])
+        XCTAssertEqual(hideOthers.action, #selector(NSApplication.hideOtherApplications(_:)))
+        XCTAssertEqual(
+            appMenu.item(withTitle: "Show All")?.action,
+            #selector(NSApplication.unhideAllApplications(_:))
+        )
         let windowMenu = try XCTUnwrap(
             NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Window" }
         )

@@ -1350,6 +1350,13 @@ both appearances, and the source gate rejects future unscoped semantic-color to
 evidence, not a claimed manual Increase Contrast, Reduce Transparency, or
 visual contrast pass.
 
+The standard Application-menu continuation registers a native Services submenu
+with `NSApp`, adds Command-Option-H Hide Others and Show All, and retains the
+existing About, explicit update check, Hide, and Quit commands. Live app launch
+coverage verifies the services-menu identity, selectors, and modifier flags.
+This provides expected macOS integration without a custom menu dispatcher or
+network behavior.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

@@ -396,6 +396,11 @@ motion, and the source gate rejects future one-shot semantic-color conversion.
 See
 [docs/releases/M8_ADAPTIVE_APPEARANCE_FOUNDATION_SLICE.md](docs/releases/M8_ADAPTIVE_APPEARANCE_FOUNDATION_SLICE.md).
 
+The Application menu now follows the standard macOS integration contract with
+a registered Services submenu, Command-Option-H Hide Others, and Show All,
+alongside the existing About, update, Hide, and Quit commands. See
+[docs/releases/M8_STANDARD_APPLICATION_MENU_SLICE.md](docs/releases/M8_STANDARD_APPLICATION_MENU_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream
