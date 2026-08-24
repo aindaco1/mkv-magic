@@ -1408,6 +1408,14 @@ provenance bound to the release workflow, tag, repository, hosted runner, and
 commit. The public release is downloaded into a new directory and reverified;
 successful draft readback alone is not release acceptance.
 
+The bundled-runtime layout continuation closes the copy boundary around the
+manifest-backed tool tree. Unsigned trees have exactly four root entries;
+signed trees may add only a structurally matching pre-sign build manifest per
+architecture. Extra caches, tools, libraries, directories, symlinks, special
+files, executable licenses, and unbounded license content fail before app
+assembly or signing. A real ad-hoc package rehearsal launches every pinned tool
+from both architecture selections in the mounted DMG.
+
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 
 ## 13. Initial implementation backlog

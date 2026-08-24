@@ -10,6 +10,9 @@ if [[ ! -d "$tool_root" || -L "$tool_root" ]]; then
     echo "missing or unsafe tool root" >&2
     exit 1
 fi
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/ci/tool-tree-layout.sh"
+validate_mkv_magic_tool_tree_layout "$tool_root"
 sources="$tool_root/SOURCES.json"
 required_license_files=(
     "$tool_root/Licenses/FFmpeg-GPLv3.txt"
@@ -120,6 +123,33 @@ for architecture in arm64 x86_64; do
     if [[ "$(jq '.tools | length' "$manifest")" -ne 5 ]]; then
         echo "$architecture tool manifest must contain exactly five tools" >&2
         exit 1
+    fi
+    build_manifest="$architecture_root/build-manifest.json"
+    if [[ -e "$build_manifest" ]]; then
+        if [[ ! -f "$build_manifest" || -L "$build_manifest" ]] || \
+            ! jq -e --arg architecture "$architecture" '
+                (keys | sort) == ["architecture", "libraries", "platform", "schema", "tools"] and
+                .schema == "mkv-magic-tool-manifest-v1" and
+                .platform == "macos" and
+                .architecture == $architecture and
+                (.tools | length == 5) and
+                (.libraries | length == 1) and
+                ([.tools[].sha256, .libraries[].sha256]
+                  | all(type == "string" and test("^[a-f0-9]{64}$")))
+            ' "$build_manifest" >/dev/null; then
+            echo "invalid $architecture build manifest" >&2
+            exit 1
+        fi
+        signed_structure="$(
+            jq -S 'del(.tools[].sha256, .libraries[].sha256)' "$manifest"
+        )"
+        build_structure="$(
+            jq -S 'del(.tools[].sha256, .libraries[].sha256)' "$build_manifest"
+        )"
+        if [[ "$signed_structure" != "$build_structure" ]]; then
+            echo "$architecture build and signed manifests disagree" >&2
+            exit 1
+        fi
     fi
     for tool in "${expected_tools[@]}"; do
         tool_path="$architecture_root/$tool"

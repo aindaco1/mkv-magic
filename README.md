@@ -427,6 +427,12 @@ verifier to both the downloaded draft candidate and a fresh download of the
 published release. See
 [docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md](docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md).
 
+The bundled media runtime now has an exact fail-closed layout contract before
+copying and after signing/resealing; unrelated build caches or extra payloads
+cannot ride inside the app. A real pinned-runtime DMG rehearsal passed both
+ARM64 and Rosetta x86_64 tool launch checks. See
+[docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md](docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

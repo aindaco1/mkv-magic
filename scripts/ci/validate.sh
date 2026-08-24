@@ -11,6 +11,7 @@ cd "$repo_root"
 ./scripts/ci/verify-actions-pinning.sh
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
+./scripts/ci/test-tool-tree-layout.sh
 
 shell_files=()
 while IFS= read -r -d '' shell_file; do
