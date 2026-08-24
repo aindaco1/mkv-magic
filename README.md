@@ -415,6 +415,9 @@ The coverage workflow now measures repository production sources only and
 fails below conservative line, function, or region floors; tests, generated
 runners, Sparkle, and other dependencies cannot inflate the gate. See
 [docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
+It also enforces the public-beta requirement of at least 80% collective non-UI
+line coverage; the current measured result is 87.64%. See
+[docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md](docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md).
 
 For safe recovery steps, unavailable-action prerequisites, queue/encoding
 guidance, and privacy-safe support evidence, see the canonical

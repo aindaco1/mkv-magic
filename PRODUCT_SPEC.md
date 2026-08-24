@@ -1381,6 +1381,13 @@ generated runners, Sparkle, and other dependencies cannot inflate the result.
 The floors are tripwires against material erosion, not a claim that coverage
 percentage alone establishes correctness or UX acceptance.
 
+The public-beta continuation separately aggregates every production target
+other than the AppKit executable and enforces at least 80% non-UI line coverage.
+The current instrumented result is 87.64% (17,231 of 19,662 lines). The AppKit
+target remains in the all-source floors and retains focused policy,
+accessibility, launch, and manual UX acceptance rather than being excluded from
+coverage reporting.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

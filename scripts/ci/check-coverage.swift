@@ -18,6 +18,11 @@ private struct CoverageMinimum {
     let percent: Double
 }
 
+private struct CoverageTotals {
+    var allSources: [String: CoverageMetric]
+    var nonUI: [String: CoverageMetric]
+}
+
 private enum CoverageGateError: Error, CustomStringConvertible {
     case usage
     case invalidReport(String)
@@ -48,9 +53,15 @@ private let minimums = [
     CoverageMinimum(key: "functions", label: "function", percent: 68),
     CoverageMinimum(key: "regions", label: "region", percent: 58),
 ]
+private let nonUILineMinimum = CoverageMinimum(
+    key: "lines",
+    label: "non-UI line",
+    percent: 80
+)
+private let appKitTarget = "MKVMagic"
 
 private func coverageMetrics(reportURL: URL, sourceRootURL: URL) throws
-    -> [String: CoverageMetric]
+    -> CoverageTotals
 {
     let data = try Data(contentsOf: reportURL, options: [.mappedIfSafe])
     guard
@@ -64,7 +75,12 @@ private func coverageMetrics(reportURL: URL, sourceRootURL: URL) throws
 
     let sourcePrefix = sourceRootURL.standardizedFileURL.path + "/"
     var sourceFileCount = 0
-    var totals = Dictionary(
+    var appKitSourceFileCount = 0
+    var nonUISourceFileCount = 0
+    var allSourceTotals = Dictionary(
+        uniqueKeysWithValues: minimums.map { ($0.key, CoverageMetric()) }
+    )
+    var nonUITotals = Dictionary(
         uniqueKeysWithValues: minimums.map { ($0.key, CoverageMetric()) }
     )
     for file in files {
@@ -72,10 +88,21 @@ private func coverageMetrics(reportURL: URL, sourceRootURL: URL) throws
             let filename = file["filename"] as? String,
             URL(fileURLWithPath: filename).standardizedFileURL.path.hasPrefix(sourcePrefix)
         else { continue }
+        let standardizedPath = URL(fileURLWithPath: filename).standardizedFileURL.path
+        let relativePath = standardizedPath.dropFirst(sourcePrefix.count)
+        guard let target = relativePath.split(separator: "/").first else {
+            throw CoverageGateError.invalidReport("source file has no target component")
+        }
+        let isNonUI = target != Substring(appKitTarget)
         guard let summary = file["summary"] as? [String: Any] else {
             throw CoverageGateError.invalidReport("missing summary for repository source")
         }
         sourceFileCount += 1
+        if isNonUI {
+            nonUISourceFileCount += 1
+        } else {
+            appKitSourceFileCount += 1
+        }
         for minimum in minimums {
             guard
                 let metric = summary[minimum.key] as? [String: Any],
@@ -89,14 +116,24 @@ private func coverageMetrics(reportURL: URL, sourceRootURL: URL) throws
                     "invalid \(minimum.key) metric for repository source"
                 )
             }
-            totals[minimum.key]?.count += count
-            totals[minimum.key]?.covered += covered
+            allSourceTotals[minimum.key]?.count += count
+            allSourceTotals[minimum.key]?.covered += covered
+            if isNonUI {
+                nonUITotals[minimum.key]?.count += count
+                nonUITotals[minimum.key]?.covered += covered
+            }
         }
     }
     guard sourceFileCount > 0 else {
         throw CoverageGateError.noSourceFiles(sourceRootURL.path)
     }
-    return totals
+    guard nonUISourceFileCount > 0 else {
+        throw CoverageGateError.invalidReport("no non-UI production source files")
+    }
+    guard appKitSourceFileCount > 0 else {
+        throw CoverageGateError.invalidReport("AppKit production target is missing")
+    }
+    return CoverageTotals(allSources: allSourceTotals, nonUI: nonUITotals)
 }
 
 private func run() throws {
@@ -106,7 +143,7 @@ private func run() throws {
     let totals = try coverageMetrics(reportURL: reportURL, sourceRootURL: sourceRootURL)
 
     for minimum in minimums {
-        guard let total = totals[minimum.key] else {
+        guard let total = totals.allSources[minimum.key] else {
             throw CoverageGateError.invalidReport("missing \(minimum.key) total")
         }
         print(
@@ -125,6 +162,25 @@ private func run() throws {
                 minimum: minimum.percent
             )
         }
+    }
+
+    guard let nonUILines = totals.nonUI[nonUILineMinimum.key] else {
+        throw CoverageGateError.invalidReport("missing non-UI line total")
+    }
+    print(
+        String(
+            format: "repository source non-UI line coverage: %.2f%% (%d/%d)",
+            nonUILines.percent,
+            nonUILines.covered,
+            nonUILines.count
+        )
+    )
+    guard nonUILines.percent >= nonUILineMinimum.percent else {
+        throw CoverageGateError.belowMinimum(
+            label: nonUILineMinimum.label,
+            actual: nonUILines.percent,
+            minimum: nonUILineMinimum.percent
+        )
     }
 }
 

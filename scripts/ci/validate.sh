@@ -10,6 +10,7 @@ cd "$repo_root"
 ./scripts/ci/scan-secrets.sh
 ./scripts/ci/verify-actions-pinning.sh
 actionlint -color
+./scripts/ci/test-coverage-gate.sh
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
 ./scripts/ci/test-publication-acceptance.sh
