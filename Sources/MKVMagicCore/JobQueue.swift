@@ -46,6 +46,30 @@ public enum MediaQueueEventReason: String, Codable, CaseIterable, Hashable, Send
     case executionFailed
     case interruptedBeforeVerification
     case staleReview
+    case automaticExecutionUnavailable
+}
+
+public enum MediaQueueOutputFilenamePolicy {
+    public static func isSafe(_ value: String) -> Bool {
+        !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && value.utf8.count <= 1_024
+            && value != "."
+            && value != ".."
+            && !value.contains("/")
+            && !value.contains("\0")
+    }
+
+    public static func outputURL(
+        filename: String,
+        in rawDirectoryURL: URL
+    ) -> URL? {
+        guard isSafe(filename) else { return nil }
+        let directoryURL = rawDirectoryURL.standardizedFileURL
+        guard directoryURL.isFileURL, directoryURL.path.hasPrefix("/") else { return nil }
+        let outputURL = directoryURL.appendingPathComponent(filename).standardizedFileURL
+        guard outputURL.deletingLastPathComponent() == directoryURL else { return nil }
+        return outputURL
+    }
 }
 
 public struct MediaQueueFileReference: Codable, Hashable, Identifiable, Sendable {

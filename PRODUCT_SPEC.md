@@ -1129,8 +1129,13 @@ trim and join stale-input guards. An unchanged-only resolver refuses a legacy
 reference with no revision and any current file whose revision differs. Store
 validation accepts omission for backward compatibility, rejects invalid revision
 facts and any forged directory revision, and never persists a source path. The
-current explicit execution bridge captures these revisions; the future automatic
-executor must use the unchanged-only resolver before admission.
+current explicit execution bridge captures these revisions. A system-layer
+admission coordinator now consumes the pure scheduler, requires an explicit
+executor capability check, resolves every input through the unchanged-only
+boundary, refuses an occupied or unsafe output, and only then transitions a job
+to **Running**. Unsupported or stale work moves to **Needs Review**. The
+coordinator scopes bookmark authority around the injected executor and durably
+maps verified success, failure, cancellation, or re-review outcomes.
 
 A native queue execution bridge now persists each saved-workflow plan and fresh,
 narrow input/destination bookmarks before **Verify & Run** starts any media tool.
@@ -1143,13 +1148,13 @@ the job identity and attempt history. Queue recovery runs once per app launch,
 so opening or refreshing the window cannot reclassify current work as
 interrupted.
 
-Automatic executor admission remains open. Reviewed input revisions now provide
-its fail-closed file-identity prerequisite, but no coordinator consumes them yet.
-The current explicit **Verify & Run**
+Production automatic execution remains open. The coordinator contract is not
+yet invoked by the app, and no production executor callback or live battery and
+thermal adapter is connected. The current explicit **Verify & Run**
 path starts immediately and is intentionally distinguished in the UI from the
 persisted pause for future automatic starts. Built-in quick actions, unattended
-batch startup, battery and thermal adapters, and soak/physical-Intel acceptance
-also remain open.
+batch startup, queue authoring without an immediate run, and soak/physical-Intel
+acceptance also remain open.
 
 The saved-workflow Save panel now exposes **Move original video file to Trash
 after verified success** as an off-by-default option. Selecting it grants write

@@ -397,10 +397,7 @@ public actor JSONJobQueueStore: JobQueueManaging {
     }
 
     private func isValidOutputFilename(_ value: String) -> Bool {
-        isValidDisplayName(value)
-            && value != "."
-            && value != ".."
-            && !value.contains("/")
+        MediaQueueOutputFilenamePolicy.isSafe(value)
     }
 }
 

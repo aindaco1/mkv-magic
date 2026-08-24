@@ -251,9 +251,13 @@ cancellation. Every newly reviewed queue input also stores a path-free file
 revision made from size, modification time, and filesystem identity. The shared
 resolver can require that exact revision before returning bookmark authority;
 legacy queue entries without one and files changed since review both fail
-closed. This is the input-integrity prerequisite for future automatic admission,
-not a claim that unattended execution is connected. The native **Queue** window
-shows resource cost, status, and
+closed. A system-layer admission coordinator now combines that check with the
+existing pause, queue-order, resource, battery, and thermal policy. It also
+requires an explicit executor capability check and an unused safe output before
+marking work **Running**, then persists verified success, failure, cancellation,
+or re-review. The app does not invoke that coordinator yet, so this is not a
+claim that unattended execution is connected. The native **Queue** window shows
+resource cost, status, and
 attempts; it offers hold/resume, pending reorder, cancel, review-again retry, and
 a persistent pause for future automatic starts. Opening the window refreshes
 current work without treating it as a relaunch interruption.
@@ -283,7 +287,9 @@ and
 with its relaunch outcome contract in
 [docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md](docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md),
 and the automatic-admission input boundary in
-[docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md](docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md).
+[docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md](docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md),
+followed by the coordinator foundation in
+[docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md](docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md).
 
 ## Design promises
 

@@ -63,6 +63,10 @@ public struct SecurityScopedBookmarkCodec: Sendable {
             throw SecurityScopedBookmarkError.changedSinceReview
         }
         let url = try resolve(reference, access: access)
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { url.stopAccessingSecurityScopedResource() }
+        }
         guard try fileRevision(for: url) == reviewedRevision else {
             throw SecurityScopedBookmarkError.changedSinceReview
         }

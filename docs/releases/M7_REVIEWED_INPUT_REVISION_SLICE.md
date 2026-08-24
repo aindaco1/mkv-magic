@@ -31,9 +31,10 @@ if the source changed. A separate unchanged-only file resolver:
 4. returns the URL only when every recorded fact still matches.
 
 A legacy reference, changed size/date/identity, stale bookmark, symlink, missing
-file, directory, or unsafe URL all fail closed. The future automatic coordinator
-must use this resolver before starting tools. A failed check should move the job
-to **Needs Review**, not silently refresh the revision.
+file, directory, or unsafe URL all fail closed. The later
+[queue-admission coordinator foundation](M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md)
+uses this resolver before admitting work and moves failed checks to **Needs
+Review** instead of silently refreshing the revision.
 
 ## DRY boundary
 
@@ -69,8 +70,9 @@ in-process executor checks retain the filesystem's full reported precision.
 
 ## Explicitly not accepted by this slice
 
-- No automatic coordinator, battery adapter, thermal adapter, unattended start,
-  watched folder, or built-in quick-action queueing is connected.
+- No production executor, battery adapter, thermal adapter, unattended start,
+  watched folder, or built-in quick-action queueing is connected. A later slice
+  adds the system coordinator contract without invoking it from the app.
 - The stat-based revision is a bounded local change detector, not a cryptographic
   digest or proof against an adversary able to rewrite both file bytes and file
   metadata. Hashing multi-gigabyte inputs at queue time remains intentionally
