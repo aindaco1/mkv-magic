@@ -33,6 +33,30 @@ final class JobQueueStoreTests: XCTestCase {
         let encoded = try XCTUnwrap(String(data: Data(contentsOf: fileURL), encoding: .utf8))
         XCTAssertTrue(encoded.contains("mkv-magic-job-queue-v1"))
         XCTAssertFalse(encoded.contains("sourceDispositionResult"))
+        XCTAssertFalse(encoded.contains("reviewedRevision"))
+        XCTAssertFalse(encoded.contains("/Users/"))
+    }
+
+    func testRoundTripsReviewedFileRevisionWithoutExposingAPath() async throws {
+        let store = try JSONJobQueueStore(fileURL: fileURL)
+        let revision = MediaQueueFileRevision(
+            fileSize: 12_345,
+            modificationDate: base,
+            fileNumber: 42,
+            systemNumber: 7
+        )
+        let snapshot = MediaQueueSnapshot(
+            jobs: [makeJob(id: id(1), inputRevision: revision)],
+            updatedAt: base
+        )
+
+        try await store.save(snapshot)
+
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded, snapshot)
+        let encoded = try XCTUnwrap(String(data: Data(contentsOf: fileURL), encoding: .utf8))
+        XCTAssertTrue(encoded.contains("reviewedRevision"))
+        XCTAssertTrue(encoded.contains("12345"))
         XCTAssertFalse(encoded.contains("/Users/"))
     }
 
@@ -182,6 +206,36 @@ final class JobQueueStoreTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
         }
+
+        let invalidRevision = makeJob(
+            id: id(4),
+            inputRevision: MediaQueueFileRevision(
+                fileSize: -1,
+                modificationDate: base
+            )
+        )
+        do {
+            try await store.save(MediaQueueSnapshot(jobs: [invalidRevision], updatedAt: base))
+            XCTFail("Expected invalid reviewed revision refusal")
+        } catch {
+            XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
+        }
+
+        let forgedDirectoryRevision = makeJob(
+            id: id(5),
+            destinationRevision: MediaQueueFileRevision(
+                fileSize: 0,
+                modificationDate: base
+            )
+        )
+        do {
+            try await store.save(
+                MediaQueueSnapshot(jobs: [forgedDirectoryRevision], updatedAt: base)
+            )
+            XCTFail("Expected destination-directory revision refusal")
+        } catch {
+            XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
+        }
     }
 
     func testUnsafeOutputNamesAndForgedPlanImpactFailClosed() async throws {
@@ -236,6 +290,8 @@ final class JobQueueStoreTests: XCTestCase {
         outputDisplayName: String = "Input — Edited.mkv",
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         sourceDispositionResult: MediaQueueSourceDispositionResult? = nil,
+        inputRevision: MediaQueueFileRevision? = nil,
+        destinationRevision: MediaQueueFileRevision? = nil,
         impact: PlanImpact = PlanImpact(
             videoEncodeCount: 0,
             audioEncodeCount: 0,
@@ -250,13 +306,15 @@ final class JobQueueStoreTests: XCTestCase {
                 MediaQueueFileReference(
                     id: self.id(91),
                     displayName: "Input.mkv",
-                    securityScopedBookmark: inputBookmark
+                    securityScopedBookmark: inputBookmark,
+                    reviewedRevision: inputRevision
                 )
             ],
             destinationDirectory: MediaQueueFileReference(
                 id: self.id(92),
                 displayName: "Output Folder",
-                securityScopedBookmark: Data([4, 5, 6])
+                securityScopedBookmark: Data([4, 5, 6]),
+                reviewedRevision: destinationRevision
             ),
             outputDisplayName: outputDisplayName,
             sourceDisposition: sourceDisposition,

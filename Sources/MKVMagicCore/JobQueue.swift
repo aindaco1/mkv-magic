@@ -52,15 +52,18 @@ public struct MediaQueueFileReference: Codable, Hashable, Identifiable, Sendable
     public let id: UUID
     public let displayName: String
     public let securityScopedBookmark: Data
+    public let reviewedRevision: MediaQueueFileRevision?
 
     public init(
         id: UUID = UUID(),
         displayName: String,
-        securityScopedBookmark: Data
+        securityScopedBookmark: Data,
+        reviewedRevision: MediaQueueFileRevision? = nil
     ) {
         self.id = id
         self.displayName = displayName
         self.securityScopedBookmark = securityScopedBookmark
+        self.reviewedRevision = reviewedRevision
     }
 }
 

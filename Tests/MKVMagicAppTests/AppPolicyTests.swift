@@ -2804,10 +2804,11 @@ final class AppPolicyTests: XCTestCase {
         }
 
         try XCTUnwrap(controls.first { $0.title == "Review Trim" }).performClick(nil)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
         XCTAssertTrue(
-            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains {
-                $0 == "Cannot run this trim: Fixture review failed."
+            waitUntil {
+                descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains {
+                    $0 == "Cannot run this trim: Fixture review failed."
+                }
             }
         )
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
@@ -3519,6 +3520,19 @@ final class AppPolicyTests: XCTestCase {
         content.cacheDisplay(in: bounds, to: representation)
         let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
         try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+    }
+
+    @MainActor
+    private func waitUntil(
+        timeout: TimeInterval = 2,
+        condition: () -> Bool
+    ) -> Bool {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        repeat {
+            if condition() { return true }
+            RunLoop.current.run(until: min(deadline, Date(timeIntervalSinceNow: 0.01)))
+        } while Date() < deadline
+        return condition()
     }
 
     private func makeQueueJob(

@@ -255,12 +255,20 @@ final class RealToolAppHistoryTests: XCTestCase {
             )
         )
         let bookmarkCodec = SecurityScopedBookmarkCodec()
+        XCTAssertTrue(queuedJob.inputs.allSatisfy { $0.reviewedRevision != nil })
+        XCTAssertNil(queuedJob.destinationDirectory.reviewedRevision)
         XCTAssertEqual(
-            try bookmarkCodec.resolve(queuedJob.inputs[0], access: .readWriteFile),
+            try bookmarkCodec.resolveUnchangedFile(
+                queuedJob.inputs[0],
+                access: .readWriteFile
+            ),
             source
         )
         XCTAssertEqual(
-            try bookmarkCodec.resolve(queuedJob.inputs[1], access: .readOnlyFile),
+            try bookmarkCodec.resolveUnchangedFile(
+                queuedJob.inputs[1],
+                access: .readOnlyFile
+            ),
             externalSubtitle
         )
         XCTAssertEqual(

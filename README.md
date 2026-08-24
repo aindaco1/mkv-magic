@@ -247,7 +247,13 @@ under serious thermal pressure, and reduces battery operation to one lightweight
 job. Saved-workflow **Verify & Run** now records fresh, narrow security-scoped
 bookmarks and the exact reviewed plan before starting tools, then advances the
 durable job through verified success, recoverable failure, or cooperative
-cancellation. The native **Queue** window shows resource cost, status, and
+cancellation. Every newly reviewed queue input also stores a path-free file
+revision made from size, modification time, and filesystem identity. The shared
+resolver can require that exact revision before returning bookmark authority;
+legacy queue entries without one and files changed since review both fail
+closed. This is the input-integrity prerequisite for future automatic admission,
+not a claim that unattended execution is connected. The native **Queue** window
+shows resource cost, status, and
 attempts; it offers hold/resume, pending reorder, cancel, review-again retry, and
 a persistent pause for future automatic starts. Opening the window refreshes
 current work without treating it as a relaunch interruption.
@@ -275,7 +281,9 @@ admission plus unattended batch startup remain open. See
 and
 [docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md](docs/releases/M7_TRASH_AFTER_VERIFIED_SUCCESS_SLICE.md),
 with its relaunch outcome contract in
-[docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md](docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md).
+[docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md](docs/releases/M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md),
+and the automatic-admission input boundary in
+[docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md](docs/releases/M7_REVIEWED_INPUT_REVISION_SLICE.md).
 
 ## Design promises
 

@@ -1,4 +1,5 @@
 import Foundation
+import MKVMagicCore
 import XCTest
 
 @testable import MKVMagicSystem
@@ -30,8 +31,15 @@ final class SecurityScopedBookmarkCodecTests: XCTestCase {
 
         XCTAssertEqual(input.displayName, "Input.mkv")
         XCTAssertFalse(input.securityScopedBookmark.isEmpty)
+        XCTAssertEqual(input.reviewedRevision?.fileSize, 3)
+        XCTAssertEqual(writableInput.reviewedRevision, input.reviewedRevision)
+        XCTAssertNil(destination.reviewedRevision)
         XCTAssertEqual(
             try codec.resolve(input, access: .readOnlyFile),
+            fileURL.standardizedFileURL
+        )
+        XCTAssertEqual(
+            try codec.resolveUnchangedFile(input, access: .readOnlyFile),
             fileURL.standardizedFileURL
         )
         XCTAssertEqual(
@@ -44,6 +52,33 @@ final class SecurityScopedBookmarkCodecTests: XCTestCase {
         )
         XCTAssertThrowsError(try codec.resolve(input, access: .readWriteDirectory)) {
             XCTAssertEqual($0 as? SecurityScopedBookmarkError, .wrongResourceType)
+        }
+    }
+
+    func testUnchangedResolutionFailsClosedAfterFileMutationOrWithoutReviewedRevision() throws {
+        let codec = SecurityScopedBookmarkCodec()
+        let input = try codec.makeReference(for: fileURL, access: .readOnlyFile)
+        let legacy = MediaQueueFileReference(
+            displayName: input.displayName,
+            securityScopedBookmark: input.securityScopedBookmark
+        )
+
+        XCTAssertThrowsError(
+            try codec.resolveUnchangedFile(legacy, access: .readOnlyFile)
+        ) {
+            XCTAssertEqual($0 as? SecurityScopedBookmarkError, .changedSinceReview)
+        }
+
+        try Data([1, 2, 3, 4]).write(to: fileURL)
+        try FileManager.default.setAttributes(
+            [.modificationDate: Date().addingTimeInterval(5)],
+            ofItemAtPath: fileURL.path
+        )
+        XCTAssertEqual(try codec.resolve(input, access: .readOnlyFile), fileURL.standardizedFileURL)
+        XCTAssertThrowsError(
+            try codec.resolveUnchangedFile(input, access: .readOnlyFile)
+        ) {
+            XCTAssertEqual($0 as? SecurityScopedBookmarkError, .changedSinceReview)
         }
     }
 

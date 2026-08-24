@@ -1122,6 +1122,16 @@ bounds audio-heavy and zero-encode lightweight work, starts only one lightweight
 job on battery, and starts nothing
 under serious thermal pressure or while paused.
 
+New queue file bookmarks also carry a path-free reviewed revision: file size,
+millisecond-normalized modification time, and available filesystem file/system
+identities. File capture and comparison reuse the same revision reader as the
+trim and join stale-input guards. An unchanged-only resolver refuses a legacy
+reference with no revision and any current file whose revision differs. Store
+validation accepts omission for backward compatibility, rejects invalid revision
+facts and any forged directory revision, and never persists a source path. The
+current explicit execution bridge captures these revisions; the future automatic
+executor must use the unchanged-only resolver before admission.
+
 A native queue execution bridge now persists each saved-workflow plan and fresh,
 narrow input/destination bookmarks before **Verify & Run** starts any media tool.
 It shows ordered jobs, resource class, state, and attempts; supports pending
@@ -1133,7 +1143,9 @@ the job identity and attempt history. Queue recovery runs once per app launch,
 so opening or refreshing the window cannot reclassify current work as
 interrupted.
 
-Automatic executor admission remains open. The current explicit **Verify & Run**
+Automatic executor admission remains open. Reviewed input revisions now provide
+its fail-closed file-identity prerequisite, but no coordinator consumes them yet.
+The current explicit **Verify & Run**
 path starts immediately and is intentionally distinguished in the UI from the
 persisted pause for future automatic starts. Built-in quick actions, unattended
 batch startup, battery and thermal adapters, and soak/physical-Intel acceptance

@@ -9,6 +9,9 @@ This document records the boundary of that foundation slice. The later
 [queue UI and execution bridge](M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md) connects
 saved-workflow Verify & Run, real bookmarks, cooperative cancellation, and
 review-again retry while still leaving automatic scheduler admission open.
+The later
+[reviewed input revision slice](M7_REVIEWED_INPUT_REVISION_SLICE.md) adds the
+fail-closed file-identity prerequisite for automatic admission.
 
 ## Durable intent boundary
 
@@ -85,7 +88,9 @@ review-again retry while still leaving automatic scheduler admission open.
 - No current Verify & Run action creates a production-queue record yet.
 - No UI offers pause, resume, reorder, retry, cancel, or review-again controls.
 - No bookmark resolver, executor coordinator, battery adapter, or thermal adapter
-  is connected to the scheduler.
+  was connected to the scheduler in this slice. A later slice added bookmark
+  revision capture and unchanged-only resolution; the coordinator and system
+  environment adapters remain open.
 - No interrupted job can execute until a later slice resolves its bookmarks,
   re-inspects the source, recompiles/reviews the plan, and obtains fresh user
   approval where required.

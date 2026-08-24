@@ -11,6 +11,7 @@ public enum SecurityScopedBookmarkError: Error, Equatable, Sendable {
     case unsafeURL
     case wrongResourceType
     case stale
+    case changedSinceReview
 }
 
 public struct SecurityScopedBookmarkCodec: Sendable {
@@ -32,7 +33,8 @@ public struct SecurityScopedBookmarkCodec: Sendable {
         )
         return MediaQueueFileReference(
             displayName: safeURL.lastPathComponent,
-            securityScopedBookmark: bookmark
+            securityScopedBookmark: bookmark,
+            reviewedRevision: access == .readWriteDirectory ? nil : try fileRevision(for: safeURL)
         )
     }
 
@@ -49,6 +51,22 @@ public struct SecurityScopedBookmarkCodec: Sendable {
         )
         guard !isStale else { throw SecurityScopedBookmarkError.stale }
         return try validated(url, access: access)
+    }
+
+    public func resolveUnchangedFile(
+        _ reference: MediaQueueFileReference,
+        access: SecurityScopedBookmarkAccess
+    ) throws -> URL {
+        guard access != .readWriteDirectory,
+            let reviewedRevision = reference.reviewedRevision
+        else {
+            throw SecurityScopedBookmarkError.changedSinceReview
+        }
+        let url = try resolve(reference, access: access)
+        guard try fileRevision(for: url) == reviewedRevision else {
+            throw SecurityScopedBookmarkError.changedSinceReview
+        }
+        return url
     }
 
     private func validated(
@@ -83,5 +101,13 @@ public struct SecurityScopedBookmarkCodec: Sendable {
 
     private func isSymbolicLink(_ url: URL) -> Bool {
         (try? FileManager.default.destinationOfSymbolicLink(atPath: url.path)) != nil
+    }
+
+    private func fileRevision(for url: URL) throws -> MediaQueueFileRevision {
+        do {
+            return try MediaFileRevisionReader().read(url).atMillisecondPrecision
+        } catch {
+            throw SecurityScopedBookmarkError.unsafeURL
+        }
     }
 }

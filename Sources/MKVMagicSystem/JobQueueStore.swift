@@ -289,11 +289,13 @@ public actor JSONJobQueueStore: JobQueueManaging {
             let references = job.inputs + [job.destinationDirectory]
             var referenceIDs = Set<UUID>()
             guard
+                job.destinationDirectory.reviewedRevision == nil,
                 references.allSatisfy({ reference in
                     referenceIDs.insert(reference.id).inserted
                         && isValidDisplayName(reference.displayName)
                         && !reference.securityScopedBookmark.isEmpty
                         && reference.securityScopedBookmark.count <= Self.maximumBookmarkBytes
+                        && isValidRevision(reference.reviewedRevision)
                 })
             else {
                 throw JobQueueStoreError.malformedQueue
@@ -386,6 +388,12 @@ public actor JSONJobQueueStore: JobQueueManaging {
         !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && value.utf8.count <= Self.maximumDisplayNameBytes
             && !value.contains("\0")
+    }
+
+    private func isValidRevision(_ revision: MediaQueueFileRevision?) -> Bool {
+        guard let revision else { return true }
+        return revision.fileSize >= 0
+            && revision.modificationDate.timeIntervalSinceReferenceDate.isFinite
     }
 
     private func isValidOutputFilename(_ value: String) -> Bool {
