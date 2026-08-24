@@ -484,6 +484,19 @@ contract. The user must explicitly choose **Use This Plan** before **Verify &
 Run** is enabled. A recipe with no applicable changes shows its skipped cards,
 offers only Done, and creates no destination.
 
+The first interactive input card adds one external SRT, ASS, or SSA subtitle.
+The portable v2 recipe stores only that input-slot intent: it contains no path,
+bookmark, track metadata, subtitle text, or inspected-media identity. Save &
+Preview asks for the file, runs the existing local match and editable metadata
+confirmation, and binds that ephemeral review to the compiled plan. Compilation
+fails closed if the input is absent or its reviewed path/format changes. Track
+cleanup and subtitle addition fuse into one `mkvmerge`; optional segment-title
+removal runs once on that temporary output before the normal pre-commit and
+post-commit audits. The subtitle card preserves the reviewed normalized source
+content; cleanup suggestions remain visible but require a separate explicit
+cleanup action. Original v1 workflows migrate to v2 without changing recipe or
+step identity, order, enablement, or action semantics.
+
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
 ### 5.15 Queue and history
@@ -1075,8 +1088,11 @@ for imported workflows. A separate native compilation review now shows every
 card as applied, already satisfied, or disabled before the plan can be selected;
 an entirely satisfied recipe cannot become runnable. The builder now supports
 adding and removing the safe card catalog with duplicate prevention, in addition
-to enable/disable and reordering. Subtitle text cleanup/mux cards, broader
-conditions, queue execution, and filename cleanup remain open.
+to enable/disable and reordering. The external text-subtitle input card now asks
+for and confirms one SRT, ASS, or SSA during preview, keeps that runtime input out
+of the portable recipe, and fuses it with granular cleanup and title removal in
+one verified output transaction. Subtitle text-cleanup cards, broader conditions,
+queue execution, and filename cleanup remain open.
 
 Deliverables:
 

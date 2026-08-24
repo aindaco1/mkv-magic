@@ -63,8 +63,10 @@ portable file schema, add workflow actions, or alter media execution.
 
 ## Still pending
 
-- Interactive workflow input slots and preflight review for subtitle text
-  cleanup and external subtitle mux cards.
-- Broader conditional cards, filename cleanup, and portable schema migrations.
+- Subtitle text-cleanup workflow cards and their interactive review inputs. The
+  external subtitle input card shipped in the follow-up
+  `M7_EXTERNAL_SUBTITLE_WORKFLOW_SLICE.md`.
+- Broader conditional cards, filename cleanup, and future schema changes beyond
+  the external-input v2 migration.
 - Durable queue pause, resume, retry, cancel, reorder, and concurrency behavior.
 - VoiceOver, keyboard-only, physical Intel, and private-library beta acceptance.

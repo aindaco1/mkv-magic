@@ -64,6 +64,52 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
     }
 
+    func testPortableFileRoundTripsInputSlotIntentWithoutAnInputPath() throws {
+        let workflow = SavedWorkflow(
+            name: "Add a subtitle",
+            steps: [SavedWorkflowStep(action: .addExternalSubtitle)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("addExternalSubtitle"))
+        XCTAssertFalse(json.contains("sourceURL"))
+        XCTAssertFalse(json.contains("/private/"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionOnePortableWorkflowMigratesWithoutChangingIntentOrIdentity() throws {
+        let data = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":1,"name":"Legacy cleanup","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"removeNonEnglishSubtitles"}]}"#
+                .utf8
+        )
+
+        let migrated = try JSONSavedWorkflowStore.decodePortableFile(data)
+
+        XCTAssertEqual(migrated.schemaVersion, SavedWorkflow.currentSchemaVersion)
+        XCTAssertEqual(
+            migrated.id,
+            UUID(uuidString: "B989848F-887B-4861-AF7E-ADE3E6E64883")
+        )
+        XCTAssertEqual(
+            migrated.steps.map(\.id),
+            [UUID(uuidString: "22D43583-1382-4778-A4EC-D8618D3A6A4B")!]
+        )
+        XCTAssertEqual(migrated.steps.map(\.action), [.removeNonEnglishSubtitles])
+    }
+
+    func testVersionOneCannotClaimTheVersionTwoRuntimeInputAction() {
+        let data = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":1,"name":"Invalid backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"addExternalSubtitle"}]}"#
+                .utf8
+        )
+
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(data)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
     func testUnexpectedFieldsAtEveryLevelFailClosed() throws {
         let unexpectedWorkflow = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":1,"name":"Clean","steps":[],"sourceURL":"/private/media/Movie.mkv"}"#

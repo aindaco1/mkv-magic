@@ -1,6 +1,6 @@
 import Foundation
 
-public struct ExternalSubtitleTrackMetadata: Codable, Equatable, Sendable {
+public struct ExternalSubtitleTrackMetadata: Codable, Equatable, Hashable, Sendable {
     public let language: String
     public let name: String?
     public let isDefault: Bool
@@ -22,7 +22,7 @@ public struct ExternalSubtitleTrackMetadata: Codable, Equatable, Sendable {
     }
 }
 
-public enum ExternalTextSubtitleFormat: String, Codable, CaseIterable, Sendable {
+public enum ExternalTextSubtitleFormat: String, Codable, CaseIterable, Hashable, Sendable {
     case subRip
     case ass
     case ssa

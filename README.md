@@ -32,6 +32,15 @@ the original combined English Library Cleanup action remain supported. Save &
 Preview opens a native review that marks each recipe card as applied, already
 satisfied, or disabled; no plan becomes runnable until the user chooses **Use
 This Plan**. An already-satisfied recipe creates no output and offers only Done.
+The optional **Add one external text subtitle** card stores only portable input
+intent. At preview time it asks for one SRT, ASS, or SSA file, reuses the native
+match and track-metadata confirmation, and binds that reviewed file only to the
+current plan. Its path and metadata are never saved in the workflow JSON. Track
+cleanup, subtitle addition, and segment-title removal share one MKV remux plus at
+most one metadata pass before the existing verify-and-commit transaction. Any
+subtitle cleanup suggestions are disclosed during confirmation but are not
+silently applied by the mux card. Original v1 workflow files migrate to the v2
+intent schema without changing recipe IDs, card IDs, order, or actions.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

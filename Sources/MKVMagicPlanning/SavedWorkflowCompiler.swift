@@ -9,6 +9,8 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case duplicateAction
     case noEnabledSteps
     case unsupportedContainer
+    case missingExternalSubtitleInput
+    case invalidExternalSubtitleInput
     case unstableTrackIdentity
     case wouldRemoveAllTracks
     case noApplicableChanges
@@ -24,11 +26,39 @@ extension SavedWorkflowCompilationError: LocalizedError {
         case .duplicateAction: "Each workflow action can appear only once."
         case .noEnabledSteps: "Enable at least one workflow step."
         case .unsupportedContainer: "Saved workflows currently require a Matroska file."
+        case .missingExternalSubtitleInput:
+            "Choose and confirm an external subtitle before previewing this workflow."
+        case .invalidExternalSubtitleInput:
+            "The external subtitle input does not match the reviewed workflow input."
         case .unstableTrackIdentity:
             "This file does not expose stable Matroska identifiers for every track."
         case .wouldRemoveAllTracks: "This workflow would remove every playable track."
         case .noApplicableChanges: "This file already satisfies the enabled workflow steps."
         }
+    }
+}
+
+public struct SavedWorkflowExternalSubtitleInput: Equatable, Sendable {
+    public let sourceURL: URL
+    public let metadata: ExternalSubtitleTrackMetadata
+    public let format: ExternalTextSubtitleFormat
+
+    public init(
+        sourceURL: URL,
+        metadata: ExternalSubtitleTrackMetadata,
+        format: ExternalTextSubtitleFormat
+    ) {
+        self.sourceURL = sourceURL
+        self.metadata = metadata
+        self.format = format
+    }
+}
+
+public struct SavedWorkflowResolvedInputs: Equatable, Sendable {
+    public let externalSubtitle: SavedWorkflowExternalSubtitleInput?
+
+    public init(externalSubtitle: SavedWorkflowExternalSubtitleInput? = nil) {
+        self.externalSubtitle = externalSubtitle
     }
 }
 
@@ -113,6 +143,19 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
             return false
         }
     }
+
+    public var externalSubtitleInput: SavedWorkflowExternalSubtitleInput? {
+        for operation in operations {
+            if case .addExternalSubtitle(let url, let metadata, let format) = operation {
+                return SavedWorkflowExternalSubtitleInput(
+                    sourceURL: url,
+                    metadata: metadata,
+                    format: format
+                )
+            }
+        }
+        return nil
+    }
 }
 
 public struct SavedWorkflowCompiler: Sendable {
@@ -120,19 +163,30 @@ public struct SavedWorkflowCompiler: Sendable {
 
     public func compile(
         _ workflow: SavedWorkflow,
-        for asset: MediaAsset
+        for asset: MediaAsset,
+        inputs: SavedWorkflowResolvedInputs = SavedWorkflowResolvedInputs()
     ) throws -> CompiledSavedWorkflow {
-        guard let compiled = try preview(workflow, for: asset).compiledWorkflow else {
+        guard
+            let compiled = try preview(
+                workflow,
+                for: asset,
+                inputs: inputs
+            ).compiledWorkflow
+        else {
             throw SavedWorkflowCompilationError.noApplicableChanges
         }
         return compiled
     }
 
     public func preview(
-        _ workflow: SavedWorkflow,
-        for asset: MediaAsset
+        _ inputWorkflow: SavedWorkflow,
+        for asset: MediaAsset,
+        inputs: SavedWorkflowResolvedInputs = SavedWorkflowResolvedInputs()
     ) throws -> SavedWorkflowCompilationPreview {
-        guard workflow.schemaVersion == SavedWorkflow.currentSchemaVersion else {
+        let workflow: SavedWorkflow
+        do {
+            workflow = try SavedWorkflowMigrator().migrate(inputWorkflow)
+        } catch {
             throw SavedWorkflowCompilationError.unsupportedSchema
         }
         guard !workflow.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -211,6 +265,31 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 }
+            case .addExternalSubtitle:
+                guard let input = inputs.externalSubtitle else {
+                    throw SavedWorkflowCompilationError.missingExternalSubtitleInput
+                }
+                guard input.sourceURL.standardizedFileURL != asset.sourceURL.standardizedFileURL,
+                    input.sourceURL.pathExtension.lowercased()
+                        == input.format.filenameExtension
+                else {
+                    throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
+                }
+                operations.append(
+                    .addExternalSubtitle(
+                        url: input.sourceURL,
+                        metadata: input.metadata,
+                        format: input.format
+                    )
+                )
+                stepOutcomes.append(
+                    outcome(
+                        for: step,
+                        disposition: .applied,
+                        detail:
+                            "Add one reviewed \(input.format.displayName) subtitle as the last track"
+                    )
+                )
             }
         }
         if !removalTrackUIDs.isEmpty {
@@ -302,6 +381,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove \(count) redundant English SDH subtitle \(noun)"
         case .removeSegmentTitle:
             "Remove the segment title"
+        case .addExternalSubtitle:
+            "Add one external subtitle"
         }
     }
 
@@ -315,6 +396,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No redundant English SDH subtitle tracks were found."
         case .removeSegmentTitle:
             "No segment title is present."
+        case .addExternalSubtitle:
+            "No external subtitle was selected."
         }
     }
 }

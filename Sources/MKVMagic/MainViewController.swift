@@ -6,11 +6,29 @@ import UniformTypeIdentifiers
 
 @MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
+    private struct PreparedSavedWorkflow {
+        let compiled: CompiledSavedWorkflow
+        let externalSubtitlePreview: ExternalSubtitleFilePreview?
+    }
+
+    private struct ReviewedExternalSubtitle {
+        let preview: ExternalSubtitleFilePreview
+        let metadata: ExternalSubtitleTrackMetadata
+
+        var resolvedInput: SavedWorkflowExternalSubtitleInput {
+            SavedWorkflowExternalSubtitleInput(
+                sourceURL: preview.sourceURL,
+                metadata: metadata,
+                format: preview.format
+            )
+        }
+    }
+
     private enum PendingChange {
         case segmentTitle(String?)
         case track(TrackMetadataEdit)
         case trackRemoval(TrackRemoval, isEnglishCleanup: Bool)
-        case savedWorkflow(CompiledSavedWorkflow)
+        case savedWorkflow(PreparedSavedWorkflow)
         case subtitleCleanup(SubtitleCleanupFilePreview, restoringCueIDs: Set<Int>)
         case advancedSubtitleCleanup(
             AdvancedSubtitleCleanupFilePreview,
@@ -843,8 +861,49 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
         clearPendingChange()
+        guard
+            workflow.steps.contains(where: {
+                $0.isEnabled && $0.action == .addExternalSubtitle
+            })
+        else {
+            presentSavedWorkflowReview(
+                workflow,
+                asset: asset,
+                parentWindow: parentWindow,
+                externalSubtitle: nil
+            )
+            return
+        }
+        prepareExternalSubtitle(asset: asset, parentWindow: parentWindow) { [weak self] reviewed in
+            guard let self else { return }
+            guard let reviewed else {
+                self.statusLabel.stringValue = "No external subtitle selected"
+                self.clearPendingChange()
+                return
+            }
+            self.presentSavedWorkflowReview(
+                workflow,
+                asset: asset,
+                parentWindow: parentWindow,
+                externalSubtitle: reviewed
+            )
+        }
+    }
+
+    private func presentSavedWorkflowReview(
+        _ workflow: SavedWorkflow,
+        asset: MediaAsset,
+        parentWindow: NSWindow,
+        externalSubtitle: ReviewedExternalSubtitle?
+    ) {
         do {
-            let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+            let preview = try SavedWorkflowCompiler().preview(
+                workflow,
+                for: asset,
+                inputs: SavedWorkflowResolvedInputs(
+                    externalSubtitle: externalSubtitle?.resolvedInput
+                )
+            )
             let controller = WorkflowPlanReviewWindowController(
                 preview: preview,
                 sourceDisplayName: asset.sourceURL.lastPathComponent
@@ -872,7 +931,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     self.clearPendingChange()
                     return
                 }
-                self.installPendingWorkflow(compiled, assetID: asset.id)
+                self.installPendingWorkflow(
+                    compiled,
+                    externalSubtitlePreview: externalSubtitle?.preview,
+                    assetID: asset.id
+                )
             }
         } catch {
             impactLabel.stringValue = "Workflow cannot run: \(error.localizedDescription)"
@@ -881,10 +944,19 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
-    private func installPendingWorkflow(_ compiled: CompiledSavedWorkflow, assetID: UUID) {
+    private func installPendingWorkflow(
+        _ compiled: CompiledSavedWorkflow,
+        externalSubtitlePreview: ExternalSubtitleFilePreview?,
+        assetID: UUID
+    ) {
         impactLabel.stringValue = WorkflowPlanReviewPresentation.impactSummary(for: compiled)
         statusLabel.stringValue = "Workflow plan ready for verification"
-        pendingChange = .savedWorkflow(compiled)
+        pendingChange = .savedWorkflow(
+            PreparedSavedWorkflow(
+                compiled: compiled,
+                externalSubtitlePreview: externalSubtitlePreview
+            )
+        )
         pendingAssetID = assetID
         runButton.isEnabled = true
         runButton.toolTip = compiled.summaries.joined(separator: "; ")
@@ -1238,6 +1310,24 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             let parentWindow = view.window
         else { return }
 
+        prepareExternalSubtitle(asset: asset, parentWindow: parentWindow) { [weak self] reviewed in
+            guard let self, let reviewed else { return }
+            self.pendingChange = .externalSubtitle(reviewed.preview, reviewed.metadata)
+            self.pendingAssetID = asset.id
+            self.impactLabel.stringValue =
+                "0 video encodes • mkvmerge • 1 subtitle added last"
+            self.statusLabel.stringValue = "Subtitle mux plan ready"
+            self.runButton.isEnabled = true
+            self.runButton.toolTip =
+                "Copy all existing tracks, add the reviewed text subtitle last, verify the MKV, then commit it."
+        }
+    }
+
+    private func prepareExternalSubtitle(
+        asset: MediaAsset,
+        parentWindow: NSWindow,
+        completion: @escaping (ReviewedExternalSubtitle?) -> Void
+    ) {
         let panel = NSOpenPanel()
         panel.title = "Choose a Text Subtitle"
         panel.prompt = "Review Subtitle"
@@ -1249,7 +1339,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.allowedContentTypes = ["srt", "ass", "ssa"].map {
             UTType(filenameExtension: $0) ?? .plainText
         }
-        guard panel.runModal() == .OK, let subtitleURL = panel.url else { return }
+        guard panel.runModal() == .OK, let subtitleURL = panel.url else {
+            completion(nil)
+            return
+        }
 
         statusLabel.stringValue = "Reading \(subtitleURL.lastPathComponent)…"
         addSubtitleButton.isEnabled = false
@@ -1275,11 +1368,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         subtitle: advanced.cleanup.original
                     )
                 default:
+                    completion(nil)
                     return
                 }
                 guard selectedAsset?.id == asset.id else {
                     clearPendingChange()
                     refresh()
+                    completion(nil)
                     return
                 }
                 let controller = ExternalSubtitleMuxWindowController(
@@ -1294,27 +1389,23 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     self.addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
                     guard let metadata else {
                         self.refresh()
+                        completion(nil)
                         return
                     }
                     guard self.selectedAsset?.id == asset.id else {
                         self.clearPendingChange()
                         self.refresh()
+                        completion(nil)
                         return
                     }
-                    self.pendingChange = .externalSubtitle(preview, metadata)
-                    self.pendingAssetID = asset.id
-                    self.impactLabel.stringValue =
-                        "0 video encodes • mkvmerge • 1 subtitle added last"
-                    self.statusLabel.stringValue = "Subtitle mux plan ready"
-                    self.runButton.isEnabled = true
-                    self.runButton.toolTip =
-                        "Copy all existing tracks, add the reviewed text subtitle last, verify the MKV, then commit it."
+                    completion(ReviewedExternalSubtitle(preview: preview, metadata: metadata))
                 }
             } catch {
                 statusLabel.stringValue =
                     "Could not preview subtitle: \(error.localizedDescription)"
                 addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
                 clearPendingChange()
+                completion(nil)
             }
         }
     }
@@ -1374,6 +1465,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         let isSubtitleMux: Bool
         if case .externalSubtitle = pendingChange {
+            isSubtitleMux = true
+        } else if case .savedWorkflow(let prepared) = pendingChange,
+            prepared.compiled.externalSubtitleInput != nil
+        {
             isSubtitleMux = true
         } else {
             isSubtitleMux = false
@@ -1447,9 +1542,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                             destinationURL: destinationURL
                         ).sourceURL
                     }
-                case .savedWorkflow(let workflow):
+                case .savedWorkflow(let prepared):
                     outputURL = try await model.runSavedWorkflow(
-                        workflow,
+                        prepared.compiled,
+                        externalSubtitlePreview: prepared.externalSubtitlePreview,
                         in: asset,
                         destinationURL: destinationURL
                     ).sourceURL

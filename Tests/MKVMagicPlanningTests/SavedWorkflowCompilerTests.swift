@@ -57,6 +57,83 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
     }
 
+    func testExternalSubtitleInputFusesWithCleanupAndTitleRemoval() throws {
+        let workflow = SavedWorkflow(
+            name: "Clean and subtitle",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let subtitleURL = URL(fileURLWithPath: "/private/input/Movie.en.ass")
+        let externalInput = SavedWorkflowExternalSubtitleInput(
+            sourceURL: subtitleURL,
+            metadata: ExternalSubtitleTrackMetadata(
+                language: "en",
+                name: "RUNTIME_ONLY_TRACK_NAME",
+                isDefault: true
+            ),
+            format: .ass
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeAsset(foreignSubtitleUID: 77, title: "Movie"),
+            inputs: SavedWorkflowResolvedInputs(externalSubtitle: externalInput)
+        )
+
+        XCTAssertEqual(compiled.trackRemoval?.trackUIDs, [77])
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertEqual(compiled.externalSubtitleInput, externalInput)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertTrue(
+            compiled.summaries.contains("Add one reviewed ASS subtitle as the last track")
+        )
+        let portableJSON = try XCTUnwrap(
+            String(data: JSONEncoder().encode(workflow), encoding: .utf8)
+        )
+        XCTAssertFalse(portableJSON.contains(subtitleURL.path))
+        XCTAssertFalse(portableJSON.contains("RUNTIME_ONLY_TRACK_NAME"))
+    }
+
+    func testExternalSubtitleCardRequiresOneMatchingEphemeralInput() {
+        let workflow = SavedWorkflow(
+            name: "Add subtitle",
+            steps: [SavedWorkflowStep(action: .addExternalSubtitle)]
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(workflow, for: makeAsset())
+        ) { error in
+            XCTAssertEqual(
+                error as? SavedWorkflowCompilationError,
+                .missingExternalSubtitleInput
+            )
+        }
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                        sourceURL: URL(fileURLWithPath: "/private/input/Movie.srt"),
+                        metadata: ExternalSubtitleTrackMetadata(language: "en"),
+                        format: .ass
+                    )
+                )
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? SavedWorkflowCompilationError,
+                .invalidExternalSubtitleInput
+            )
+        }
+    }
+
     func testGranularSubtitleConditionsFuseIntoOneStableUIDRemoval() throws {
         let workflow = SavedWorkflow(
             name: "Selective English cleanup",

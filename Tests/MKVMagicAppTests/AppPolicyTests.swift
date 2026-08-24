@@ -1399,7 +1399,7 @@ final class AppPolicyTests: XCTestCase {
             addStep.item(withTitle: SavedWorkflowAction.removeNonEnglishSubtitles.displayName)
         )
         let available = try XCTUnwrap(
-            addStep.item(withTitle: SavedWorkflowAction.removeSegmentTitle.displayName)
+            addStep.item(withTitle: SavedWorkflowAction.addExternalSubtitle.displayName)
         )
 
         XCTAssertEqual(stepTable.numberOfRows, 1)
@@ -1440,6 +1440,7 @@ final class AppPolicyTests: XCTestCase {
                 .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
+                .addExternalSubtitle,
             ]
         )
         XCTAssertTrue(WorkflowEditorPolicy.add(.removeSegmentTitle, to: &workflow))
@@ -1537,6 +1538,59 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(text.contains("No output will be created."))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Done" && !$0.isHidden })
         XCTAssertFalse(buttons(in: content).contains { $0.title == "Use This Plan" })
+    }
+
+    @MainActor
+    func testWorkflowPlanReviewShowsReviewedExternalSubtitleAndFusedPasses() throws {
+        let workflow = SavedWorkflow(
+            name: "Add English subtitles",
+            steps: [
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1)],
+            metadata: ["title": "Movie"]
+        )
+        let preview = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: asset,
+            inputs: SavedWorkflowResolvedInputs(
+                externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                    sourceURL: URL(fileURLWithPath: "/private/media/Movie.en.srt"),
+                    metadata: ExternalSubtitleTrackMetadata(
+                        language: "en",
+                        name: "English"
+                    ),
+                    format: .subRip
+                )
+            )
+        )
+        let controller = WorkflowPlanReviewWindowController(
+            preview: preview,
+            sourceDisplayName: asset.sourceURL.lastPathComponent
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+        XCTAssertTrue(text.contains("No transcoding • one MKV remux • one metadata pass"))
+        XCTAssertTrue(text.contains("Add one reviewed SRT subtitle as the last track"))
+        XCTAssertTrue(text.contains("Remove the segment title"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
+
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_EXTERNAL_WORKFLOW_REVIEW_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
     }
 
     func testWorkflowEditorDuplicatesPortableIntentWithFreshIdentifiers() {

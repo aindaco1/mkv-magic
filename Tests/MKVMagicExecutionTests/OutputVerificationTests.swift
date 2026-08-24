@@ -256,6 +256,63 @@ final class OutputVerificationTests: XCTestCase {
             ))
     }
 
+    func testExternalSubtitleVerifierAcceptsReviewedRemovalAndTitleDeletionTogether() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let french = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            uid: 20,
+            language: "fr"
+        )
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+        let verifier = ExternalSubtitleMuxOutputVerifier()
+        let original = asset(title: "Movie", tracks: [video, french], trackTagCount: 2)
+        let validOutput = asset(
+            title: nil,
+            tracks: [video, added],
+            segmentUID: "2233",
+            encoder: "mkvmerge",
+            trackTagCount: 1
+        )
+
+        XCTAssertNoThrow(
+            try verifier.verify(
+                original: original,
+                output: validOutput,
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500),
+                trackRemoval: TrackRemoval(trackUIDs: [20]),
+                segmentTitle: .set(nil)
+            )
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                original: original,
+                output: asset(
+                    title: nil,
+                    tracks: [video, french, added],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge",
+                    trackTagCount: 1
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500),
+                trackRemoval: TrackRemoval(trackUIDs: [20]),
+                segmentTitle: .set(nil)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
+        }
+    }
+
     func testExternalSubtitleVerifierRejectsRetainedTrackMutation() throws {
         let originalTrack = MediaTrack(
             id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
@@ -470,7 +527,7 @@ final class OutputVerificationTests: XCTestCase {
     }
 
     private func asset(
-        title: String,
+        title: String?,
         tracks: [MediaTrack] = [
             MediaTrack(id: 0, kind: .audio, codec: "aac", language: "eng")
         ],
@@ -479,7 +536,9 @@ final class OutputVerificationTests: XCTestCase {
         encoder: String = "fixture",
         trackTagCount: Int = 0
     ) -> MediaAsset {
-        MediaAsset(
+        var metadata = ["encoder": encoder]
+        if let title { metadata["title"] = title }
+        return MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
             container: "matroska",
             duration: duration,
@@ -489,7 +548,7 @@ final class OutputVerificationTests: XCTestCase {
             attachments: [
                 MediaAttachment(id: 1, filename: "Font.otf", mimeType: "font/otf", size: 20)
             ],
-            metadata: ["title": title, "encoder": encoder],
+            metadata: metadata,
             chapterEntryCount: 1,
             globalTagCount: 0,
             trackTagCount: trackTagCount,

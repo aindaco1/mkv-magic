@@ -603,6 +603,7 @@ enum WorkflowEditorPolicy {
         .removeNonEnglishSubtitles,
         .removeRedundantEnglishSDH,
         .removeSegmentTitle,
+        .addExternalSubtitle,
     ]
 
     static func newWorkflow() -> SavedWorkflow {

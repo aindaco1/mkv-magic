@@ -180,7 +180,9 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         output: MediaAsset,
         expectedMetadata: ExternalSubtitleTrackMetadata,
         expectedFormat: ExternalTextSubtitleFormat = .subRip,
-        subtitleEnd: SubRipTimestamp
+        subtitleEnd: SubRipTimestamp,
+        trackRemoval: TrackRemoval? = nil,
+        segmentTitle: SegmentTitleExpectation = .preserve
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container.localizedCaseInsensitiveContains("matroska") else {
@@ -190,14 +192,32 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         else {
             throw OutputVerificationError.durationChanged
         }
-        guard
-            output.metadata.removingRemuxProvenance
-                == original.metadata.removingRemuxProvenance,
-            output.globalTagCount == original.globalTagCount
-        else {
+        guard output.globalTagCount == original.globalTagCount else {
             throw OutputVerificationError.tagsChanged
         }
-        guard output.trackTagCount == original.trackTagCount else {
+        switch segmentTitle {
+        case .preserve:
+            guard
+                output.metadata.removingRemuxProvenance
+                    == original.metadata.removingRemuxProvenance
+            else { throw OutputVerificationError.tagsChanged }
+        case .set(let expectedTitle):
+            guard output.metadata.titleValue == expectedTitle else {
+                throw OutputVerificationError.titleMismatch
+            }
+            guard
+                output.metadata.removingTitle.removingRemuxProvenance
+                    == original.metadata.removingTitle.removingRemuxProvenance
+            else { throw OutputVerificationError.tagsChanged }
+        }
+        if trackRemoval == nil {
+            guard output.trackTagCount == original.trackTagCount else {
+                throw OutputVerificationError.tagsChanged
+            }
+        } else if let originalTrackTags = original.trackTagCount,
+            let outputTrackTags = output.trackTagCount,
+            outputTrackTags > originalTrackTags
+        {
             throw OutputVerificationError.tagsChanged
         }
         guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
@@ -215,10 +235,17 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         }
 
         let originalTracks = original.tracks.filter { $0.kind != .attachment }
+        let expectedOriginalTracks = originalTracks.filter { track in
+            guard let uid = track.uid, let trackRemoval else { return true }
+            return !trackRemoval.trackUIDs.contains(uid)
+        }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
-        guard outputTracks.count == originalTracks.count + 1,
+        guard
+            expectedOriginalTracks.count + (trackRemoval?.trackUIDs.count ?? 0)
+                == originalTracks.count,
+            outputTracks.count == expectedOriginalTracks.count + 1,
             outputTracks.dropLast().map(RemuxTrackSnapshot.init)
-                == originalTracks.map(RemuxTrackSnapshot.init),
+                == expectedOriginalTracks.map(RemuxTrackSnapshot.init),
             let added = outputTracks.last,
             added.kind == .subtitle,
             Self.matches(added, expectedFormat: expectedFormat)

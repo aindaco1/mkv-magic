@@ -69,6 +69,135 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testExternalSubtitleWorkflowUsesOneVerifiedTransactionAndPortableIntent() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "mkv-magic-real-workflow-subtitle-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let originalSubtitle = fixtureRoot.appendingPathComponent("Movie.fr.srt")
+        let externalSubtitle = fixtureRoot.appendingPathComponent("Movie.en.srt")
+        let source = fixtureRoot.appendingPathComponent("Movie.mkv")
+        let output = fixtureRoot.appendingPathComponent("Movie — Prepared.mkv")
+        try Data(repeating: 0, count: 192_000).write(to: rawAudio)
+        try Data(
+            "1\n00:00:00,000 --> 00:00:01,000\nBonjour\n".utf8
+        ).write(to: originalSubtitle)
+        try Data(
+            "1\n00:00:00,000 --> 00:00:01,000\nHello\n".utf8
+        ).write(to: externalSubtitle)
+        let externalSubtitleDigest = SHA256.hash(data: try Data(contentsOf: externalSubtitle))
+
+        let createResult = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
+                    "-f", "srt", "-i", originalSubtitle.path,
+                    "-map", "0:a", "-map", "1:s",
+                    "-c:a", "aac", "-c:s", "srt",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:s:0", "language=fra",
+                    "-metadata", "title=Remove Me",
+                    source.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(createResult.exitCode, 0, createResult.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: source))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let store = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { store })
+        await model.addFiles([source])
+        let asset = try XCTUnwrap(model.assets.first)
+        let subtitlePreview = try await model.previewSubtitleCleanup(at: externalSubtitle)
+        let metadata = ExternalSubtitleTrackMetadata(
+            language: "en",
+            name: "English",
+            isDefault: true
+        )
+        let workflow = SavedWorkflow(
+            name: "Clean and add English subtitles",
+            steps: [
+                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: asset,
+            inputs: SavedWorkflowResolvedInputs(
+                externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                    sourceURL: externalSubtitle,
+                    metadata: metadata,
+                    format: .subRip
+                )
+            )
+        )
+
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+        let outputAsset = try await model.runSavedWorkflow(
+            compiled,
+            externalSubtitlePreview: .subRip(subtitlePreview),
+            in: asset,
+            destinationURL: output
+        )
+
+        XCTAssertEqual(outputAsset.tracks.map(\.kind), [.audio, .subtitle])
+        XCTAssertEqual(outputAsset.tracks.last?.title, "English")
+        XCTAssertTrue(outputAsset.tracks.last?.isDefault == true)
+        XCTAssertEqual(
+            try TrackLanguageTag.canonical(try XCTUnwrap(outputAsset.tracks.last?.language)),
+            "en"
+        )
+        XCTAssertNil(outputAsset.metadata["title"])
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+        XCTAssertEqual(
+            SHA256.hash(data: try Data(contentsOf: externalSubtitle)),
+            externalSubtitleDigest
+        )
+
+        let records = try await store.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(record.workflowID, workflow.id)
+        XCTAssertEqual(record.workflowName, workflow.name)
+        XCTAssertEqual(record.inputDisplayNames, ["Movie.mkv", "Movie.en.srt"])
+        XCTAssertEqual(record.outputDisplayName, "Movie — Prepared.mkv")
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testRealEditPersistsSanitizedVerifiedLifecycle() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

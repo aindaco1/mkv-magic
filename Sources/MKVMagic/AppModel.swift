@@ -15,7 +15,7 @@ final class AppModel {
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
-        case saved(CompiledSavedWorkflow)
+        case saved(CompiledSavedWorkflow, ExternalSubtitleFilePreview?)
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
@@ -24,7 +24,7 @@ final class AppModel {
             switch self {
             case .metadata(_, let workflowID, _): workflowID
             case .trackRemoval(_, let workflowID, _): workflowID
-            case .saved(let workflow): workflow.workflowID
+            case .saved(let workflow, _): workflow.workflowID
             case .externalSubtitle: BuiltInWorkflowCatalog.externalSubtitleMux
             case .embeddedSubtitle: BuiltInWorkflowCatalog.embeddedSubtitleCleanup
             case .chapters: BuiltInWorkflowCatalog.chapterEdit
@@ -35,7 +35,7 @@ final class AppModel {
             switch self {
             case .metadata(_, _, let workflowName): workflowName
             case .trackRemoval(_, _, let workflowName): workflowName
-            case .saved(let workflow): workflow.workflowName
+            case .saved(let workflow, _): workflow.workflowName
             case .externalSubtitle(let preview, _):
                 "Add external \(preview.format.displayName) subtitle"
             case .embeddedSubtitle(let preview, _):
@@ -48,7 +48,7 @@ final class AppModel {
             switch self {
             case .metadata: "Zero video encodes; mkvpropedit on a verified clone."
             case .trackRemoval: "Zero video encodes; mkvmerge copies the retained streams."
-            case .saved(let workflow):
+            case .saved(let workflow, _):
                 workflow.plan.impact.videoEncodeCount == 0
                     ? "Zero video encodes; all enabled steps share one verified output pipeline."
                     : "All video-affecting steps are fused into one encode."
@@ -65,8 +65,8 @@ final class AppModel {
             switch self {
             case .metadata: "Editing a temporary clone."
             case .trackRemoval: "Remuxing retained tracks to a temporary output."
-            case .saved(let workflow):
-                workflow.trackRemoval == nil
+            case .saved(let workflow, _):
+                workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil
                     ? "Editing one temporary clone."
                     : "Applying all workflow steps to one temporary remux."
             case .externalSubtitle:
@@ -80,7 +80,7 @@ final class AppModel {
 
         var privacySafePlan: MediaJobPlanFacts {
             switch self {
-            case .saved(let workflow):
+            case .saved(let workflow, _):
                 MediaJobPlanFacts(
                     videoEncodeGenerations: UInt(max(0, workflow.plan.impact.videoEncodeCount)),
                     audioTracksEncoded: UInt(max(0, workflow.plan.impact.audioEncodeCount))
@@ -92,6 +92,7 @@ final class AppModel {
 
         var externalInputURLs: [URL] {
             switch self {
+            case .saved(_, let preview): preview.map { [$0.sourceURL] } ?? []
             case .externalSubtitle(let preview, _): [preview.sourceURL]
             default: []
             }
@@ -1135,13 +1136,14 @@ final class AppModel {
     @discardableResult
     func runSavedWorkflow(
         _ workflow: CompiledSavedWorkflow,
+        externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .saved(workflow)
+            edit: .saved(workflow, externalSubtitlePreview)
         )
     }
 
@@ -1396,10 +1398,11 @@ final class AppModel {
                         )
                     }
                 )
-            case .saved(let workflow):
+            case .saved(let workflow, let externalSubtitlePreview):
                 let executor = SavedWorkflowExecutor(
                     mkvmergeURL: try catalog.url(for: .mkvmerge),
                     mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    mkvextractURL: try catalog.url(for: .mkvextract),
                     runner: runner,
                     inspector: inspector
                 )
@@ -1407,6 +1410,8 @@ final class AppModel {
                     source: asset,
                     trackRemoval: workflow.trackRemoval,
                     removesSegmentTitle: workflow.removesSegmentTitle,
+                    externalSubtitleInput: workflow.externalSubtitleInput,
+                    externalSubtitlePreview: externalSubtitlePreview,
                     destinationURL: destinationURL,
                     onStage: { stage in
                         try await Self.record(

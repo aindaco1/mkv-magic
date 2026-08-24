@@ -43,7 +43,11 @@ public enum WorkflowOperation: Codable, Hashable, Sendable {
     case setTrackLanguage(trackID: Int, language: String)
     case removeTracks(Set<Int>)
     case removeTracksByUID(TrackRemoval)
-    case muxSubtitle(url: URL, language: String?, forced: Bool)
+    case addExternalSubtitle(
+        url: URL,
+        metadata: ExternalSubtitleTrackMetadata,
+        format: ExternalTextSubtitleFormat
+    )
     case trim(start: MediaTime, end: MediaTime, exact: Bool)
     case transcodeVideo(VideoPreset)
 }

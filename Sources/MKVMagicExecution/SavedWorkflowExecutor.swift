@@ -1,11 +1,14 @@
 import Foundation
 import MKVMagicCore
 import MKVMagicMedia
+import MKVMagicPlanning
 import MKVMagicSystem
 
 public enum SavedWorkflowExecutionError: Error, Equatable, Sendable {
     case unsupportedContainer
     case noOperations
+    case missingExternalSubtitleInput
+    case mismatchedExternalSubtitleInput
     case committedOutputAuditFailed(outputURL: URL, reason: String)
 }
 
@@ -16,6 +19,10 @@ extension SavedWorkflowExecutionError: LocalizedError {
             "Saved workflows currently require a Matroska file."
         case .noOperations:
             "This workflow has no applicable changes for the selected file."
+        case .missingExternalSubtitleInput:
+            "This workflow requires the reviewed external subtitle input."
+        case .mismatchedExternalSubtitleInput:
+            "The external subtitle changed between workflow preview and execution."
         case .committedOutputAuditFailed(let outputURL, let reason):
             "The verified copy was saved as \(outputURL.lastPathComponent), but its final reopen "
                 + "audit failed: \(reason)"
@@ -26,16 +33,25 @@ extension SavedWorkflowExecutionError: LocalizedError {
 public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
     private let remover: MKVTrackRemover<Runner>
     private let editor: MKVPropertyEditor<Runner>
+    private let externalSubtitleExecutor: ExternalSubtitleMuxExecutor<Runner, Inspector>
     private let inspector: Inspector
 
     public init(
         mkvmergeURL: URL,
         mkvpropeditURL: URL,
+        mkvextractURL: URL? = nil,
         runner: Runner,
         inspector: Inspector
     ) {
         remover = MKVTrackRemover(executableURL: mkvmergeURL, runner: runner)
         editor = MKVPropertyEditor(executableURL: mkvpropeditURL, runner: runner)
+        externalSubtitleExecutor = ExternalSubtitleMuxExecutor(
+            mkvmergeURL: mkvmergeURL,
+            mkvpropeditURL: mkvpropeditURL,
+            mkvextractURL: mkvextractURL,
+            runner: runner,
+            inspector: inspector
+        )
         self.inspector = inspector
     }
 
@@ -43,14 +59,40 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         source: MediaAsset,
         trackRemoval: TrackRemoval?,
         removesSegmentTitle: Bool,
+        externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
+        externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         destinationURL: URL,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
             throw SavedWorkflowExecutionError.unsupportedContainer
         }
-        guard trackRemoval != nil || removesSegmentTitle else {
+        guard trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil else {
             throw SavedWorkflowExecutionError.noOperations
+        }
+        if let externalSubtitleInput {
+            guard let externalSubtitlePreview else {
+                throw SavedWorkflowExecutionError.missingExternalSubtitleInput
+            }
+            guard
+                externalSubtitlePreview.sourceURL.standardizedFileURL
+                    == externalSubtitleInput.sourceURL.standardizedFileURL,
+                externalSubtitlePreview.format == externalSubtitleInput.format
+            else {
+                throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+            }
+            return try await externalSubtitleExecutor.execute(
+                source: source,
+                subtitlePreview: externalSubtitlePreview,
+                metadata: externalSubtitleInput.metadata,
+                trackRemoval: trackRemoval,
+                removesSegmentTitle: removesSegmentTitle,
+                destinationURL: destinationURL,
+                onStage: onStage
+            )
+        }
+        guard externalSubtitlePreview == nil else {
+            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
         }
 
         return try await VerifiedOutputPipeline(inspector: inspector).execute(

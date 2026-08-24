@@ -73,6 +73,25 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
         removal: TrackRemoval,
         outputURL: URL
     ) throws -> [String] {
+        let selection = try MKVTrackSelection(source: source, removal: removal)
+
+        var arguments = [
+            "--output", outputURL.path,
+            "--abort-on-warnings",
+            "--normalize-language-ietf", "canonical",
+        ]
+        arguments.append(contentsOf: selection.selectorArguments)
+        let trackOrder = selection.retainedTracks.map { "0:\($0.id)" }.joined(separator: ",")
+        arguments.append(contentsOf: ["--track-order", trackOrder, source.sourceURL.path])
+        return arguments
+    }
+}
+
+struct MKVTrackSelection: Sendable {
+    let retainedTracks: [MediaTrack]
+    let selectorArguments: [String]
+
+    init(source: MediaAsset, removal: TrackRemoval) throws {
         guard !removal.trackUIDs.isEmpty else { throw MKVTrackRemovalError.emptySelection }
         let playableTracks = source.tracks.filter { $0.kind != .attachment }
         guard playableTracks.allSatisfy({ $0.uid != nil }),
@@ -89,19 +108,15 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
         guard selectedTracks.allSatisfy({ Self.option(for: $0.kind) != nil }) else {
             throw MKVTrackRemovalError.unsupportedTrackType
         }
-        let retainedTracks = playableTracks.filter { track in
+        retainedTracks = playableTracks.filter { track in
             !selectedTracks.contains(where: { $0.uid == track.uid })
         }
         guard !retainedTracks.isEmpty else { throw MKVTrackRemovalError.allTracksRemoved }
 
-        var arguments = [
-            "--output", outputURL.path,
-            "--abort-on-warnings",
-            "--normalize-language-ietf", "canonical",
-        ]
+        var arguments = [String]()
         for kind in [MediaTrackKind.video, .audio, .subtitle, .data] {
             let removed = selectedTracks.filter { $0.kind == kind }
-            guard !removed.isEmpty, let option = option(for: kind) else { continue }
+            guard !removed.isEmpty, let option = Self.option(for: kind) else { continue }
             let retainedIDs = retainedTracks.filter { $0.kind == kind }.map(\.id)
             if retainedIDs.isEmpty {
                 arguments.append(option.none)
@@ -111,9 +126,7 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
                 ])
             }
         }
-        let trackOrder = retainedTracks.map { "0:\($0.id)" }.joined(separator: ",")
-        arguments.append(contentsOf: ["--track-order", trackOrder, source.sourceURL.path])
-        return arguments
+        selectorArguments = arguments
     }
 
     private static func option(for kind: MediaTrackKind) -> (some: String, none: String)? {

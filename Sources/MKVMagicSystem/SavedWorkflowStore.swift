@@ -85,8 +85,9 @@ public actor JSONSavedWorkflowStore: SavedWorkflowPersisting {
         } catch {
             throw SavedWorkflowStoreError.malformedWorkflow
         }
-        try Self.validate(decoded.workflows)
-        return decoded.workflows
+        let migrated = try Self.migrate(decoded.workflows)
+        try Self.validate(migrated)
+        return migrated
     }
 
     public func save(_ workflows: [SavedWorkflow]) async throws {
@@ -134,12 +135,13 @@ public actor JSONSavedWorkflowStore: SavedWorkflowPersisting {
             throw SavedWorkflowStoreError.malformedWorkflow
         }
         try validateJSONWorkflows([workflowObject])
-        let workflow: SavedWorkflow
+        let decoded: SavedWorkflow
         do {
-            workflow = try JSONDecoder().decode(SavedWorkflow.self, from: data)
+            decoded = try JSONDecoder().decode(SavedWorkflow.self, from: data)
         } catch {
             throw SavedWorkflowStoreError.malformedWorkflow
         }
+        let workflow = try migrate([decoded])[0]
         try validate([workflow])
         return workflow
     }
@@ -217,6 +219,14 @@ public actor JSONSavedWorkflowStore: SavedWorkflowPersisting {
             guard Set(workflow.steps.map(\.action)).count == workflow.steps.count else {
                 throw SavedWorkflowStoreError.duplicateAction
             }
+        }
+    }
+
+    private static func migrate(_ workflows: [SavedWorkflow]) throws -> [SavedWorkflow] {
+        do {
+            return try workflows.map { try SavedWorkflowMigrator().migrate($0) }
+        } catch {
+            throw SavedWorkflowStoreError.unsupportedSchema
         }
     }
 

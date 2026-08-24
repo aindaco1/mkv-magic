@@ -8,6 +8,7 @@ public enum ExternalSubtitleMuxError: Error, Equatable, Sendable {
     case unsupportedDestination
     case invalidTrackName
     case sourceAndSubtitleAreSame
+    case missingPropertyEditor
     case subtitleVerificationFailed
     case toolFailed(exitCode: Int32, message: String)
     case committedOutputAuditFailed(outputURL: URL, reason: String)
@@ -24,6 +25,8 @@ extension ExternalSubtitleMuxError: LocalizedError {
             "The subtitle track name is too large or contains an unsupported null character."
         case .sourceAndSubtitleAreSame:
             "The external subtitle must be a different file from the video source."
+        case .missingPropertyEditor:
+            "This combined workflow requires the bundled Matroska property editor."
         case .subtitleVerificationFailed:
             "The muxed subtitle did not pass its timing, text, and style audit."
         case .toolFailed(let exitCode, let message):
@@ -113,12 +116,14 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         source: MediaAsset,
         subtitleURL: URL,
         metadata: ExternalSubtitleTrackMetadata,
+        trackRemoval: TrackRemoval? = nil,
         outputURL: URL
     ) async throws {
         let arguments = try Self.arguments(
             source: source,
             subtitleURL: subtitleURL,
             metadata: metadata,
+            trackRemoval: trackRemoval,
             outputURL: outputURL
         )
         let result = try await runner.run(
@@ -146,6 +151,7 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         source: MediaAsset,
         subtitleURL: URL,
         metadata: ExternalSubtitleTrackMetadata,
+        trackRemoval: TrackRemoval? = nil,
         outputURL: URL
     ) throws -> [String] {
         let language = try TrackLanguageTag.canonical(metadata.language)
@@ -159,18 +165,27 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
             "--abort-on-warnings",
             "--normalize-language-ietf", "canonical",
             "--disable-track-statistics-tags",
+        ]
+        let retainedTracks: [MediaTrack]
+        if let trackRemoval {
+            let selection = try MKVTrackSelection(source: source, removal: trackRemoval)
+            retainedTracks = selection.retainedTracks
+            arguments.append(contentsOf: selection.selectorArguments)
+        } else {
+            retainedTracks = source.tracks.filter { $0.kind != .attachment }
+        }
+        arguments.append(contentsOf: [
             source.sourceURL.path,
             "--language", "0:\(language)",
             "--default-track-flag", "0:\(metadata.isDefault ? "yes" : "no")",
             "--forced-display-flag", "0:\(metadata.isForced ? "yes" : "no")",
             "--hearing-impaired-flag", "0:\(metadata.isHearingImpaired ? "yes" : "no")",
-        ]
+        ])
         if let name = metadata.name {
             arguments.append(contentsOf: ["--track-name", "0:\(name)"])
         }
         arguments.append(subtitleURL.path)
-        let sourceTracks = source.tracks.filter { $0.kind != .attachment }
-        let trackOrder = (sourceTracks.map { "0:\($0.id)" } + ["1:0"]).joined(separator: ",")
+        let trackOrder = (retainedTracks.map { "0:\($0.id)" } + ["1:0"]).joined(separator: ",")
         arguments.append(contentsOf: ["--track-order", trackOrder])
         return arguments
     }
@@ -180,6 +195,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
     Sendable
 {
     private let muxer: MKVExternalSubtitleMuxer<Runner>
+    private let propertyEditor: MKVPropertyEditor<Runner>?
     private let mkvextractURL: URL?
     private let runner: Runner
     private let inspector: Inspector
@@ -187,11 +203,15 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
 
     public init(
         mkvmergeURL: URL,
+        mkvpropeditURL: URL? = nil,
         mkvextractURL: URL? = nil,
         runner: Runner,
         inspector: Inspector
     ) {
         muxer = MKVExternalSubtitleMuxer(executableURL: mkvmergeURL, runner: runner)
+        propertyEditor = mkvpropeditURL.map {
+            MKVPropertyEditor(executableURL: $0, runner: runner)
+        }
         self.mkvextractURL = mkvextractURL
         self.runner = runner
         self.inspector = inspector
@@ -237,6 +257,8 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         source: MediaAsset,
         subtitlePreview: ExternalSubtitleFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
+        trackRemoval: TrackRemoval? = nil,
+        removesSegmentTitle: Bool = false,
         destinationURL: URL,
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
@@ -255,6 +277,9 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             throw ExternalSubtitleMuxError.sourceAndSubtitleAreSame
         }
         try subtitlePreview.validateCurrent()
+        if removesSegmentTitle, propertyEditor == nil {
+            throw ExternalSubtitleMuxError.missingPropertyEditor
+        }
         let output = try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: source,
             destinationURL: destinationURL,
@@ -272,8 +297,15 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     source: source,
                     subtitleURL: normalizedSubtitleURL,
                     metadata: metadata,
+                    trackRemoval: trackRemoval,
                     outputURL: outputURL
                 )
+                if removesSegmentTitle {
+                    guard let propertyEditor else {
+                        throw ExternalSubtitleMuxError.missingPropertyEditor
+                    }
+                    try await propertyEditor.editSegmentTitle(at: outputURL, title: nil)
+                }
                 if let advancedDocument = subtitlePreview.advancedDocument {
                     try await verifyAdvancedSubtitlePayload(
                         outputURL: outputURL,
@@ -287,7 +319,9 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     output: output,
                     expectedMetadata: metadata,
                     expectedFormat: subtitlePreview.format,
-                    subtitleEnd: subtitlePreview.subtitleEnd
+                    subtitleEnd: subtitlePreview.subtitleEnd,
+                    trackRemoval: trackRemoval,
+                    segmentTitle: removesSegmentTitle ? .set(nil) : .preserve
                 )
             },
             committedAuditError: { outputURL, reason in
