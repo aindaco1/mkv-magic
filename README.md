@@ -324,6 +324,14 @@ These are early regression tripwires, not claims about bundled media-tool
 cleanup or physical Intel acceptance. See
 [docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md](docs/releases/M8_RESPONSIVENESS_BASELINE_SLICE.md).
 
+A separate hidden app-baseline mode now builds and signs the real Universal app,
+prohibits activation, creates zero windows, lays out the actual main AppKit view,
+and reports bounded process round-trip, main-view readiness, and current
+resident memory. The seven-round arm64 development observation remains a
+provisional engineering baseline, not physical Intel/M1 or Finder-launch
+acceptance. See
+[docs/releases/M8_APP_BASELINE_PROBE_SLICE.md](docs/releases/M8_APP_BASELINE_PROBE_SLICE.md).
+
 The main File menu now routes **Command-O** to the same local file/folder
 chooser as the visible button. The main window, Queue, History, and saved-
 workflow plan review set an intentional first keyboard target; plan review uses

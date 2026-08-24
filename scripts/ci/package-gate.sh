@@ -33,6 +33,9 @@ test_public_key="$({
     "$app_path/Contents/Info.plist"
 
 ./scripts/release/sign-app.sh "$app_path" - none
+swift run -c release --disable-automatic-resolution MKVMagicAppBaselineProbe \
+    --app-executable "$app_path/Contents/MacOS/MKVMagic" \
+    --quick --enforce >/dev/null
 MKV_MAGIC_RELEASE_ROOT="$release_root" ./scripts/release/package.sh >/dev/null
 SPARKLE_ED25519_PRIVATE_KEY="$test_private_key" \
 MKV_MAGIC_RELEASE_ROOT="$release_root" \

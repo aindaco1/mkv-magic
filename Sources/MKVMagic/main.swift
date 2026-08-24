@@ -1,6 +1,21 @@
 import AppKit
 import Foundation
 
+if CommandLine.arguments == [CommandLine.arguments[0], "--app-baseline-probe"] {
+    do {
+        let sample = try AppBaselineProbe.run()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+        FileHandle.standardOutput.write(try encoder.encode(sample))
+        FileHandle.standardOutput.write(Data("\n".utf8))
+        exit(0)
+    } catch {
+        FileHandle.standardError.write(
+            Data("app baseline probe failed: \(error)\n".utf8))
+        exit(1)
+    }
+}
+
 if CommandLine.arguments == [CommandLine.arguments[0], "--verify-bundled-tools"] {
     Task.detached {
         guard let resources = Bundle.main.resourceURL else {

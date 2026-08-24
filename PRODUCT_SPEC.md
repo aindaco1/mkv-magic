@@ -1261,6 +1261,16 @@ path, media title, hostname, timestamp, or private payload. On the current
 observations do not claim M1-reference, Intel, UI rendering, private-corpus,
 launch/memory, bundled media-tool cleanup, transcode, or soak acceptance.
 
+The follow-on noninteractive app baseline builds and signs the actual Universal
+app, launches its native slice with activation prohibited, creates no window,
+and lays out the real main AppKit view before sampling current resident memory.
+A separate bounded launcher measures process start through clean probe exit. On
+the same arm64 development Mac, the seven-round release observation measured
+588.0 ms p95 process round-trip, 157.3 ms p95 main-view readiness, and 77.8 MB
+p95 resident memory, within provisional 2 s, 1 s, and 256 MiB budgets. This is
+not a Finder-to-visible-window measurement, settled queue/tool initialization,
+or physical M1/Intel acceptance.
+
 The first keyboard/VoiceOver baseline fixes the previously unbound Command-O
 menu item and adds intentional focus, Return/Escape review controls, and
 explicit accessibility names/help across the main, Queue, History, and saved-

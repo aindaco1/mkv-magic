@@ -32,8 +32,14 @@ public struct ResponsivenessMetric: Codable, Equatable, Sendable {
         self.id = id
         rounds = sorted.count
         self.operationsPerRound = operationsPerRound
-        medianNanosecondsPerOperation = Self.percentile(sorted, numerator: 50)
-        p95NanosecondsPerOperation = Self.percentile(sorted, numerator: 95)
+        medianNanosecondsPerOperation = PerformanceStatistics.nearestRank(
+            sorted,
+            percentile: 50
+        )
+        p95NanosecondsPerOperation = PerformanceStatistics.nearestRank(
+            sorted,
+            percentile: 95
+        )
         self.budgetNanosecondsPerOperation = budgetNanosecondsPerOperation
     }
 
@@ -41,14 +47,6 @@ public struct ResponsivenessMetric: Codable, Equatable, Sendable {
         p95NanosecondsPerOperation <= budgetNanosecondsPerOperation
     }
 
-    private static func percentile(_ sorted: [UInt64], numerator: Int) -> UInt64 {
-        let multiplied = sorted.count.multipliedReportingOverflow(by: numerator)
-        guard !multiplied.overflow else { return sorted.last ?? 0 }
-        let roundedUp = multiplied.partialValue.addingReportingOverflow(99)
-        guard !roundedUp.overflow else { return sorted.last ?? 0 }
-        let rank = max(1, roundedUp.partialValue / 100)
-        return sorted[min(sorted.count - 1, rank - 1)]
-    }
 }
 
 public struct ResponsivenessProbeConfiguration: Equatable, Sendable {
