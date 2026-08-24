@@ -1285,7 +1285,7 @@ are not manual VoiceOver, keyboard-only, contrast, reduced-motion, localization,
 or every-window acceptance; those broader passes remain open.
 
 The every-window continuation assigns intentional first focus and explicit
-assistive semantics to all 18 implemented AppKit window-controller surfaces,
+assistive semantics to all 20 implemented AppKit window-controller surfaces,
 including otherwise ambiguous join inclusion and track-mapping controls. Safe
 modal cancellation uses Escape. An automatically discovered source gate now
 requires focus and accessibility semantics for every window-controller file and
@@ -1329,7 +1329,7 @@ target, modifier, and shortcut, plus restoration of a hidden main window. This
 improves discoverable keyboard reachability but does not claim a complete Full
 Keyboard Access traversal of every control.
 
-The dynamic key-view-loop continuation puts the main window and all 19
+The dynamic key-view-loop continuation puts the main window and all 20
 implemented window-controller surfaces on one policy: each asks AppKit to own
 automatic key-view-loop recalculation while preserving the intentional initial
 keyboard target already assigned to the window. This covers surfaces with
@@ -1386,6 +1386,13 @@ Deliverables:
 - User-initiated signed Sparkle updater with automatic/background checks disabled.
 - Run clean-account and clean-machine installation tests.
 - Publish SBOM, build metadata, artifact-size evidence, notarization JSON, checksums, and provenance; download and independently reverify everything.
+
+The licensing-UI continuation adds a native, offline Third-Party Software
+viewer under Help. It reads only regular UTF-8 documents beneath the signed app
+resources, bounds individual and aggregate input size, rejects symbolic links,
+and includes the runtime's full license tree when bundled tools are present.
+The package gate already requires the primary notices and app/Sparkle licenses;
+the viewer does not replace legal review or downloaded-artifact acceptance.
 
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 

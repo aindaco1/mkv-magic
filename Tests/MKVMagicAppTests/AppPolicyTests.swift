@@ -154,12 +154,40 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(helpText.string.contains("Metadata edits use MKVToolNix without encoding"))
         XCTAssertTrue(helpText.string.contains("Moving originals to Trash is explicit"))
         XCTAssertTrue(helpText.string.contains("has no accounts, analytics, uploads"))
+        XCTAssertTrue(helpText.string.contains("Help > Third-Party Software"))
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_HELP_CAPTURE"
         ], capturePath.hasPrefix("/"), let content = helpWindow.contentView {
             helpWindow.setContentSize(helpWindow.minSize)
             try captureWindow(window: helpWindow, content: content, at: capturePath)
         }
+        let thirdPartyItem = try XCTUnwrap(
+            helpMenu.item(withTitle: "Third-Party Software…")
+        )
+        XCTAssertEqual(thirdPartyItem.action, #selector(AppDelegate.showThirdPartySoftware))
+        XCTAssertTrue(thirdPartyItem.target === delegate)
+        XCTAssertTrue(
+            NSApp.sendAction(
+                try XCTUnwrap(thirdPartyItem.action),
+                to: thirdPartyItem.target,
+                from: thirdPartyItem
+            )
+        )
+        let thirdPartyWindow = try XCTUnwrap(
+            NSApp.windows.first { $0.title == "Third-Party Software" }
+        )
+        defer { thirdPartyWindow.close() }
+        XCTAssertTrue(thirdPartyWindow.isVisible)
+        XCTAssertEqual(thirdPartyWindow.minSize, NSSize(width: 560, height: 420))
+        XCTAssertEqual(
+            thirdPartyWindow.initialFirstResponder?.accessibilityLabel(),
+            "License document"
+        )
+        XCTAssertTrue(
+            descendants(in: try XCTUnwrap(thirdPartyWindow.contentView)).contains {
+                $0.accessibilityLabel() == "Selected license text"
+            }
+        )
         let windowMenu = try XCTUnwrap(
             NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Window" }
         )
@@ -203,6 +231,87 @@ final class AppPolicyTests: XCTestCase {
         await delegate.waitForInitialQueueCycle()
         let queueSnapshot = try await queueStore.load()
         XCTAssertTrue(queueSnapshot.jobs.isEmpty)
+    }
+
+    @MainActor
+    func testThirdPartyDocumentLoaderAndViewerUseOnlyBoundedPackagedText() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-third-party-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let licenses = root.appendingPathComponent("Licenses", isDirectory: true)
+        let toolLicenses = root.appendingPathComponent("Tools/Licenses/Codec", isDirectory: true)
+        try FileManager.default.createDirectory(at: licenses, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: toolLicenses, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try Data("Notices body".utf8).write(
+            to: root.appendingPathComponent("THIRD_PARTY_NOTICES.md")
+        )
+        try Data("GPL body".utf8).write(
+            to: licenses.appendingPathComponent("MKV-Magic-GPL-3.0.txt")
+        )
+        try Data("MIT body".utf8).write(
+            to: licenses.appendingPathComponent("Sparkle-MIT.txt")
+        )
+        try Data("Codec body".utf8).write(
+            to: toolLicenses.appendingPathComponent("COPYING")
+        )
+
+        let documents = try ThirdPartyDocumentLoader.load(from: root)
+        XCTAssertEqual(
+            documents.map(\.title),
+            [
+                "Third-Party Notices",
+                "MKV Magic — GPL-3.0-or-later",
+                "Sparkle — MIT",
+                "Bundled Tools — Codec/COPYING",
+            ]
+        )
+        XCTAssertEqual(
+            documents.map(\.body), ["Notices body", "GPL body", "MIT body", "Codec body"])
+
+        let controller = ThirdPartySoftwareWindowController(documents: documents)
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+        let picker = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first
+        )
+        let text = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        )
+        XCTAssertEqual(picker.itemTitles, documents.map(\.title))
+        XCTAssertEqual(text.string, "Notices body")
+        picker.selectItem(at: 3)
+        picker.sendAction(picker.action, to: picker.target)
+        XCTAssertEqual(text.string, "Codec body")
+        for button in buttons(in: content) where !button.isHidden {
+            let frame = button.convert(button.bounds, to: content)
+            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
+            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
+            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
+            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
+        }
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_THIRD_PARTY_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureWindow(window: window, content: content, at: capturePath)
+        }
+
+        let outside = root.deletingLastPathComponent().appendingPathComponent(
+            "mkv-magic-outside-license-\(UUID().uuidString)"
+        )
+        try Data("outside".utf8).write(to: outside)
+        defer { try? FileManager.default.removeItem(at: outside) }
+        let unsafeLink = toolLicenses.appendingPathComponent("UNSAFE")
+        try FileManager.default.createSymbolicLink(at: unsafeLink, withDestinationURL: outside)
+        XCTAssertThrowsError(try ThirdPartyDocumentLoader.load(from: root)) { error in
+            XCTAssertEqual(
+                error as? ThirdPartyDocumentLoaderError,
+                .unsafeDocument("Tools/Licenses/Codec/UNSAFE")
+            )
+        }
     }
 
     func testBundledToolVerificationUsesOnlyVersionArguments() {

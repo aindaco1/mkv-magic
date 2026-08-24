@@ -346,7 +346,7 @@ commit. These native AppKit regressions are a baseline, not a claimed manual
 keyboard-only or VoiceOver walkthrough. See
 [docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
 
-The follow-on every-window foundation now gives all 18 implemented AppKit
+The follow-on every-window foundation now gives all 20 implemented AppKit
 window-controller surfaces intentional first focus and explicit assistive
 semantics. Modal workflow cancellation uses Escape where safe, and a source
 gate prevents new windows without these contracts or custom motion without an
@@ -382,7 +382,7 @@ and Encoding Test. Standard Minimize, Zoom, and Bring All to Front commands are
 present too. See
 [docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md](docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md).
 
-The main window and all 19 implemented auxiliary windows now share one native
+The main window and all 20 implemented auxiliary windows now share one native
 keyboard-navigation policy: each keeps an intentional starting control and asks
 AppKit to own automatic key-view-loop recalculation as each window's contents
 evolve. A source gate keeps future windows on that policy. This is automated
@@ -405,6 +405,11 @@ A native Command-? Help window now keeps the essential getting-started,
 output-safety, no-transcode, workflow, queue, keyboard, and privacy guidance
 available offline inside the app. See
 [docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md](docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md).
+
+Help → Third-Party Software now opens a bounded, offline viewer for the notices
+and complete license texts inside the installed app, including bundled-tool
+licenses when that runtime is present. See
+[docs/releases/M9_THIRD_PARTY_SOFTWARE_VIEWER_SLICE.md](docs/releases/M9_THIRD_PARTY_SOFTWARE_VIEWER_SLICE.md).
 
 The coverage workflow now measures repository production sources only and
 fails below conservative line, function, or region floors; tests, generated

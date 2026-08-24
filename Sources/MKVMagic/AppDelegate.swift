@@ -6,6 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let updateController: UpdateChecking
     private var windowController: NSWindowController?
     private var helpWindowController: HelpWindowController?
+    private var thirdPartySoftwareWindowController: ThirdPartySoftwareWindowController?
     private var automaticQueueTask: Task<Void, Never>?
 
     init(
@@ -65,6 +66,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func showHelp() {
         let controller = helpWindowController ?? HelpWindowController()
         helpWindowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showThirdPartySoftware() {
+        let controller =
+            thirdPartySoftwareWindowController ?? ThirdPartySoftwareWindowController()
+        thirdPartySoftwareWindowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -208,6 +217,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         help.target = self
         helpMenu.addItem(help)
+        helpMenu.addItem(.separator())
+        let thirdPartySoftware = NSMenuItem(
+            title: "Third-Party Software…",
+            action: #selector(showThirdPartySoftware),
+            keyEquivalent: ""
+        )
+        thirdPartySoftware.target = self
+        helpMenu.addItem(thirdPartySoftware)
         helpItem.submenu = helpMenu
         NSApp.helpMenu = helpMenu
         return main

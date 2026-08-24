@@ -6,7 +6,7 @@ manual Full Keyboard Access walkthrough.
 
 ## Runtime contract
 
-The main window and all 18 auxiliary window-controller surfaces now call the
+The main window and all 20 auxiliary window-controller surfaces now call the
 same `NSWindow` helper. The helper:
 
 - enables AppKit's automatic key-view-loop recalculation;

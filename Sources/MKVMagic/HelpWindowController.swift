@@ -119,5 +119,8 @@ final class HelpViewController: NSViewController {
 
         PRIVACY
         Media processing, inspection, workflow planning, history, and support reports stay local. MKV Magic has no accounts, analytics, uploads, telemetry, or LLM dependency. Update checks occur only when you choose Check for Updates.
+
+        LICENSES AND NOTICES
+        Choose Help > Third-Party Software to read the notices and full license texts shipped inside your installed copy of MKV Magic.
         """
 }
