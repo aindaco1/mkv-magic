@@ -582,6 +582,137 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testExportsAndRemovesMatroskaTagsWithSeparateZeroEncodeHistories() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-tags-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let baseURL = fixtureRoot.appendingPathComponent("base.mkv")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let globalTagsURL = fixtureRoot.appendingPathComponent("global.xml")
+        let trackTagsURL = fixtureRoot.appendingPathComponent("track.xml")
+        let exportedURL = fixtureRoot.appendingPathComponent("Feature — Tags.xml")
+        let clearedURL = fixtureRoot.appendingPathComponent("Feature — Tags Removed.mkv")
+        try Data(repeating: 0, count: 96_000).write(to: rawAudio)
+        try Data(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE Tags SYSTEM "matroskatags.dtd">
+            <Tags><Tag><Targets /><Simple><Name>TITLE</Name><String>Private Collection Value</String></Simple></Tag></Tags>
+            """.utf8
+        ).write(to: globalTagsURL)
+        try Data(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE Tags SYSTEM "matroskatags.dtd">
+            <Tags><Tag><Targets /><Simple><Name>ARTIST</Name><String>Private Performer Value</String></Simple></Tag></Tags>
+            """.utf8
+        ).write(to: trackTagsURL)
+
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
+                    "-c:a", "aac",
+                    "-metadata", "title=Stable Segment Title",
+                    baseURL.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let tag = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvmerge),
+                arguments: [
+                    "--output", sourceURL.path,
+                    "--global-tags", globalTagsURL.path,
+                    "--tags", "0:\(trackTagsURL.path)",
+                    baseURL.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(tag.exitCode, 0, tag.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let preview = try await model.previewMatroskaTags(in: source)
+        XCTAssertGreaterThan(preview.document.counts.global, 0)
+        XCTAssertGreaterThan(preview.document.counts.track, 0)
+
+        let exported = try await model.executeMatroskaTagExport(
+            preview: preview,
+            destinationURL: exportedURL
+        )
+        XCTAssertEqual(exported.counts, preview.document.counts)
+        XCTAssertEqual(try Data(contentsOf: exportedURL), preview.document.data)
+
+        let cleared = try await model.executeMatroskaTagRemoval(
+            preview: preview,
+            destinationURL: clearedURL
+        )
+        XCTAssertEqual(cleared.globalTagCount, 0)
+        XCTAssertEqual(cleared.trackTagCount, 0)
+        XCTAssertEqual(cleared.metadata["title"], "Stable Segment Title")
+        XCTAssertEqual(cleared.segmentUID, source.segmentUID)
+        XCTAssertEqual(cleared.tracks.map(\.uid), source.tracks.map(\.uid))
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+
+        let records = try await historyStore.load()
+        XCTAssertEqual(records.count, 2)
+        let recordsByWorkflow = Dictionary(
+            uniqueKeysWithValues: records.map { ($0.workflowID, $0) })
+        let exportRecord = try XCTUnwrap(recordsByWorkflow[BuiltInWorkflowCatalog.tagExport])
+        let removalRecord = try XCTUnwrap(recordsByWorkflow[BuiltInWorkflowCatalog.tagRemoval])
+        XCTAssertEqual(exportRecord.workflowName, "Export Matroska tags")
+        XCTAssertEqual(removalRecord.workflowName, "Remove Matroska tags")
+        for record in [exportRecord, removalRecord] {
+            XCTAssertEqual(
+                record.privacySafePlan,
+                MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+            )
+            XCTAssertEqual(
+                record.events.map(\.state),
+                [
+                    .queued, .inspecting, .planned, .ready, .running, .verifying, .committing,
+                    .succeeded,
+                ]
+            )
+            let serialized = record.events.compactMap(\.message).joined(separator: " ")
+            XCTAssertFalse(serialized.contains(fixtureRoot.path))
+            XCTAssertFalse(serialized.contains("Private Collection Value"))
+            XCTAssertFalse(serialized.contains("Private Performer Value"))
+        }
+    }
+
+    @MainActor
     func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

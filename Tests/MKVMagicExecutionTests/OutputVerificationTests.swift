@@ -54,6 +54,49 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTagRemovalPrefersExactSegmentTitleKeyAndAllowsOnlyTagFactsToDisappear() throws {
+        let taggedTrack = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "eng",
+            title: "Main Audio",
+            tags: ["ARTIST": "Fixture"]
+        )
+        let clearedTrack = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 42,
+            language: "eng",
+            title: "Main Audio"
+        )
+        let original = asset(
+            title: "Stable Segment Title",
+            tracks: [taggedTrack],
+            globalTagCount: 1,
+            trackTagCount: 1,
+            extraMetadata: ["TITLE": "Conflicting User Tag"]
+        )
+        let output = asset(title: "Stable Segment Title", tracks: [clearedTrack])
+
+        XCTAssertNoThrow(
+            try MatroskaTagRemovalOutputVerifier().verify(
+                original: original,
+                output: output
+            )
+        )
+        XCTAssertThrowsError(
+            try MatroskaTagRemovalOutputVerifier().verify(
+                original: original,
+                output: asset(title: "Changed Segment Title", tracks: [clearedTrack])
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tagsChanged)
+        }
+    }
+
     func testTrackMetadataVerifierAcceptsOnlyTheSelectedSemanticChanges() throws {
         let originalTrack = MediaTrack(
             id: 0,
@@ -702,9 +745,12 @@ final class OutputVerificationTests: XCTestCase {
         duration: MediaTime = MediaTime(seconds: 10)!,
         segmentUID: String = "0011",
         encoder: String = "fixture",
-        trackTagCount: Int = 0
+        globalTagCount: Int = 0,
+        trackTagCount: Int = 0,
+        extraMetadata: [String: String] = [:]
     ) -> MediaAsset {
         var metadata = ["encoder": encoder]
+        metadata.merge(extraMetadata) { _, new in new }
         if let title { metadata["title"] = title }
         return MediaAsset(
             sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
@@ -718,7 +764,7 @@ final class OutputVerificationTests: XCTestCase {
             ],
             metadata: metadata,
             chapterEntryCount: 1,
-            globalTagCount: 0,
+            globalTagCount: globalTagCount,
             trackTagCount: trackTagCount,
             segmentUID: segmentUID
         )

@@ -538,6 +538,18 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(bounded.hasSuffix(".png"))
     }
 
+    func testTagOutputNamesAreExplicitAndContainerSafe() {
+        let source = URL(fileURLWithPath: "/Media/Movie.Final.MKV")
+        XCTAssertEqual(
+            OutputNamingPolicy.extractedTagFilename(for: source),
+            "Movie.Final — Tags.xml"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.tagsRemovedFilename(for: source),
+            "Movie.Final — Tags Removed.mkv"
+        )
+    }
+
     func testSubtitledOutputNameAlwaysUsesMKV() {
         XCTAssertEqual(
             OutputNamingPolicy.subtitledFilename(
@@ -3389,6 +3401,40 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testTagActionsExplainExactExportAndVerifiedRemoval() throws {
+        let controller = TagActionWindowController(
+            counts: MatroskaTagCounts(global: 2, track: 3)
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Matroska Tags")
+        XCTAssertEqual(content.frame.size.width, 540, accuracy: 1)
+        XCTAssertEqual(content.frame.size.height, 250, accuracy: 1)
+        XCTAssertEqual(window.accessibilityLabel(), "Matroska tag actions")
+        let exportButton = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Export XML…" }
+        )
+        XCTAssertTrue(window.initialFirstResponder === exportButton)
+        let labels = descendants(in: content).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("2 global tags and 3 track tags"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Export XML…" })
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Review Removal…" })
+        XCTAssertTrue(
+            buttons(in: content).contains {
+                $0.accessibilityHelp()?.contains("exact bounded XML") == true
+            }
+        )
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_TAG_ACTION_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureWindow(window: window, content: content, at: capturePath)
+            window.close()
+        }
+    }
+
+    @MainActor
     func testEmbeddedSRTUsesSharedReviewWindowAndTrackLanguageExplanation() throws {
         let cue = SubRipCue(
             id: 0,
@@ -3747,6 +3793,11 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(
             buttons(in: controller.view).contains { button in
                 button.title == "Remove Attachments…" && !button.isEnabled
+            }
+        )
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Tags…" && !button.isEnabled
             }
         )
         XCTAssertTrue(

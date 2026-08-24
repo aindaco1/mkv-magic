@@ -55,6 +55,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case textSubtitleExtraction(MatroskaTextSubtitleExtractionPreview)
         case attachmentExtraction(MatroskaAttachmentExtractionPreview)
         case attachmentRemoval(MatroskaAttachmentRemovalPreview)
+        case tagExport(MatroskaTagPreview)
+        case tagRemoval(MatroskaTagPreview)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
         case remuxToMKV(MKVRemuxPreview)
     }
@@ -131,6 +133,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
     private let attachmentsButton = NSButton(title: "Attachments…", target: nil, action: nil)
+    private let tagsButton = NSButton(title: "Tags…", target: nil, action: nil)
     private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
     private let remuxButton = NSButton(title: "Remux to MKV…", target: nil, action: nil)
     private let convertButton = NSButton(title: "Convert Video…", target: nil, action: nil)
@@ -155,6 +158,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         EmbeddedSubtitleTrackPickerWindowController?
     private var attachmentPickerWindowController: AttachmentPickerWindowController?
     private var attachmentRemovalWindowController: AttachmentRemovalWindowController?
+    private var tagActionWindowController: TagActionWindowController?
     private var chapterStudioWindowController: ChapterStudioWindowController?
     private var trimWindowController: TrimWindowController?
     private var trimProgressWindowController: VerifiedOutputProgressWindowController?
@@ -424,6 +428,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         attachmentsButton.setAccessibilityHelp(
             "Extract one embedded Matroska attachment into a separate exact verified file without changing the MKV."
         )
+        tagsButton.target = self
+        tagsButton.action = #selector(manageMatroskaTags)
+        tagsButton.isEnabled = false
+        tagsButton.setAccessibilityHelp(
+            "Export complete Matroska tags as exact XML or review clearing every tag from a new verified MKV copy."
+        )
         trimButton.target = self
         trimButton.action = #selector(trimFile)
         trimButton.isEnabled = false
@@ -456,6 +466,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let attachmentButtons = NSStackView(views: [attachmentsButton, removeAttachmentsButton])
         attachmentButtons.orientation = .horizontal
         attachmentButtons.spacing = 8
+        let tagButtons = NSStackView(views: [tagsButton])
+        tagButtons.orientation = .horizontal
         let videoButtons = NSStackView(views: [remuxButton, convertButton])
         videoButtons.orientation = .horizontal
         videoButtons.spacing = 8
@@ -463,7 +475,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
             subtitleButtons, subtitleConversionButtons, chapterButtons, attachmentButtons,
-            videoButtons,
+            tagButtons, videoButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1931,6 +1943,77 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func manageMatroskaTags() {
+        guard let asset = selectedAsset,
+            let parentWindow = view.window,
+            let counts = try? MatroskaTagPolicy.counts(in: asset)
+        else { return }
+        clearPendingChange()
+        let controller = TagActionWindowController(counts: counts)
+        tagActionWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] action in
+            guard let self else { return }
+            self.tagActionWindowController = nil
+            guard let action else {
+                self.refresh()
+                return
+            }
+            guard self.selectedAsset?.id == asset.id else {
+                self.clearPendingChange()
+                self.refresh()
+                return
+            }
+            self.previewMatroskaTags(asset: asset, action: action)
+        }
+    }
+
+    private func previewMatroskaTags(asset: MediaAsset, action: MatroskaTagAction) {
+        statusLabel.stringValue = "Extracting Matroska tags privately for review…"
+        tagsButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewMatroskaTags(in: asset)
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                let count = preview.document.counts.total
+                let noun = count == 1 ? "tag" : "tags"
+                pendingAssetID = asset.id
+                switch action {
+                case .exportXML:
+                    pendingChange = .tagExport(preview)
+                    impactLabel.stringValue =
+                        "0 video/audio encodes • exact XML • \(count) \(noun)"
+                    statusLabel.stringValue = "Exact tag export plan ready"
+                    runButton.toolTip =
+                        "Repeat the complete tag extraction, require the exact reviewed XML, then commit and reopen the sidecar."
+                case .removeAll:
+                    pendingChange = .tagRemoval(preview)
+                    impactLabel.stringValue =
+                        "0 video/audio encodes • mkvpropedit • remove \(count) \(noun)"
+                    statusLabel.stringValue = "Tag removal plan ready"
+                    runButton.toolTip =
+                        "Clear every reviewed tag on a clone, verify media and structure are unchanged, then commit and reopen the MKV."
+                }
+                runButton.isEnabled = true
+            } catch {
+                tagsButton.isEnabled = MatroskaTagPolicy.canOffer(for: asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the Matroska tag action.",
+                        recovery: "The MKV is unchanged; inspect it again and retry.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: tagsButton
+                )
+                clearPendingChange()
+            }
+        }
+    }
+
     private func previewTimedTextSubtitleConversion(asset: MediaAsset, trackID: Int) {
         statusLabel.stringValue = "Converting MP4 timed text privately for review…"
         convertTimedTextButton.isEnabled = false
@@ -2412,6 +2495,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         preview: preview,
                         destinationURL: destination.url
                     ).sourceURL
+                case .tagExport(let preview):
+                    outputURL = try await model.executeMatroskaTagExport(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).outputURL
+                case .tagRemoval(let preview):
+                    outputURL = try await model.executeMatroskaTagRemoval(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).sourceURL
                 case .chapters(let preview, let desired):
                     outputURL = try await model.editChapters(
                         preview: preview,
@@ -2517,6 +2610,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isAttachmentExtraction = false
         }
+        let isTagExport: Bool
+        if case .tagExport = pendingChange {
+            isTagExport = true
+        } else {
+            isTagExport = false
+        }
         let isSubtitleMux: Bool
         if case .externalSubtitle = pendingChange {
             isSubtitleMux = true
@@ -2536,6 +2635,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let requiresMKVOutput: Bool
         if case .attachmentRemoval = pendingChange {
             requiresMKVOutput = true
+        } else if case .tagRemoval = pendingChange {
+            requiresMKVOutput = true
         } else if case .remuxToMKV = pendingChange {
             requiresMKVOutput = true
         } else if case .savedWorkflow(let prepared) = pendingChange {
@@ -2546,8 +2647,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.title =
             isAttachmentExtraction
             ? "Save Verified Attachment Copy"
-            : (isSubtitleCleanup || isTimedTextConversion || isTextSubtitleExtraction
-                ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy")
+            : (isTagExport
+                ? "Save Verified Tag XML"
+                : (isSubtitleCleanup || isTimedTextConversion || isTextSubtitleExtraction
+                    ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"))
         panel.prompt = prompt
         panel.canCreateDirectories = true
         if case .savedWorkflow(let prepared) = pendingChange,
@@ -2568,6 +2671,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else if case .attachmentExtraction(let preview) = pendingChange {
             panel.nameFieldStringValue = OutputNamingPolicy.extractedAttachmentFilename(
                 for: preview.attachment
+            )
+        } else if isTagExport {
+            panel.nameFieldStringValue = OutputNamingPolicy.extractedTagFilename(
+                for: asset.sourceURL
+            )
+        } else if case .tagRemoval = pendingChange {
+            panel.nameFieldStringValue = OutputNamingPolicy.tagsRemovedFilename(
+                for: asset.sourceURL
             )
         } else if case .timedTextSubtitle(let preview) = pendingChange {
             panel.nameFieldStringValue = OutputNamingPolicy.convertedTimedTextFilename(
@@ -2598,6 +2709,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 ).pathExtension
         } else if case .textSubtitleExtraction(let preview) = pendingChange {
             outputExtension = preview.format.filenameExtension
+        } else if isTagExport {
+            outputExtension = "xml"
         } else if isTimedTextConversion {
             outputExtension = "ass"
         } else if isSubtitleCleanup {
@@ -2639,6 +2752,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
         attachmentsButton.isEnabled = false
+        tagsButton.isEnabled = false
         trimButton.isEnabled = false
         remuxButton.isEnabled = false
         convertButton.isEnabled = false
@@ -2665,6 +2779,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
         attachmentsButton.isEnabled =
             !MatroskaAttachmentExtractionPolicy.extractableAttachments(in: asset).isEmpty
+        tagsButton.isEnabled = MatroskaTagPolicy.canOffer(for: asset)
         trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
         remuxButton.isEnabled = MKVRemuxPlanner().canOffer(for: asset)
         convertButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
@@ -2766,6 +2881,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             attachmentsButton.isEnabled = false
+            tagsButton.isEnabled = false
             trimButton.isEnabled = false
             remuxButton.isEnabled = false
             convertButton.isEnabled = false
@@ -2797,6 +2913,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             attachmentsButton.isEnabled = false
+            tagsButton.isEnabled = false
             trimButton.isEnabled = false
             remuxButton.isEnabled = false
             convertButton.isEnabled = false
@@ -2904,6 +3021,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             attachmentsButton.isEnabled
             ? "Choose one bounded Matroska attachment and save an exact verified file without changing the MKV."
             : "Attachment extraction requires an inspected Matroska file with a stable, non-empty attachment up to 512 MB."
+        tagsButton.isEnabled = MatroskaTagPolicy.canOffer(for: asset)
+        tagsButton.toolTip =
+            tagsButton.isEnabled
+            ? "Export the complete tag XML or review clearing every global and track tag from a verified MKV copy."
+            : "Tag actions require an inspected Matroska file with known nonzero global or track tag counts."
         trimButton.isEnabled =
             !isPreparingVideoProcessing && TrimPresentationPolicy.canOfferTrim(for: asset)
         trimButton.toolTip =
@@ -3182,6 +3304,14 @@ enum OutputNamingPolicy {
         }
         let candidate = hasAlphanumeric ? trimmed : fallback
         return truncateAttachmentFilename(candidate, maximumUTF8Bytes: 200)
+    }
+
+    static func extractedTagFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Tags.xml"
+    }
+
+    static func tagsRemovedFilename(for sourceURL: URL) -> String {
+        "\(sourceURL.deletingPathExtension().lastPathComponent) — Tags Removed.mkv"
     }
 
     static func subtitledFilename(for sourceURL: URL) -> String {

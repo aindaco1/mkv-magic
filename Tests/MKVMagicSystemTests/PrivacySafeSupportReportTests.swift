@@ -35,6 +35,14 @@ final class PrivacySafeSupportReportTests: XCTestCase {
             SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.attachmentRemoval),
             .attachmentRemoval
         )
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.tagExport),
+            .tagExport
+        )
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.tagRemoval),
+            .tagRemoval
+        )
     }
 
     override func setUpWithError() throws {

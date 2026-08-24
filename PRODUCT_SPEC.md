@@ -523,7 +523,7 @@ extraction, requires exact size and digest equality, and audits the separate
 regular file before commit and after reopen. Suggested embedded filenames are
 path-contained, control-character-free, and byte-bounded. The source remains
 byte-unchanged and History records zero video/audio encodes. Adding, replacing,
-or batch-extracting attachments and exporting tags remain separate work.
+or batch-extracting attachments remain separate work.
 
 **Remove Attachments…** accepts an inspected Matroska attachment table only
 when every entry has one stable unique UID and unambiguous nonnegative ID. The
@@ -537,6 +537,22 @@ renumbering but requires retained UID, filename, MIME type, description, size,
 and order plus all media tracks, tags, nested chapters, duration, and metadata
 to match before commit and after reopen. The source remains byte-unchanged and
 History records zero video/audio encodes.
+
+**Tags…** accepts an inspected Matroska source with available global and track
+tag counts. It reports those counts and separates two deliberate actions.
+**Export XML…** re-inspects and re-extracts the complete bounded Matroska tag
+document with bundled `mkvextract`, requires the exact bytes, SHA-256 digest,
+root, and global/track entry counts reviewed earlier, and audits the separate
+XML before commit and after reopen. **Review Removal…** requires at least one
+tag, clears all global and track tags with one bundled-`mkvpropedit` operation
+on a temporary clone, and requires zero freshly extracted tag entries while
+preserving the segment title, tracks, nested chapters, attachments, duration,
+metadata outside the removed tags, and segment identity. The XML parser rejects
+oversized, malformed, external-entity, unexpected-root, and count-mismatched
+documents. Both actions bind the complete source snapshot and regular-file
+revision through commit, leave the source byte-unchanged, and record distinct
+zero-encode History jobs. Per-entry tag editing/replacement, saved-workflow,
+queue, and batch tag actions remain separate work.
 
 **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable

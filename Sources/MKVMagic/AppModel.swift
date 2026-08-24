@@ -1208,6 +1208,197 @@ final class AppModel {
         }
     }
 
+    func previewMatroskaTags(in source: MediaAsset) async throws -> MatroskaTagPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try await MatroskaTagExecutor(
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source)
+    }
+
+    @discardableResult
+    func executeMatroskaTagExport(
+        preview: MatroskaTagPreview,
+        destinationURL: URL
+    ) async throws -> MatroskaTagExportResult {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Exporting and verifying Matroska tags…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let counts = preview.document.counts
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.tagExport,
+                workflowName: "Export Matroska tags",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed Matroska media inspection.",
+                planningMessage:
+                    "Zero video and audio encodes; export \(counts.total) reviewed global and track tag entries as exact XML.",
+                runningMessage:
+                    "Repeating the reviewed tag extraction with bundled mkvextract in a private workspace."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let result = try await MatroskaTagExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            ).export(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying exact Matroska tag XML…"
+                                : "Saving and reopening the verified tag XML…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            await finishHistory(
+                execution,
+                destinationURL: result.outputURL,
+                successMessage:
+                    "Verified the complete exact tag XML before commit and after reopen while leaving the MKV unchanged."
+            )
+            return result
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
+    @discardableResult
+    func executeMatroskaTagRemoval(
+        preview: MatroskaTagPreview,
+        destinationURL: URL
+    ) async throws -> MediaAsset {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Clearing and verifying Matroska tags…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let counts = preview.document.counts
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.tagRemoval,
+                workflowName: "Remove Matroska tags",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed Matroska media inspection.",
+                planningMessage:
+                    "Zero video and audio encodes; clear all \(counts.total) reviewed global and track tag entries on a verified clone.",
+                runningMessage:
+                    "Clearing all tags with bundled mkvpropedit on one temporary MKV clone."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let result = try await MatroskaTagExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            ).removeAll(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying tags are absent and media is unchanged…"
+                                : "Saving and reopening the verified tag-cleaned MKV…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            registerInspectedAsset(result)
+            await finishHistory(
+                execution,
+                destinationURL: result.sourceURL,
+                successMessage:
+                    "Verified every reviewed tag is absent while tracks, title, chapters, attachments, and segment identity remain unchanged before commit and after reopen."
+            )
+            return result
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeMatroskaTextSubtitleExtraction(
         preview: MatroskaTextSubtitleExtractionPreview,

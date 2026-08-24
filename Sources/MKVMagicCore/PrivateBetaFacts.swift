@@ -275,6 +275,8 @@ public enum BuiltInWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case textSubtitleExtraction
     case attachmentExtraction
     case attachmentRemoval
+    case tagExport
+    case tagRemoval
 }
 
 public enum BuiltInWorkflowCatalog {
@@ -319,6 +321,12 @@ public enum BuiltInWorkflowCatalog {
     public static let attachmentRemoval = UUID(
         uuidString: "9E320F32-F061-41AE-B2BB-E8FBBAC41B10"
     )!
+    public static let tagExport = UUID(
+        uuidString: "2B9C6010-203F-4B6F-959C-3900C57FB1EE"
+    )!
+    public static let tagRemoval = UUID(
+        uuidString: "A5942109-288A-44A0-A77F-E18F989151A8"
+    )!
 
     public static func kind(for id: UUID) -> BuiltInWorkflowKind? {
         switch id {
@@ -340,6 +348,8 @@ public enum BuiltInWorkflowCatalog {
         case textSubtitleExtraction: .textSubtitleExtraction
         case attachmentExtraction: .attachmentExtraction
         case attachmentRemoval: .attachmentRemoval
+        case tagExport: .tagExport
+        case tagRemoval: .tagRemoval
         default: nil
         }
     }

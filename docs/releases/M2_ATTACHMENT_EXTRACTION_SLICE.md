@@ -3,8 +3,8 @@
 This records engineering acceptance of direct extraction for one regular
 attachment in an inspected Matroska file. It advances the attachment work in
 section 5.13 of the product specification. It is not acceptance of attachment
-add, replace, remove, batch, saved-workflow or queue execution, tag export, or a
-public release.
+add, replace, remove, batch, saved-workflow or queue execution, selective tag
+editing or replacement, or a public release.
 
 ## User-facing scope
 
@@ -79,7 +79,7 @@ public release.
 ## Still pending
 
 - Attachment add, replace, multi-select extraction, saved-workflow and
-  queue execution, and tag export or clearing.
+  queue execution, and selective tag editing or replacement.
 - Real-library beta acceptance and physical Intel/Apple Silicon user-flow
   acceptance.
 - A public signed and notarized release.

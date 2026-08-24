@@ -270,6 +270,55 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
     }
 }
 
+public struct MatroskaTagRemovalOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(original: MediaAsset, output: MediaAsset) throws {
+        guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
+        guard output.container == original.container,
+            output.formatLongName == original.formatLongName
+        else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard durationsMatch(original.duration, output.duration) else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard output.globalTagCount == 0,
+            output.trackTagCount == 0,
+            output.metadata.titleValue == original.metadata.titleValue
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        let unexpectedOutputMetadata = output.metadata.removingRemuxProvenance.filter {
+            key, value in
+            original.metadata[key] != value
+        }
+        guard unexpectedOutputMetadata.isEmpty,
+            output.muxingApplication == original.muxingApplication,
+            output.writingApplication == original.writingApplication
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard
+            output.tracks.map(MatroskaTagRemovalTrackSnapshot.init)
+                == original.tracks.map(MatroskaTagRemovalTrackSnapshot.init)
+        else {
+            throw OutputVerificationError.tracksChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID == original.segmentUID else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public struct ExternalSubtitleMuxOutputVerifier: Sendable {
     public init() {}
 
@@ -1512,6 +1561,72 @@ private struct RemuxAttachmentSnapshot: Equatable {
     }
 }
 
+private struct MatroskaTagRemovalTrackSnapshot: Equatable {
+    let id: Int
+    let kind: MediaTrackKind
+    let codec: String
+    let codecLongName: String?
+    let codecID: String?
+    let profile: String?
+    let level: Int?
+    let uid: UInt64?
+    let language: String?
+    let title: String?
+    let isDefault: Bool
+    let isForced: Bool
+    let isEnabled: Bool
+    let isCommentary: Bool
+    let isHearingImpaired: Bool
+    let isVisualImpaired: Bool
+    let isOriginal: Bool
+    let isTextDescription: Bool
+    let channels: Int?
+    let channelLayout: String?
+    let sampleRate: Int?
+    let dimensions: MediaDimensions?
+    let displayDimensions: MediaDimensions?
+    let pixelFormat: String?
+    let bitDepth: Int?
+    let frameRate: String?
+    let colorInfo: MediaColorInfo?
+    let masteringDisplayMetadata: MediaMasteringDisplayMetadata?
+    let contentLightLevelMetadata: MediaContentLightLevelMetadata?
+    let hdrFormats: [String]
+
+    init(_ track: MediaTrack) {
+        id = track.id
+        kind = track.kind
+        codec = track.codec
+        codecLongName = track.codecLongName
+        codecID = track.codecID
+        profile = track.profile
+        level = track.level
+        uid = track.uid
+        language = (try? TrackLanguageTag.canonical(track.language ?? "und")) ?? track.language
+        title = track.title
+        isDefault = track.isDefault
+        isForced = track.isForced
+        isEnabled = track.isEnabled
+        isCommentary = track.isCommentary
+        isHearingImpaired = track.isHearingImpaired
+        isVisualImpaired = track.isVisualImpaired
+        isOriginal = track.isOriginal
+        isTextDescription = track.isTextDescription
+        channels = track.channels
+        channelLayout = track.channelLayout
+        sampleRate = track.sampleRate
+        dimensions = track.dimensions
+        displayDimensions = track.displayDimensions
+        pixelFormat = track.pixelFormat
+        bitDepth = track.bitDepth
+        frameRate = track.frameRate
+        colorInfo = track.colorInfo
+        masteringDisplayMetadata = track.masteringDisplayMetadata
+        contentLightLevelMetadata = track.contentLightLevelMetadata
+        hdrFormats = track.hdrFormats
+    }
+}
+
 private struct ExactTrimCopiedAudioSnapshot: Equatable {
     let codec: String
     let codecID: String?
@@ -1622,7 +1737,8 @@ extension Array where Element == ChapterNode {
 
 extension Dictionary where Key == String, Value == String {
     fileprivate var titleValue: String? {
-        first { $0.key.caseInsensitiveCompare("title") == .orderedSame }?.value
+        self["title"]
+            ?? first { $0.key.caseInsensitiveCompare("title") == .orderedSame }?.value
     }
 
     fileprivate var removingTitle: [String: String] {

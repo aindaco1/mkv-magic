@@ -90,6 +90,17 @@ attachment fact, media track, tag, nested chapter, duration, and metadata value
 before commit and after reopen. Normal attachment-ID renumbering is allowed;
 UID or content-fact drift is not. The original remains unchanged.
 
+**Tags…** supports exact full-document XML export and clear-all tag removal for
+inspected Matroska files independently of video-encoder hardware. Export uses
+bundled `mkvextract`, is capped at 16 MiB, refuses unsafe XML constructs, and
+requires the repeated bytes, digest, root, and global/track entry counts to
+match before and after commit. Removal uses bundled `mkvpropedit` on a new MKV
+clone, independently re-extracts the result to prove that no global or track
+tag entry remains, and preserves the segment title, tracks, nested chapters,
+attachments, duration, metadata outside the cleared tags, and segment UID. The
+original remains byte-unchanged. Selected-entry editing/replacement and
+workflow, queue, and batch tag actions are not included in this direct action.
+
 **Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
 M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg
 converts one selected track to a separate UTF-8 ASS file; MKV Magic repeats and

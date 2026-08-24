@@ -124,6 +124,15 @@ Matroska remuxing normally renumbers, but requires each retained UID, filename,
 MIME type, description, size, and order plus all tracks, tags, nested chapters,
 duration, and metadata to match before commit and after reopen. Removing every
 attachment is supported when media remains; the original MKV is never changed.
+For inspected Matroska files, **Tags…** reports the global and track tag-entry
+counts and offers two explicit zero-encode actions. **Export XML…** repeats the
+reviewed bundled-`mkvextract` operation and saves the complete exact Matroska
+tag XML as a separately verified sidecar without changing the MKV. **Review
+Removal…** clears every global and track tag with bundled `mkvpropedit` on a
+temporary clone, then requires zero tag entries while preserving the segment
+title, tracks, nested chapters, attachments, duration, and segment identity
+before commit and after reopen. Both paths bind the source revision throughout,
+record separate privacy-safe History jobs, and never overwrite the original.
 For inspected MP4, M4V, and MOV files, **Convert MP4 Subtitle…** exposes each
 TX3G/`mov_text` track in a readable chooser and converts one selected track into
 a separate editable UTF-8 ASS sidecar. Review runs bundled FFmpeg privately and
