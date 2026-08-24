@@ -1942,6 +1942,52 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testVerifiedOutputProgressExplainsCancellationAndCommitBoundary() throws {
+        var didCancel = false
+        let cancellable = VerifiedOutputProgressWindowController.trim(mode: .exact)
+        cancellable.onCancel = { didCancel = true }
+        let cancellableWindow = try XCTUnwrap(cancellable.window)
+        let cancellableContent = try XCTUnwrap(cancellableWindow.contentView)
+        let cancel = try XCTUnwrap(
+            buttons(in: cancellableContent).first { $0.title == "Cancel" }
+        )
+        let status = try XCTUnwrap(
+            descendants(in: cancellableContent).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Execution status"
+            }
+        )
+        let progress = try XCTUnwrap(
+            descendants(in: cancellableContent).compactMap { $0 as? NSProgressIndicator }.first
+        )
+
+        XCTAssertTrue(cancellableWindow.initialFirstResponder === cancel)
+        XCTAssertEqual(cancel.keyEquivalent, "\u{1b}")
+        XCTAssertTrue(cancel.accessibilityHelp()?.contains("original remains unchanged") == true)
+        XCTAssertEqual(progress.accessibilityLabel(), "Verified output progress")
+        XCTAssertTrue(progress.isIndeterminate)
+        cancel.performClick(nil)
+        XCTAssertTrue(didCancel)
+        XCTAssertFalse(cancel.isEnabled)
+        XCTAssertTrue(status.stringValue.contains("Cancelling and removing"))
+        XCTAssertTrue(cancel.accessibilityHelp()?.contains("cleanup is in progress") == true)
+
+        let committing = VerifiedOutputProgressWindowController.losslessJoin()
+        let committingContent = try XCTUnwrap(committing.window?.contentView)
+        let commitCancel = try XCTUnwrap(
+            buttons(in: committingContent).first { $0.title == "Cancel" }
+        )
+        let commitStatus = try XCTUnwrap(
+            descendants(in: committingContent).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Execution status"
+            }
+        )
+        committing.update(stage: VerifiedOutputExecutionStage.committing)
+        XCTAssertFalse(commitCancel.isEnabled)
+        XCTAssertTrue(commitStatus.stringValue.contains("Verification passed"))
+        XCTAssertTrue(commitCancel.accessibilityHelp()?.contains("committed atomically") == true)
+    }
+
+    @MainActor
     func testWorkflowBuilderAddsAndRemovesAvailableCardsWithoutDuplicates() throws {
         let workflow = SavedWorkflow(
             name: "Custom cleanup",

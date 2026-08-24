@@ -32,8 +32,20 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         progress.style = .bar
         progress.isIndeterminate = true
         progress.startAnimation(nil)
+        progress.setAccessibilityLabel("Verified output progress")
+        progress.setAccessibilityHelp(
+            "Indeterminate progress while MKV Magic creates, verifies, and commits one output."
+        )
+        statusLabel.setAccessibilityLabel("Execution status")
+        statusLabel.setAccessibilityHelp(
+            "Current local processing stage; the original remains unchanged before verified success."
+        )
         cancelButton.target = self
         cancelButton.action = #selector(cancel)
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp(
+            "Request cancellation and remove the temporary output; the original remains unchanged."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [spacer, cancelButton])
@@ -55,6 +67,7 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
             progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
             buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
+        window.initialFirstResponder = cancelButton
     }
 
     @available(*, unavailable)
@@ -107,25 +120,32 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
     func update(stage: VerifiedOutputExecutionStage) {
         switch stage {
         case .verifying:
-            statusLabel.stringValue = verifyingMessage
+            setStatus(verifyingMessage)
         case .committing:
-            statusLabel.stringValue = committingMessage
+            setStatus(committingMessage)
             cancelButton.isEnabled = false
+            cancelButton.setAccessibilityHelp(
+                "Cancellation is unavailable while the verified output is committed atomically."
+            )
         }
     }
 
     func update(stage: CommonFormatJoinExecutionStage) {
         switch stage {
         case .normalizing:
-            statusLabel.stringValue = "Normalizing only the incompatible lanes once…"
+            setStatus("Normalizing only the incompatible lanes once…")
         case .assembling:
-            statusLabel.stringValue =
+            setStatus(
                 "Assembling normalized and packet-copy lanes into one temporary MKV…"
+            )
         case .verifying:
-            statusLabel.stringValue = verifyingMessage
+            setStatus(verifyingMessage)
         case .committing:
-            statusLabel.stringValue = committingMessage
+            setStatus(committingMessage)
             cancelButton.isEnabled = false
+            cancelButton.setAccessibilityHelp(
+                "Cancellation is unavailable while the verified output is committed atomically."
+            )
         }
     }
 
@@ -136,7 +156,13 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
 
     @objc private func cancel() {
         cancelButton.isEnabled = false
-        statusLabel.stringValue = cancellingMessage
+        setStatus(cancellingMessage)
+        cancelButton.setAccessibilityHelp("Cancellation was requested; cleanup is in progress.")
         onCancel?()
+    }
+
+    private func setStatus(_ message: String) {
+        statusLabel.stringValue = message
+        NSAccessibility.post(element: statusLabel, notification: .valueChanged)
     }
 }

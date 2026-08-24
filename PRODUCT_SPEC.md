@@ -657,8 +657,10 @@ safety summaries, dynamic actions, and status fields expose explicit VoiceOver
 names and help; plan review uses Return to accept and Escape to cancel. These
 contracts have AppKit regressions. The saved-workflow editor begins in its
 workflow list, exposes explicit builder semantics, uses Command-S to save, and
-explains its unavailable preview prerequisite. A packaged manual keyboard/
-VoiceOver walkthrough and the rest of the app surface remain M8 acceptance work.
+explains its unavailable preview prerequisite. Verified-output progress begins
+on Cancel, maps Escape to safe cancellation, names status/progress, and explains
+why cancellation closes at atomic commit. A packaged manual keyboard/VoiceOver
+walkthrough and the rest of the app surface remain M8 acceptance work.
 
 The chapter editor is a dedicated window or workspace with a synchronized outline/table, timeline, thumbnails, analysis suggestions, and inspector.
 
@@ -1264,6 +1266,9 @@ workflow review windows. Those windows use native AppKit and introduce no custom
 motion. The follow-on workflow-editor slice adds its list/step/name/status/action
 semantics, initial list focus, distinct Command-S save and Return preview, and an
 explicit no-selected-media prerequisite. Automated accessibility-tree checks
+are extended through the verified-output progress sheet: initial Cancel focus,
+Escape cancellation, status/progress semantics, native value-change
+notifications, and explicit atomic-commit cancellation closure. These checks
 are not manual VoiceOver, keyboard-only, contrast, reduced-motion, localization,
 or every-window acceptance; those broader passes remain open.
 

@@ -44,9 +44,18 @@ Preview**. When no inspected Matroska file is selected, the disabled preview
 control explains the prerequisite to VoiceOver instead of exposing only an
 unavailable action.
 
+### Verified-output progress continuation
+
+The progress sheet now initially focuses **Cancel**, maps Escape to that action,
+names its current execution status and indeterminate progress bar, and explains
+that cancelling removes temporary output while preserving the original. Native
+accessibility value-change notifications accompany stage text changes. Once a
+verified output reaches its atomic commit boundary, Cancel becomes unavailable
+and its help explains why; no shortcut can bypass that safety boundary.
+
 ## Regression evidence
 
-Seven focused AppKit tests prove:
+Eight focused AppKit tests prove:
 
 1. File → Open has Command-O, the correct selector, and the live main-controller
    target.
@@ -60,9 +69,12 @@ Seven focused AppKit tests prove:
    builder semantics, and maps Command-S and Return to distinct native actions.
 7. An unavailable workflow preview explains that an inspected Matroska file is
    required.
+8. Verified-output progress exposes status/progress/cancellation semantics,
+   Escape requests safe cancellation, and commit disables cancellation with an
+   explanation.
 
-All seven focused tests pass with zero failures. After the workflow-editor
-continuation, the complete local gate passes with **501 tests, 33 expected
+All eight focused tests pass with zero failures. After the progress-sheet
+continuation, the complete local gate passes with **502 tests, 33 expected
 real-tool fixture skips, and zero failures** in each of its normal, coverage,
 AddressSanitizer, and ThreadSanitizer modes. Its Universal app and package
 checks verify nested Sparkle signing, the update archive and appcast, SBOM,
