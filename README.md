@@ -375,6 +375,13 @@ announcement. The pass also fixes live workflow renaming so its selected row
 and subsequent Save validation remain intact. See
 [docs/releases/M8_ACCESSIBLE_FAILURE_RECOVERY_SLICE.md](docs/releases/M8_ACCESSIBLE_FAILURE_RECOVERY_SLICE.md).
 
+The native Window menu now makes the app's recurring workspaces reachable
+without returning to the main window or hunting for a button: Command-0 shows
+the main window, and Command-1 through Command-4 open Workflows, Queue, History,
+and Encoding Test. Standard Minimize, Zoom, and Bring All to Front commands are
+present too. See
+[docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md](docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

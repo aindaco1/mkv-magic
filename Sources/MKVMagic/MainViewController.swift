@@ -477,7 +477,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         inspect(panel.urls)
     }
 
-    @objc private func showHistory() {
+    @objc func showMainWindow() {
+        view.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func showHistory() {
         statusLabel.stringValue = "Loading history…"
         Task {
             do {
@@ -508,7 +513,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
-    @objc private func showQueue() {
+    @objc func showQueue() {
         if let controller = queueWindowController,
             controller.window?.isVisible == true
         {
@@ -568,7 +573,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
-    @objc private func showEncodingBenchmark() {
+    @objc func showEncodingBenchmark() {
         statusLabel.stringValue = "Loading the saved local encoding recommendation…"
         Task {
             do {
@@ -614,7 +619,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
-    @objc private func showWorkflows() {
+    @objc func showWorkflows() {
         statusLabel.stringValue = "Loading workflows…"
         Task {
             do {

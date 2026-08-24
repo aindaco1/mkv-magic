@@ -1320,6 +1320,15 @@ accessibility posts outside the shared presenter. This is automated runtime and
 source evidence, not an observed VoiceOver announcement-order or representative
 private-media failure walkthrough.
 
+The Window-menu keyboard continuation adds stable native commands for the app's
+recurring workspaces: Command-0 restores the main window, while Command-1
+through Command-4 open Workflows, Queue, History, and Encoding Test. The same
+menu includes standard Minimize, Zoom, and Bring All to Front actions and is
+registered as AppKit's windows menu. Live menu regressions verify each selector,
+target, modifier, and shortcut, plus restoration of a hidden main window. This
+improves discoverable keyboard reachability but does not claim a complete Full
+Keyboard Access traversal of every control.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

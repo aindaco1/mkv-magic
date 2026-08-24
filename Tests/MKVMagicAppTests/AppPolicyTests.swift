@@ -72,6 +72,34 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(openItem.keyEquivalent, "o")
         XCTAssertEqual(openItem.action, #selector(MainViewController.chooseFiles))
         XCTAssertTrue(openItem.target === window.contentViewController)
+        let windowMenu = try XCTUnwrap(
+            NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Window" }
+        )
+        XCTAssertTrue(NSApp.windowsMenu === windowMenu)
+        for (title, key, action) in [
+            ("Main Window", "0", #selector(MainViewController.showMainWindow)),
+            ("Workflows", "1", #selector(MainViewController.showWorkflows)),
+            ("Queue", "2", #selector(MainViewController.showQueue)),
+            ("History", "3", #selector(MainViewController.showHistory)),
+            ("Encoding Test", "4", #selector(MainViewController.showEncodingBenchmark)),
+        ] {
+            let item = try XCTUnwrap(windowMenu.item(withTitle: title))
+            XCTAssertEqual(item.keyEquivalent, key)
+            XCTAssertEqual(item.keyEquivalentModifierMask, [.command])
+            XCTAssertEqual(item.action, action)
+            XCTAssertTrue(item.target === window.contentViewController)
+        }
+        window.orderOut(nil)
+        XCTAssertFalse(window.isVisible)
+        let mainWindowItem = try XCTUnwrap(windowMenu.item(withTitle: "Main Window"))
+        XCTAssertTrue(
+            NSApp.sendAction(
+                try XCTUnwrap(mainWindowItem.action),
+                to: mainWindowItem.target,
+                from: mainWindowItem
+            )
+        )
+        XCTAssertTrue(window.isVisible)
         XCTAssertEqual(
             window.initialFirstResponder?.accessibilityLabel(),
             "Choose media files or folders"

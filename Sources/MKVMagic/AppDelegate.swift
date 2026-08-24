@@ -112,6 +112,74 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editItem.submenu = editMenu
+
+        let windowItem = NSMenuItem()
+        main.addItem(windowItem)
+        let windowMenu = NSMenu(title: "Window")
+        windowMenu.addItem(
+            withTitle: "Minimize",
+            action: #selector(NSWindow.performMiniaturize(_:)),
+            keyEquivalent: "m"
+        )
+        windowMenu.addItem(
+            withTitle: "Zoom",
+            action: #selector(NSWindow.performZoom(_:)),
+            keyEquivalent: ""
+        )
+        windowMenu.addItem(.separator())
+        for command in [
+            windowCommand(
+                title: "Main Window",
+                action: #selector(MainViewController.showMainWindow),
+                keyEquivalent: "0",
+                target: openTarget
+            ),
+            windowCommand(
+                title: "Workflows",
+                action: #selector(MainViewController.showWorkflows),
+                keyEquivalent: "1",
+                target: openTarget
+            ),
+            windowCommand(
+                title: "Queue",
+                action: #selector(MainViewController.showQueue),
+                keyEquivalent: "2",
+                target: openTarget
+            ),
+            windowCommand(
+                title: "History",
+                action: #selector(MainViewController.showHistory),
+                keyEquivalent: "3",
+                target: openTarget
+            ),
+            windowCommand(
+                title: "Encoding Test",
+                action: #selector(MainViewController.showEncodingBenchmark),
+                keyEquivalent: "4",
+                target: openTarget
+            ),
+        ] {
+            windowMenu.addItem(command)
+        }
+        windowMenu.addItem(.separator())
+        windowMenu.addItem(
+            withTitle: "Bring All to Front",
+            action: #selector(NSApplication.arrangeInFront(_:)),
+            keyEquivalent: ""
+        )
+        windowItem.submenu = windowMenu
+        NSApp.windowsMenu = windowMenu
         return main
+    }
+
+    private func windowCommand(
+        title: String,
+        action: Selector,
+        keyEquivalent: String,
+        target: MainViewController
+    ) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.target = target
+        return item
     }
 }
