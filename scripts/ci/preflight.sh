@@ -28,7 +28,8 @@ for command_name in "${required_commands[@]}"; do
 done
 macos_version="$(sw_vers -productVersion)"
 macos_major="${macos_version%%.*}"
-xcode_first="$(xcodebuild -version | head -n 1)"
+xcode_version="$(xcodebuild -version)"
+xcode_first="${xcode_version%%$'\n'*}"
 xcode_number="${xcode_first#Xcode }"
 xcode_major="${xcode_number%%.*}"
 if [[ ! "$macos_major" =~ ^[0-9]+$ || "$macos_major" -lt 13 ]]; then
