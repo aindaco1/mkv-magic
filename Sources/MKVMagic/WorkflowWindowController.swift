@@ -25,6 +25,7 @@ final class WorkflowWindowController: NSWindowController {
         window.minSize = NSSize(width: 680, height: 480)
         window.styleMask.insert(.resizable)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = viewController.preferredInitialFirstResponder
         super.init(window: window)
     }
 
@@ -54,6 +55,8 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let useButton = NSButton(title: "Save & Preview", target: nil, action: nil)
+
+    var preferredInitialFirstResponder: NSView { workflowTable }
 
     init(
         workflows: [SavedWorkflow],
@@ -112,6 +115,10 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         workflowTable.delegate = self
         workflowTable.rowHeight = 30
         workflowTable.allowsEmptySelection = true
+        workflowTable.setAccessibilityLabel("Saved workflows")
+        workflowTable.setAccessibilityHelp(
+            "Choose a portable workflow to edit, duplicate, delete, export, or preview."
+        )
 
         let stepColumn = NSTableColumn(identifier: .init("step"))
         stepColumn.title = "Steps"
@@ -121,6 +128,10 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         stepTable.delegate = self
         stepTable.rowHeight = 62
         stepTable.allowsEmptySelection = true
+        stepTable.setAccessibilityLabel("Workflow steps")
+        stepTable.setAccessibilityHelp(
+            "Ordered steps run from top to bottom; select a step to remove or reorder it."
+        )
     }
 
     private func makeSidebar() -> NSView {
@@ -137,10 +148,15 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
 
         let add = NSButton(title: "+", target: self, action: #selector(addWorkflow))
         add.toolTip = "New workflow"
+        add.setAccessibilityLabel("New workflow")
+        add.setAccessibilityHelp("Create a new local workflow with the default cleanup steps.")
         duplicateButton.target = self
         duplicateButton.action = #selector(duplicateWorkflow)
+        duplicateButton.setAccessibilityHelp("Create an unsaved copy of the selected workflow.")
         deleteButton.target = self
         deleteButton.action = #selector(deleteWorkflow)
+        deleteButton.setAccessibilityHelp(
+            "Ask before removing the selected workflow from this Mac.")
         let buttons = NSStackView(views: [add, duplicateButton, deleteButton])
         buttons.orientation = .horizontal
         buttons.spacing = 6
@@ -171,6 +187,8 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         let nameLabel = NSTextField(labelWithString: "Name")
         nameField.placeholderString = "Example: Prepare for Jellyfin"
         nameField.delegate = self
+        nameField.setAccessibilityLabel("Workflow name")
+        nameField.setAccessibilityHelp("Name this portable workflow before saving it.")
         let stepLabel = NSTextField(labelWithString: "Steps run from top to bottom")
         stepLabel.textColor = .secondaryLabelColor
         let scroll = NSScrollView()
@@ -180,10 +198,13 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         configureAddStepMenu()
         removeStepButton.target = self
         removeStepButton.action = #selector(removeSelectedStep)
+        removeStepButton.setAccessibilityHelp("Remove the selected step from this workflow.")
         moveUpButton.target = self
         moveUpButton.action = #selector(moveStepUp)
+        moveUpButton.setAccessibilityHelp("Move the selected step one position earlier.")
         moveDownButton.target = self
         moveDownButton.action = #selector(moveStepDown)
+        moveDownButton.setAccessibilityHelp("Move the selected step one position later.")
         let stepButtonSpacer = NSView()
         stepButtonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let stepButtons = NSStackView(views: [
@@ -195,9 +216,14 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
 
         let importButton = NSButton(
             title: "Import…", target: self, action: #selector(importWorkflow))
+        importButton.setAccessibilityHelp("Choose one portable MKV Magic workflow to import.")
         exportButton.target = self
         exportButton.action = #selector(exportWorkflow)
+        exportButton.setAccessibilityHelp("Export the selected workflow as a portable local file.")
         let saveButton = NSButton(title: "Save", target: self, action: #selector(saveLibrary))
+        saveButton.keyEquivalent = "s"
+        saveButton.keyEquivalentModifierMask = [.command]
+        saveButton.setAccessibilityHelp("Save all workflow changes privately on this Mac.")
         useButton.target = self
         useButton.action = #selector(saveAndUse)
         useButton.keyEquivalent = "\r"
@@ -205,6 +231,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             hasSelectedAsset
             ? "Compile against the selected file and show its impact before running."
             : "Inspect and select a Matroska file before previewing this workflow."
+        useButton.setAccessibilityHelp(useButton.toolTip)
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [
@@ -216,6 +243,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
 
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setAccessibilityLabel("Workflow status")
         let stack = NSStackView(views: [
             heading, nameLabel, nameField, stepLabel, scroll, stepButtons, statusLabel, actions,
         ])
@@ -583,6 +611,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             available.isEmpty
             ? "All available steps are already in this workflow."
             : "Add another portable step to this workflow."
+        addStepButton.setAccessibilityHelp(addStepButton.toolTip)
     }
 
     private func markUnsaved() {

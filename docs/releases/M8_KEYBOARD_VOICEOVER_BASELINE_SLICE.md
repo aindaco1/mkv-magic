@@ -34,9 +34,19 @@ Explicit accessibility names and concise help now cover:
 Visible native button titles remain their actions. Help explains consequences
 without hiding essential safety information exclusively from sighted users.
 
+### Workflow editor continuation
+
+The saved-workflow editor now begins in its workflow list and gives explicit
+names and help to the workflow/step tables, name and status fields, new-workflow
+button, step menu, reorder/removal controls, import/export, save, and preview.
+Native **Command-S** saves the local workflow library; Return remains **Save &
+Preview**. When no inspected Matroska file is selected, the disabled preview
+control explains the prerequisite to VoiceOver instead of exposing only an
+unavailable action.
+
 ## Regression evidence
 
-Five focused AppKit tests prove:
+Seven focused AppKit tests prove:
 
 1. File → Open has Command-O, the correct selector, and the live main-controller
    target.
@@ -46,13 +56,17 @@ Five focused AppKit tests prove:
 4. Queue and History expose their table/detail names and meaningful control
    help.
 5. Workflow review exposes context, impact, outcomes, safety, Return, and Escape.
+6. The workflow editor begins in the saved-workflow table, exposes its core
+   builder semantics, and maps Command-S and Return to distinct native actions.
+7. An unavailable workflow preview explains that an inspected Matroska file is
+   required.
 
-The focused suite passes all five tests with zero failures. The complete local
-gate also passes with **500 tests, 33 expected real-tool fixture skips, and zero
-failures** in each of its normal, coverage, AddressSanitizer, and
-ThreadSanitizer modes. Its Universal app and package checks verify nested
-Sparkle signing, the update archive and appcast, SBOM, third-party notices,
-checksums, build metadata, ZIP, and DMG.
+All seven focused tests pass with zero failures. After the workflow-editor
+continuation, the complete local gate passes with **501 tests, 33 expected
+real-tool fixture skips, and zero failures** in each of its normal, coverage,
+AddressSanitizer, and ThreadSanitizer modes. Its Universal app and package
+checks verify nested Sparkle signing, the update archive and appcast, SBOM,
+third-party notices, checksums, build metadata, ZIP, and DMG.
 
 ## Still required for M8 acceptance
 

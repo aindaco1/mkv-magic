@@ -327,8 +327,11 @@ chooser as the visible button. The main window, Queue, History, and saved-
 workflow plan review set an intentional first keyboard target; plan review uses
 Return to accept and Escape to cancel. Their primary lists, read-only details,
 impact/source-safety text, dynamic queue actions, and status fields now expose
-explicit VoiceOver names and concise help. These native AppKit regressions are a
-baseline, not a claimed manual keyboard-only or VoiceOver walkthrough. See
+explicit VoiceOver names and concise help. The saved-workflow editor also begins
+in its workflow list, names its builder controls, uses Command-S to save, and
+explains why preview is disabled when no inspected media is selected. These
+native AppKit regressions are a baseline, not a claimed manual keyboard-only or
+VoiceOver walkthrough. See
 [docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
 
 ## Design promises

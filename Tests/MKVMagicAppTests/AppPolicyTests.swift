@@ -1884,7 +1884,27 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(window.minSize.width, 680)
         XCTAssertEqual(window.minSize.height, 480)
         let tables = descendants(in: contentView).compactMap { $0 as? NSTableView }
+        let workflows = try XCTUnwrap(
+            tables.first { $0.accessibilityLabel() == "Saved workflows" }
+        )
         let steps = try XCTUnwrap(tables.first { $0.rowHeight == 62 })
+        XCTAssertTrue(window.initialFirstResponder === workflows)
+        XCTAssertEqual(steps.accessibilityLabel(), "Workflow steps")
+        let accessibilityLabels = descendants(in: contentView).compactMap {
+            $0.accessibilityLabel()
+        }
+        XCTAssertTrue(accessibilityLabels.contains("Workflow name"))
+        XCTAssertTrue(accessibilityLabels.contains("Workflow status"))
+        XCTAssertTrue(accessibilityLabels.contains("Add workflow step"))
+        XCTAssertTrue(accessibilityLabels.contains("New workflow"))
+        let controls = buttons(in: contentView)
+        let save = try XCTUnwrap(controls.first { $0.title == "Save" })
+        let preview = try XCTUnwrap(controls.first { $0.title == "Save & Preview" })
+        XCTAssertEqual(save.keyEquivalent, "s")
+        XCTAssertEqual(save.keyEquivalentModifierMask, [.command])
+        XCTAssertEqual(preview.keyEquivalent, "\r")
+        XCTAssertTrue(save.accessibilityHelp()?.contains("privately on this Mac") == true)
+        XCTAssertTrue(preview.accessibilityHelp()?.contains("selected file") == true)
         XCTAssertEqual(steps.numberOfRows, 3)
         XCTAssertEqual(
             WorkflowEditorPolicy.newWorkflow().steps.map(\.action),
@@ -1900,6 +1920,25 @@ final class AppPolicyTests: XCTestCase {
             window.setContentSize(window.minSize)
             try captureTrimWindow(window: window, content: contentView, at: capturePath)
         }
+    }
+
+    @MainActor
+    func testWorkflowWindowExplainsUnavailablePreviewWithoutSelectedMedia() throws {
+        let controller = WorkflowWindowController(
+            workflows: [WorkflowEditorPolicy.newWorkflow()],
+            hasSelectedAsset: false,
+            onSave: { _ in },
+            onUse: { _ in }
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let preview = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Save & Preview" }
+        )
+
+        XCTAssertFalse(preview.isEnabled)
+        XCTAssertTrue(
+            preview.accessibilityHelp()?.contains("Inspect and select a Matroska file") == true
+        )
     }
 
     @MainActor
