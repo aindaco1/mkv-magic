@@ -354,7 +354,7 @@ enum QueuePresentation {
         case "workflow": job.workflow.name
         case "input": job.inputs.first?.displayName ?? "Unknown input"
         case "resource": resourceLabel(job.resourceClass)
-        case "state": stateLabel(job.state)
+        case "state": stateLabel(job)
         case "attempts": String(job.attemptCount)
         default: ""
         }
@@ -367,8 +367,27 @@ enum QueuePresentation {
         let active = snapshot.jobs.filter { $0.state == .running || $0.state == .cancelling }.count
         let pending = snapshot.jobs.filter { $0.state.isPending }.count
         let review = snapshot.jobs.filter { $0.state == .failed || $0.state == .needsReview }.count
+        let trashFollowUp = snapshot.jobs.filter {
+            $0.sourceDisposition == .trashAfterVerifiedSuccess
+                && $0.state == .succeeded
+                && $0.sourceDispositionResult?.outcome != .applied
+        }.count
         let pause = snapshot.isPaused ? " • new starts paused" : ""
-        return "\(active) active • \(pending) pending • \(review) need review\(pause)"
+        let trashLabel = trashFollowUp == 1 ? "Trash follow-up" : "Trash follow-ups"
+        let trash = trashFollowUp > 0 ? " • \(trashFollowUp) \(trashLabel)" : ""
+        return "\(active) active • \(pending) pending • \(review) need review\(trash)\(pause)"
+    }
+
+    static func stateLabel(_ job: MediaQueueJob) -> String {
+        guard job.state == .succeeded,
+            job.sourceDisposition == .trashAfterVerifiedSuccess
+        else { return stateLabel(job.state) }
+        return switch job.sourceDispositionResult?.outcome {
+        case .applied: "Trashed"
+        case .failed: "Trash failed"
+        case .uncertain: "Check Trash"
+        case nil: "Trash pending"
+        }
     }
 
     static func stateLabel(_ state: MediaQueueJobState) -> String {

@@ -41,6 +41,12 @@ public protocol JobQueueManaging: JobQueuePersisting {
         at timestamp: Date
     ) async throws -> MediaQueueSnapshot
     @discardableResult
+    func recordSourceDisposition(
+        jobID: UUID,
+        outcome: MediaQueueSourceDispositionOutcome,
+        at timestamp: Date
+    ) async throws -> MediaQueueSnapshot
+    @discardableResult
     func reorderPending(_ orderedIDs: [UUID], at timestamp: Date) async throws
         -> MediaQueueSnapshot
     @discardableResult
@@ -141,6 +147,26 @@ public actor JSONJobQueueStore: JobQueueManaging {
                 outputDisplayName: outputDisplayName,
                 sourceDisposition: sourceDisposition,
                 reviewedPlan: reviewedPlan,
+                at: timestamp
+            )
+        } catch MediaQueueMutationError.jobNotFound {
+            throw JobQueueStoreError.jobNotFound
+        }
+        try writeSnapshot(snapshot)
+        return snapshot
+    }
+
+    @discardableResult
+    public func recordSourceDisposition(
+        jobID: UUID,
+        outcome: MediaQueueSourceDispositionOutcome,
+        at timestamp: Date
+    ) async throws -> MediaQueueSnapshot {
+        var snapshot = try readSnapshot(defaultTimestamp: timestamp)
+        do {
+            try snapshot.recordSourceDisposition(
+                jobID: jobID,
+                outcome: outcome,
                 at: timestamp
             )
         } catch MediaQueueMutationError.jobNotFound {
@@ -309,12 +335,19 @@ public actor JSONJobQueueStore: JobQueueManaging {
                         )
                     }
                 }
+                if let result = job.sourceDispositionResult {
+                    try replay.recordSourceDisposition(
+                        result.outcome,
+                        at: result.timestamp
+                    )
+                }
             } catch {
                 throw JobQueueStoreError.malformedQueue
             }
             guard replay.state == job.state,
                 replay.updatedAt == job.updatedAt,
                 replay.attemptCount == job.attemptCount,
+                replay.sourceDispositionResult == job.sourceDispositionResult,
                 job.updatedAt <= snapshot.updatedAt
             else {
                 throw JobQueueStoreError.malformedQueue

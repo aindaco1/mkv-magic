@@ -241,6 +241,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(queuedJob.inputs.map(\.displayName), ["Movie.mkv", "Movie.en.srt"])
         XCTAssertEqual(queuedJob.outputDisplayName, "Movie — Prepared.mkv")
         XCTAssertEqual(queuedJob.sourceDisposition, .trashAfterVerifiedSuccess)
+        XCTAssertEqual(queuedJob.sourceDispositionResult?.outcome, .applied)
         XCTAssertEqual(queuedJob.reviewedPlan, compiled.plan)
         XCTAssertEqual(queuedJob.resourceClass, .lightweight)
         XCTAssertEqual(queuedJob.attemptCount, 1)

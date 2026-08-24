@@ -1146,10 +1146,18 @@ The app moves the source only after the new output has been committed, reopened,
 audited, and durably marked **Succeeded** in the queue. Failure to record queue
 success prevents the move. Failure to move the source preserves the verified
 output, leaves the original in place when macOS reports it still exists, and
-surfaces a warning rather than misclassifying the media work as failed. Durable
-recovery of the conservative crash window between queue success and the Trash
-request remains open; that window can leave the original in place, not expose an
-unverified deletion path.
+surfaces a warning rather than misclassifying the media work as failed. Each
+verified-success Trash follow-up now has a durable post-success result:
+**applied**, **failed**, or **uncertain**. Queue validation replays that result
+only after a genuine `Succeeded` transition and rejects forged, duplicate,
+backwards-timestamped, or unrequested outcomes. On relaunch, a succeeded Trash
+job without a result resolves its stored read/write primary bookmark and
+completes the follow-up. If the source no longer resolves, the app records
+**uncertain** and asks the user to check the original and Trash instead of
+claiming an observed move. A durable result prevents later queue refreshes from
+repeating the request. This is a safe recovery contract across the queue file
+and Finder Trash, not a claim that those separate systems share one atomic
+transaction.
 
 Deliverables:
 

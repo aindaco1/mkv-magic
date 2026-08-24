@@ -1239,6 +1239,113 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testPendingVerifiedTrashRecoveryPersistsOutcomeAndNeverRepeats() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-trash-recovery-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("Movie.mkv")
+        let sourceMovedBeforeRecord = root.appendingPathComponent("Already Trashed.mkv")
+        try Data([1, 2, 3]).write(to: source)
+        try Data([4, 5, 6]).write(to: sourceMovedBeforeRecord)
+        let codec = SecurityScopedBookmarkCodec()
+        let createdAt = Date().addingTimeInterval(-10)
+        func makePendingJob(sourceURL: URL, outputName: String) throws -> MediaQueueJob {
+            var job = MediaQueueJob(
+                createdAt: createdAt,
+                workflow: .builtIn(id: UUID(), name: "Verified workflow"),
+                inputs: [try codec.makeReference(for: sourceURL, access: .readWriteFile)],
+                destinationDirectory: try codec.makeReference(
+                    for: root,
+                    access: .readWriteDirectory
+                ),
+                outputDisplayName: outputName,
+                sourceDisposition: .trashAfterVerifiedSuccess,
+                reviewedPlan: ExecutionPlan(
+                    stages: [
+                        PlanStage(mechanism: .mkvMerge, summary: "Create one verified output")
+                    ],
+                    impact: PlanImpact(
+                        videoEncodeCount: 0,
+                        audioEncodeCount: 0,
+                        copiesVideo: true
+                    )
+                )
+            )
+            try job.transition(to: .running, at: createdAt.addingTimeInterval(1))
+            try job.transition(to: .succeeded, at: createdAt.addingTimeInterval(2))
+            return job
+        }
+        let job = try makePendingJob(sourceURL: source, outputName: "Movie — Prepared.mkv")
+        let missingJob = try makePendingJob(
+            sourceURL: sourceMovedBeforeRecord,
+            outputName: "Already Trashed — Prepared.mkv"
+        )
+        try FileManager.default.removeItem(at: sourceMovedBeforeRecord)
+        let store = try AppHistoryLocation.makeQueueStore(applicationSupportURL: root)
+        try await store.save(
+            MediaQueueSnapshot(jobs: [job, missingJob], updatedAt: job.updatedAt)
+        )
+        var trashedSources = [URL]()
+        let model = AppModel(
+            queueStoreFactory: { store },
+            trashSource: { trashedSources.append($0) }
+        )
+
+        let recovered = try await model.loadQueue()
+        XCTAssertEqual(trashedSources, [source])
+        XCTAssertEqual(
+            recovered.jobs.map { $0.sourceDispositionResult?.outcome },
+            [.applied, .uncertain]
+        )
+        XCTAssertEqual(
+            model.state,
+            .completedWithWarnings(
+                "Checked 2 pending Trash follow-ups; 1 source outcome could not be confirmed. Check the original and Trash before continuing."
+            )
+        )
+
+        let reloaded = try await model.loadQueue()
+        XCTAssertEqual(trashedSources, [source])
+        XCTAssertEqual(reloaded.jobs.map(\.id), recovered.jobs.map(\.id))
+        XCTAssertEqual(
+            reloaded.jobs.map { $0.sourceDispositionResult?.outcome },
+            recovered.jobs.map { $0.sourceDispositionResult?.outcome }
+        )
+    }
+
+    func testQueuePresentationDistinguishesEveryVerifiedTrashOutcome() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        var pending = makeQueueJob(
+            createdAt: base,
+            sourceDisposition: .trashAfterVerifiedSuccess
+        )
+        try pending.transition(to: .running, at: base)
+        try pending.transition(to: .succeeded, at: base)
+        var applied = pending
+        var failed = pending
+        var uncertain = pending
+        try applied.recordSourceDisposition(.applied, at: base)
+        try failed.recordSourceDisposition(.failed, at: base)
+        try uncertain.recordSourceDisposition(.uncertain, at: base)
+        let snapshot = MediaQueueSnapshot(
+            jobs: [pending, applied, failed, uncertain],
+            updatedAt: base
+        )
+
+        XCTAssertEqual(QueuePresentation.stateLabel(pending), "Trash pending")
+        XCTAssertEqual(QueuePresentation.stateLabel(applied), "Trashed")
+        XCTAssertEqual(QueuePresentation.stateLabel(failed), "Trash failed")
+        XCTAssertEqual(QueuePresentation.stateLabel(uncertain), "Check Trash")
+        XCTAssertEqual(
+            QueuePresentation.summary(snapshot),
+            "0 active • 0 pending • 0 need review • 3 Trash follow-ups"
+        )
+    }
+
+    @MainActor
     func testQueueWindowKeepsNativeControlsReadableAtMinimumSize() throws {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         let waiting = makeQueueJob(createdAt: base)
@@ -1247,8 +1354,24 @@ final class AppPolicyTests: XCTestCase {
         try running.transition(to: .running, at: base)
         try failed.transition(to: .running, at: base)
         try failed.transition(to: .failed, at: base, reason: .executionFailed)
+        func makeFinishedTrash(
+            _ outcome: MediaQueueSourceDispositionOutcome?
+        ) throws -> MediaQueueJob {
+            var job = makeQueueJob(
+                createdAt: base,
+                sourceDisposition: .trashAfterVerifiedSuccess
+            )
+            try job.transition(to: .running, at: base)
+            try job.transition(to: .succeeded, at: base)
+            if let outcome { try job.recordSourceDisposition(outcome, at: base) }
+            return job
+        }
+        let trashed = try makeFinishedTrash(.applied)
+        let trashFailed = try makeFinishedTrash(.failed)
+        let trashUncertain = try makeFinishedTrash(.uncertain)
+        let trashPending = try makeFinishedTrash(nil)
         let snapshot = MediaQueueSnapshot(
-            jobs: [waiting, running, failed],
+            jobs: [waiting, running, failed, trashed, trashFailed, trashUncertain, trashPending],
             updatedAt: base
         )
         let controller = QueueWindowController(
@@ -1268,7 +1391,7 @@ final class AppPolicyTests: XCTestCase {
         let table = try XCTUnwrap(
             descendants(in: content).compactMap { $0 as? NSTableView }.first
         )
-        XCTAssertEqual(table.numberOfRows, 3)
+        XCTAssertEqual(table.numberOfRows, 7)
         XCTAssertEqual(
             table.tableColumns.map(\.title),
             ["#", "Workflow", "Input", "Work", "Status", "Tries"]
@@ -1283,6 +1406,26 @@ final class AppPolicyTests: XCTestCase {
                 .textField?.stringValue,
             "Prepare for Jellyfin"
         )
+        XCTAssertEqual(
+            (table.view(atColumn: 4, row: 3, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "Trashed"
+        )
+        XCTAssertEqual(
+            (table.view(atColumn: 4, row: 4, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "Trash failed"
+        )
+        XCTAssertEqual(
+            (table.view(atColumn: 4, row: 5, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "Check Trash"
+        )
+        XCTAssertEqual(
+            (table.view(atColumn: 4, row: 6, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "Trash pending"
+        )
         let controls = buttons(in: content)
         XCTAssertNotNil(controls.first { $0.title == "Pause Automatic Starts" })
         let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
@@ -1291,7 +1434,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(QueuePresentation.resourceLabel(failed.resourceClass), "Audio encode")
         XCTAssertEqual(
             QueuePresentation.summary(snapshot),
-            "1 active • 1 pending • 1 need review"
+            "1 active • 1 pending • 1 need review • 3 Trash follow-ups"
         )
         table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Hold" }).isEnabled)
@@ -1459,7 +1602,10 @@ final class AppPolicyTests: XCTestCase {
         try Data([1]).write(to: source)
 
         let unchanged = AppModel(trashSource: { _ in throw ExpectedFailure() })
-        unchanged.applyVerifiedTrash(sourceURL: source, destinationURL: destination)
+        XCTAssertEqual(
+            unchanged.applyVerifiedTrash(sourceURL: source, destinationURL: destination),
+            .failed
+        )
         XCTAssertEqual(
             unchanged.state,
             .completedWithWarnings(
@@ -1472,7 +1618,10 @@ final class AppPolicyTests: XCTestCase {
             try FileManager.default.removeItem(at: url)
             throw ExpectedFailure()
         })
-        uncertain.applyVerifiedTrash(sourceURL: source, destinationURL: destination)
+        XCTAssertEqual(
+            uncertain.applyVerifiedTrash(sourceURL: source, destinationURL: destination),
+            .uncertain
+        )
         XCTAssertEqual(
             uncertain.state,
             .completedWithWarnings(
@@ -3375,7 +3524,8 @@ final class AppPolicyTests: XCTestCase {
     private func makeQueueJob(
         createdAt: Date,
         videoEncodes: Int = 0,
-        audioEncodes: Int = 0
+        audioEncodes: Int = 0,
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal
     ) -> MediaQueueJob {
         let workflow = SavedWorkflow(name: "Prepare for Jellyfin", steps: [])
         let impact = PlanImpact(
@@ -3397,6 +3547,7 @@ final class AppPolicyTests: XCTestCase {
                 securityScopedBookmark: Data([4, 5, 6])
             ),
             outputDisplayName: "Movie — Prepared.mkv",
+            sourceDisposition: sourceDisposition,
             reviewedPlan: ExecutionPlan(
                 stages: [
                     PlanStage(

@@ -217,10 +217,13 @@ final class AppModel {
 
     func loadQueue() async throws -> MediaQueueSnapshot {
         let recorder = try queueRecorder()
-        guard !queueRecoveryStarted else { return try await recorder.load() }
+        if queueRecoveryStarted {
+            return await recoverPendingSourceDispositions(in: try await recorder.load())
+        }
         queueRecoveryStarted = true
         do {
-            return try await recorder.recoverInterruptedJobs(at: Date())
+            let snapshot = try await recorder.recoverInterruptedJobs(at: Date())
+            return await recoverPendingSourceDispositions(in: snapshot)
         } catch {
             queueRecoveryStarted = false
             throw error
@@ -1611,7 +1614,7 @@ final class AppModel {
                 queueExecution?.sourceDisposition ?? .keepOriginal,
                 afterQueueRecordedSuccess: queueRecorded
             ) {
-                applySourceDisposition(
+                await applySourceDisposition(
                     queueExecution,
                     sourceURL: asset.sourceURL,
                     destinationURL: destinationURL
@@ -1719,30 +1722,130 @@ final class AppModel {
         _ execution: QueueExecution?,
         sourceURL: URL,
         destinationURL: URL
-    ) {
-        guard execution?.sourceDisposition == .trashAfterVerifiedSuccess else { return }
-        applyVerifiedTrash(sourceURL: sourceURL, destinationURL: destinationURL)
+    ) async {
+        guard let execution,
+            execution.sourceDisposition == .trashAfterVerifiedSuccess
+        else { return }
+        let outcome = applyVerifiedTrash(
+            sourceURL: sourceURL,
+            destinationURL: destinationURL
+        )
+        do {
+            _ = try await execution.recorder.recordSourceDisposition(
+                jobID: execution.jobID,
+                outcome: outcome,
+                at: Date()
+            )
+        } catch {
+            state = .completedWithWarnings(
+                "Created \(destinationURL.lastPathComponent), but the queue could not record the Trash outcome. Check the original and Trash before continuing."
+            )
+            didChange?()
+        }
     }
 
-    func applyVerifiedTrash(sourceURL: URL, destinationURL: URL) {
+    @discardableResult
+    func applyVerifiedTrash(
+        sourceURL: URL,
+        destinationURL: URL
+    ) -> MediaQueueSourceDispositionOutcome {
         do {
             try trashSource(sourceURL)
             assets.removeAll { $0.sourceURL == sourceURL }
             state = .completed(
                 "Created \(destinationURL.lastPathComponent); moved the original to Trash after verified success."
             )
+            didChange?()
+            return .applied
         } catch {
             if FileManager.default.fileExists(atPath: sourceURL.path) {
                 state = .completedWithWarnings(
                     "Created \(destinationURL.lastPathComponent) and recorded verified success, but could not move the original to Trash, so it remains unchanged."
                 )
+                didChange?()
+                return .failed
             } else {
                 state = .completedWithWarnings(
                     "Created \(destinationURL.lastPathComponent) and recorded verified success, but could not confirm where macOS moved the original. Check Trash before continuing."
                 )
+                didChange?()
+                return .uncertain
             }
         }
-        didChange?()
+    }
+
+    private func recoverPendingSourceDispositions(
+        in snapshot: MediaQueueSnapshot
+    ) async -> MediaQueueSnapshot {
+        var recovered = snapshot
+        var outcomes = [MediaQueueSourceDispositionOutcome]()
+        var couldNotRecordEveryOutcome = false
+        let pending = snapshot.jobs.filter {
+            $0.state == .succeeded
+                && $0.sourceDisposition == .trashAfterVerifiedSuccess
+                && $0.sourceDispositionResult == nil
+        }
+        for job in pending {
+            let outcome: MediaQueueSourceDispositionOutcome
+            do {
+                outcome = try applyRecoveredSourceDisposition(job)
+            } catch {
+                outcome = .uncertain
+            }
+            outcomes.append(outcome)
+            do {
+                recovered = try await queueRecorder().recordSourceDisposition(
+                    jobID: job.id,
+                    outcome: outcome,
+                    at: Date()
+                )
+            } catch {
+                couldNotRecordEveryOutcome = true
+            }
+        }
+        if !pending.isEmpty {
+            let count = pending.count
+            let followUps = count == 1 ? "follow-up" : "follow-ups"
+            let uncertainCount = outcomes.filter { $0 == .uncertain }.count
+            let failedCount = outcomes.filter { $0 == .failed }.count
+            if couldNotRecordEveryOutcome {
+                state = .completedWithWarnings(
+                    "Checked \(count) pending Trash \(followUps), but could not record every outcome. Check the originals and Trash before continuing."
+                )
+            } else if uncertainCount > 0 {
+                let sourceOutcomes = uncertainCount == 1 ? "source outcome" : "source outcomes"
+                state = .completedWithWarnings(
+                    "Checked \(count) pending Trash \(followUps); \(uncertainCount) \(sourceOutcomes) could not be confirmed. Check the original and Trash before continuing."
+                )
+            } else if failedCount > 0 {
+                let unchangedOriginals =
+                    failedCount == 1 ? "original remains" : "originals remain"
+                let objectPronoun = failedCount == 1 ? "it" : "them"
+                state = .completedWithWarnings(
+                    "Checked \(count) pending Trash \(followUps); \(failedCount) \(unchangedOriginals) unchanged because macOS could not move \(objectPronoun) to Trash."
+                )
+            } else {
+                state = .completed("Finished \(count) pending Trash \(followUps).")
+            }
+            didChange?()
+            queueDidChange?()
+        }
+        return recovered
+    }
+
+    private func applyRecoveredSourceDisposition(
+        _ job: MediaQueueJob
+    ) throws -> MediaQueueSourceDispositionOutcome {
+        let sourceURL = try resolvePrimaryQueueInput(job)
+        let accessed = sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        return applyVerifiedTrash(
+            sourceURL: sourceURL,
+            destinationURL: sourceURL.deletingLastPathComponent()
+                .appendingPathComponent(job.outputDisplayName)
+        )
     }
 
     private func failQueue(_ execution: QueueExecution?, error: Error) async {

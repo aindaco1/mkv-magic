@@ -150,6 +150,56 @@ final class JobQueueTests: XCTestCase {
         XCTAssertTrue(job.state.isFinished)
     }
 
+    func testSourceDispositionOutcomeRequiresOneVerifiedSuccessAndAdvancesTimestamp() throws {
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        var trashJob = makeJob(
+            id: id(1),
+            createdAt: base,
+            sourceDisposition: .trashAfterVerifiedSuccess
+        )
+        XCTAssertThrowsError(
+            try trashJob.recordSourceDisposition(.applied, at: base)
+        ) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .sourceDispositionRequiresVerifiedSuccess
+            )
+        }
+        try trashJob.transition(to: .running, at: base.addingTimeInterval(1))
+        try trashJob.transition(to: .succeeded, at: base.addingTimeInterval(2))
+        XCTAssertThrowsError(
+            try trashJob.recordSourceDisposition(.applied, at: base.addingTimeInterval(1))
+        ) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .timestampMovedBackward
+            )
+        }
+        XCTAssertNil(trashJob.sourceDispositionResult)
+        try trashJob.recordSourceDisposition(.applied, at: base.addingTimeInterval(3))
+
+        XCTAssertEqual(trashJob.sourceDispositionResult?.outcome, .applied)
+        XCTAssertEqual(trashJob.updatedAt, base.addingTimeInterval(3))
+        XCTAssertThrowsError(
+            try trashJob.recordSourceDisposition(.failed, at: base.addingTimeInterval(4))
+        ) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .sourceDispositionAlreadyRecorded
+            )
+        }
+
+        var keepJob = makeJob(id: id(2), createdAt: base)
+        try keepJob.transition(to: .running, at: base)
+        try keepJob.transition(to: .succeeded, at: base)
+        XCTAssertThrowsError(try keepJob.recordSourceDisposition(.applied, at: base)) {
+            XCTAssertEqual(
+                $0 as? MediaQueueTransitionError,
+                .sourceDispositionNotRequested
+            )
+        }
+    }
+
     func testSnapshotClampsOnlySubMillisecondClockSkew() throws {
         let base = Date(timeIntervalSince1970: 1_700_000_000)
         var snapshot = MediaQueueSnapshot(
@@ -291,7 +341,8 @@ final class JobQueueTests: XCTestCase {
         id: UUID,
         createdAt: Date,
         videoEncodes: Int = 0,
-        audioEncodes: Int = 0
+        audioEncodes: Int = 0,
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal
     ) -> MediaQueueJob {
         let impact = PlanImpact(
             videoEncodeCount: videoEncodes,
@@ -315,6 +366,7 @@ final class JobQueueTests: XCTestCase {
                 securityScopedBookmark: Data([4, 5, 6])
             ),
             outputDisplayName: "Input — Edited.mkv",
+            sourceDisposition: sourceDisposition,
             reviewedPlan: ExecutionPlan(
                 stages: [
                     PlanStage(

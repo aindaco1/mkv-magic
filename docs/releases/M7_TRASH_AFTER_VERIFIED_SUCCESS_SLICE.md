@@ -4,6 +4,11 @@ This slice completes the first user-selectable queue source-disposition policy
 for saved workflows. The option is intentionally off by default and does not
 change built-in quick actions.
 
+The later
+[durable source-disposition outcome slice](M7_DURABLE_SOURCE_DISPOSITION_OUTCOME_SLICE.md)
+adds tri-state outcome persistence and conservative relaunch recovery for the
+crash window intentionally left open by this slice.
+
 ## User contract
 
 - The Save panel says **Move original video file to Trash after verified
@@ -67,6 +72,7 @@ original is recoverable from Trash.
 - Queue success and Finder Trash are separate durable systems. A process or
   machine failure in the narrow interval after queue success but before the
   Trash request can conservatively leave the original in place; durable
-  disposition-outcome recovery is a later queue slice.
+  disposition-outcome recovery was outside this slice and is documented in the
+  later source-disposition outcome slice.
 - Local tests do not constitute notarization, public release, physical Intel,
   or long-duration queue-soak evidence.

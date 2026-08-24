@@ -32,6 +32,7 @@ final class JobQueueStoreTests: XCTestCase {
         XCTAssertEqual(attributes[.posixPermissions] as? Int, 0o600)
         let encoded = try XCTUnwrap(String(data: Data(contentsOf: fileURL), encoding: .utf8))
         XCTAssertTrue(encoded.contains("mkv-magic-job-queue-v1"))
+        XCTAssertFalse(encoded.contains("sourceDispositionResult"))
         XCTAssertFalse(encoded.contains("/Users/"))
     }
 
@@ -104,6 +105,27 @@ final class JobQueueStoreTests: XCTestCase {
                 $0.events.last?.reason == .interruptedBeforeVerification
             }
         )
+    }
+
+    func testSourceDispositionOutcomePersistsOnlyAfterVerifiedSuccess() async throws {
+        let store = try JSONJobQueueStore(fileURL: fileURL)
+        let job = makeJob(
+            id: id(1),
+            sourceDisposition: .trashAfterVerifiedSuccess
+        )
+        _ = try await store.append(job, at: base)
+        _ = try await store.transition(jobID: job.id, to: .running, at: base, reason: nil)
+        _ = try await store.transition(jobID: job.id, to: .succeeded, at: base, reason: nil)
+        let recorded = try await store.recordSourceDisposition(
+            jobID: job.id,
+            outcome: .failed,
+            at: base.addingTimeInterval(1)
+        )
+
+        XCTAssertEqual(recorded.jobs.first?.sourceDispositionResult?.outcome, .failed)
+        XCTAssertEqual(recorded.updatedAt, base.addingTimeInterval(1))
+        let loaded = try await store.load()
+        XCTAssertEqual(loaded, recorded)
     }
 
     func testStrictDocumentAndPathValidationFailClosed() async throws {
@@ -189,6 +211,22 @@ final class JobQueueStoreTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
         }
+
+        let forgedDisposition = makeJob(
+            id: id(6),
+            sourceDispositionResult: MediaQueueSourceDispositionResult(
+                outcome: .applied,
+                timestamp: base
+            )
+        )
+        do {
+            try await store.save(
+                MediaQueueSnapshot(jobs: [forgedDisposition], updatedAt: base)
+            )
+            XCTFail("Expected unverified source-disposition refusal")
+        } catch {
+            XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
+        }
     }
 
     private func makeJob(
@@ -196,6 +234,8 @@ final class JobQueueStoreTests: XCTestCase {
         inputBookmark: Data = Data([1, 2, 3]),
         attemptCount: Int = 0,
         outputDisplayName: String = "Input — Edited.mkv",
+        sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
+        sourceDispositionResult: MediaQueueSourceDispositionResult? = nil,
         impact: PlanImpact = PlanImpact(
             videoEncodeCount: 0,
             audioEncodeCount: 0,
@@ -219,6 +259,8 @@ final class JobQueueStoreTests: XCTestCase {
                 securityScopedBookmark: Data([4, 5, 6])
             ),
             outputDisplayName: outputDisplayName,
+            sourceDisposition: sourceDisposition,
+            sourceDispositionResult: sourceDispositionResult,
             reviewedPlan: ExecutionPlan(
                 stages: [
                     PlanStage(

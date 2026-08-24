@@ -88,6 +88,22 @@ public enum MediaQueueSourceDisposition: String, Codable, CaseIterable, Hashable
     case trashAfterVerifiedSuccess
 }
 
+public enum MediaQueueSourceDispositionOutcome: String, Codable, CaseIterable, Hashable, Sendable {
+    case applied
+    case failed
+    case uncertain
+}
+
+public struct MediaQueueSourceDispositionResult: Codable, Hashable, Sendable {
+    public let outcome: MediaQueueSourceDispositionOutcome
+    public let timestamp: Date
+
+    public init(outcome: MediaQueueSourceDispositionOutcome, timestamp: Date) {
+        self.outcome = outcome
+        self.timestamp = timestamp
+    }
+}
+
 public struct MediaQueueJobEvent: Codable, Hashable, Sendable {
     public let state: MediaQueueJobState
     public let timestamp: Date
@@ -111,6 +127,9 @@ public enum MediaQueueTransitionError: Error, Equatable, Sendable {
     case missingFailureReason
     case unexpectedReason
     case replanRequiresReviewState
+    case sourceDispositionNotRequested
+    case sourceDispositionRequiresVerifiedSuccess
+    case sourceDispositionAlreadyRecorded
 }
 
 public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
@@ -124,6 +143,7 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
     public private(set) var destinationDirectory: MediaQueueFileReference
     public private(set) var outputDisplayName: String
     public private(set) var sourceDisposition: MediaQueueSourceDisposition
+    public private(set) var sourceDispositionResult: MediaQueueSourceDispositionResult?
     public private(set) var reviewedPlan: ExecutionPlan
     public private(set) var resourceClass: MediaQueueResourceClass
     public private(set) var events: [MediaQueueJobEvent]
@@ -138,6 +158,7 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         destinationDirectory: MediaQueueFileReference,
         outputDisplayName: String,
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
+        sourceDispositionResult: MediaQueueSourceDispositionResult? = nil,
         reviewedPlan: ExecutionPlan,
         resourceClass: MediaQueueResourceClass? = nil,
         events: [MediaQueueJobEvent]? = nil,
@@ -151,6 +172,7 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         self.destinationDirectory = destinationDirectory
         self.outputDisplayName = outputDisplayName
         self.sourceDisposition = sourceDisposition
+        self.sourceDispositionResult = sourceDispositionResult
         self.reviewedPlan = reviewedPlan
         self.resourceClass = resourceClass ?? MediaQueueResourceClass(impact: reviewedPlan.impact)
         self.events = events ?? [MediaQueueJobEvent(state: .waiting, timestamp: createdAt)]
@@ -162,7 +184,7 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
     }
 
     public var updatedAt: Date {
-        events.last?.timestamp ?? createdAt
+        max(events.last?.timestamp ?? createdAt, sourceDispositionResult?.timestamp ?? createdAt)
     }
 
     public mutating func transition(
@@ -222,12 +244,35 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         replacement.destinationDirectory = destinationDirectory
         replacement.outputDisplayName = outputDisplayName
         replacement.sourceDisposition = sourceDisposition
+        replacement.sourceDispositionResult = nil
         replacement.reviewedPlan = reviewedPlan
         replacement.resourceClass = MediaQueueResourceClass(impact: reviewedPlan.impact)
         replacement.events.append(
             MediaQueueJobEvent(state: .waiting, timestamp: timestamp, reason: .userAction)
         )
         self = replacement
+    }
+
+    public mutating func recordSourceDisposition(
+        _ outcome: MediaQueueSourceDispositionOutcome,
+        at timestamp: Date
+    ) throws {
+        guard sourceDisposition == .trashAfterVerifiedSuccess else {
+            throw MediaQueueTransitionError.sourceDispositionNotRequested
+        }
+        guard state == .succeeded else {
+            throw MediaQueueTransitionError.sourceDispositionRequiresVerifiedSuccess
+        }
+        guard sourceDispositionResult == nil else {
+            throw MediaQueueTransitionError.sourceDispositionAlreadyRecorded
+        }
+        guard timestamp >= updatedAt else {
+            throw MediaQueueTransitionError.timestampMovedBackward
+        }
+        sourceDispositionResult = MediaQueueSourceDispositionResult(
+            outcome: outcome,
+            timestamp: timestamp
+        )
     }
 
     private static let allowedTransitions: [MediaQueueJobState: Set<MediaQueueJobState>] = [
@@ -314,6 +359,19 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
             reviewedPlan: reviewedPlan,
             at: timestamp
         )
+        updatedAt = timestamp
+    }
+
+    public mutating func recordSourceDisposition(
+        jobID: UUID,
+        outcome: MediaQueueSourceDispositionOutcome,
+        at timestamp: Date
+    ) throws {
+        let timestamp = try normalizedTimestamp(timestamp)
+        guard let index = jobs.firstIndex(where: { $0.id == jobID }) else {
+            throw MediaQueueMutationError.jobNotFound
+        }
+        try jobs[index].recordSourceDisposition(outcome, at: timestamp)
         updatedAt = timestamp
     }
 
