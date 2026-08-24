@@ -98,8 +98,22 @@ enum TrimPresentationPolicy {
                 choice.audioPolicy == .packetCopy
                 ? "all audio packet-copied"
                 : "\(exact.encodedAudioTrackIDs.count) audio track(s) encoded once to AAC"
-            return "EXACT • 1 video encode • \(presetName(choice.videoPreset))\n"
+            return "EXACT • 1 video encode • \(presetName(choice.videoPreset)) • "
+                + "\(encodingSummary(choice))\n"
                 + "Saved range: \(output) • \(audio)"
+        }
+    }
+
+    static func encodingSummary(_ choice: ExactTrimChoice) -> String {
+        let rateControl: String
+        switch choice.videoRateControl {
+        case .constantQuality(let value): rateControl = "RF \(value)"
+        case .averageBitrate(let value): rateControl = "\(value / 1_000) kbps"
+        case .codecDefault: rateControl = "codec-managed data rate"
+        }
+        switch choice.encoderTuning {
+        case .codecDefault: return rateControl
+        case .svtAV1Preset(let value): return "\(rateControl) • SVT speed \(value)"
         }
     }
 
@@ -185,8 +199,20 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     private let inField = NSTextField()
     private let outField = NSTextField()
     private let presetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let qualityPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let audioPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let exactOptions = NSStackView()
+    private let advancedToggle = NSButton(
+        checkboxWithTitle: "Show exact encoding controls",
+        target: nil,
+        action: nil
+    )
+    private let advancedControls = NSStackView()
+    private let rateControlLabel = NSTextField(labelWithString: "")
+    private let rateControlField = NSTextField()
+    private let av1SpeedStack = NSStackView()
+    private let av1SpeedLabel = NSTextField(labelWithString: "AV1 speed (0–13)")
+    private let av1SpeedField = NSTextField()
     private let inputMessage = NSTextField(wrappingLabelWithString: "")
     private let reviewText = NSTextField(wrappingLabelWithString: "")
     private let reviewButton = NSButton(title: "Review Trim", target: nil, action: nil)
@@ -195,7 +221,14 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     private var reviewedRequest: TrimReviewRequest?
     private var reviewedPreview: TrimExecutionPreview?
     private var reviewErrorMessage: String?
-    private var presets: [VideoPreset] { capabilities.availableVideoPresets }
+    private var presets: [VideoPreset] {
+        guard let video = source.tracks.first(where: { $0.kind == .video }),
+            MediaHDR10Signal(track: video) != nil
+        else { return capabilities.availableVideoPresets }
+        return capabilities.availableVideoPresets.filter {
+            $0 == .av1Quality || $0 == .hevcCompatibility
+        }
+    }
 
     init(
         source: MediaAsset,
@@ -269,7 +302,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         presetPopup.addItems(withTitles: presets.map(TrimPresentationPolicy.presetName))
         presetPopup.setAccessibilityLabel("Exact video format")
         presetPopup.target = self
-        presetPopup.action = #selector(inputChanged)
+        presetPopup.action = #selector(presetChanged)
         audioPopup.addItem(withTitle: "Preserve Audio Exactly (Packet Copy)")
         if capabilities.aac == .verified {
             audioPopup.addItem(withTitle: "Convert Audio Once to AAC (Keep Layout)")
@@ -277,7 +310,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         audioPopup.target = self
         audioPopup.action = #selector(inputChanged)
         audioPopup.setAccessibilityLabel("Exact audio handling")
+        qualityPopup.target = self
+        qualityPopup.action = #selector(qualityChanged)
+        qualityPopup.setAccessibilityLabel("Exact video quality and file size")
         let presetLabel = NSTextField(labelWithString: "Exact video format")
+        let qualityLabel = NSTextField(labelWithString: "Quality / file size")
         let audioLabel = NSTextField(labelWithString: "Audio")
         let presetStack = NSStackView(views: [presetLabel, presetPopup])
         presetStack.orientation = .vertical
@@ -287,12 +324,60 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         audioStack.orientation = .vertical
         audioStack.alignment = .leading
         audioStack.spacing = 4
-        exactOptions.addArrangedSubview(presetStack)
-        exactOptions.addArrangedSubview(audioStack)
-        exactOptions.orientation = .horizontal
-        exactOptions.distribution = .fillEqually
-        exactOptions.spacing = 12
+        let qualityStack = NSStackView(views: [qualityLabel, qualityPopup])
+        qualityStack.orientation = .vertical
+        qualityStack.alignment = .leading
+        qualityStack.spacing = 4
+        let exactChoiceRow = NSStackView(views: [presetStack, audioStack])
+        exactChoiceRow.orientation = .horizontal
+        exactChoiceRow.distribution = .fillEqually
+        exactChoiceRow.spacing = 12
+
+        advancedToggle.target = self
+        advancedToggle.action = #selector(advancedToggled)
+        advancedToggle.setAccessibilityLabel("Show exact encoding controls")
+        for field in [rateControlField, av1SpeedField] {
+            field.delegate = self
+            field.font = .monospacedDigitSystemFont(ofSize: 13, weight: .regular)
+            field.isEditable = false
+        }
+        rateControlField.setAccessibilityLabel("Exact video rate control")
+        av1SpeedField.setAccessibilityLabel("AV1 SVT speed preset")
+        let rateStack = NSStackView(views: [rateControlLabel, rateControlField])
+        rateStack.orientation = .vertical
+        rateStack.alignment = .leading
+        rateStack.spacing = 4
+        av1SpeedStack.addArrangedSubview(av1SpeedLabel)
+        av1SpeedStack.addArrangedSubview(av1SpeedField)
+        av1SpeedStack.orientation = .vertical
+        av1SpeedStack.alignment = .leading
+        av1SpeedStack.spacing = 4
+        advancedControls.addArrangedSubview(rateStack)
+        advancedControls.addArrangedSubview(av1SpeedStack)
+        advancedControls.orientation = .horizontal
+        advancedControls.distribution = .fillEqually
+        advancedControls.spacing = 12
+        advancedControls.isHidden = true
+
+        exactOptions.addArrangedSubview(exactChoiceRow)
+        exactOptions.addArrangedSubview(qualityStack)
+        exactOptions.addArrangedSubview(advancedToggle)
+        exactOptions.addArrangedSubview(advancedControls)
+        exactOptions.orientation = .vertical
+        exactOptions.alignment = .leading
+        exactOptions.spacing = 8
         exactOptions.isHidden = true
+        exactChoiceRow.translatesAutoresizingMaskIntoConstraints = false
+        qualityStack.translatesAutoresizingMaskIntoConstraints = false
+        advancedControls.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            exactChoiceRow.widthAnchor.constraint(equalTo: exactOptions.widthAnchor),
+            qualityStack.widthAnchor.constraint(equalTo: exactOptions.widthAnchor),
+            qualityPopup.widthAnchor.constraint(equalTo: qualityStack.widthAnchor),
+            advancedControls.widthAnchor.constraint(equalTo: exactOptions.widthAnchor),
+        ])
+        configureQualityPopup(resetSelection: true)
+        refreshAdvancedControls(resetValues: true)
 
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.font = .systemFont(ofSize: 12)
@@ -408,6 +493,32 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         inputChanged()
     }
 
+    @objc private func presetChanged() {
+        invalidateReview()
+        configureQualityPopup(resetSelection: true)
+        refreshAdvancedControls(resetValues: true)
+        updateInputState()
+    }
+
+    @objc private func qualityChanged() {
+        invalidateReview()
+        refreshAdvancedControls(resetValues: true)
+        updateInputState()
+    }
+
+    @objc private func advancedToggled() {
+        invalidateReview()
+        refreshAdvancedControls(resetValues: advancedToggle.state == .on)
+        if advancedToggle.state == .on, let window = view.window,
+            window.contentLayoutRect.height < 650
+        {
+            window.setContentSize(
+                NSSize(width: window.contentLayoutRect.width, height: 650)
+            )
+        }
+        updateInputState()
+    }
+
     @objc private func inputChanged() {
         invalidateReview()
         updateInputState()
@@ -425,7 +536,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         inField.isEnabled = false
         outField.isEnabled = false
         presetPopup.isEnabled = false
+        qualityPopup.isEnabled = false
         audioPopup.isEnabled = false
+        advancedToggle.isEnabled = false
+        rateControlField.isEnabled = false
+        av1SpeedField.isEnabled = false
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.stringValue =
             request.mode == .fast
@@ -459,7 +574,13 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             inField.isEnabled = true
             outField.isEnabled = true
             presetPopup.isEnabled = true
+            qualityPopup.isEnabled = true
             audioPopup.isEnabled = true
+            advancedToggle.isEnabled = true
+            rateControlField.isEnabled = true
+            av1SpeedField.isEnabled = true
+            configureQualityPopup(resetSelection: false)
+            refreshAdvancedControls(resetValues: false)
             updateInputState()
         }
     }
@@ -489,8 +610,15 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         guard let duration = source.duration, let request = request() else {
             reviewButton.isEnabled = false
             inputMessage.textColor = .secondaryLabelColor
-            inputMessage.stringValue =
-                "Enter times as HH:MM:SS.mmm; out must be after in and inside the file."
+            if modeControl.selectedSegment == TrimMode.exact.rawValue,
+                advancedToggle.state == .on,
+                !advancedValuesAreValid()
+            {
+                inputMessage.stringValue = advancedValidationMessage()
+            } else {
+                inputMessage.stringValue =
+                    "Enter times as HH:MM:SS.mmm; out must be after in and inside the file."
+            }
             return
         }
         let isWholeFile = request.range.start == .zero && request.range.end == duration
@@ -524,20 +652,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         let choice: ExactTrimChoice?
         if mode == .exact, presets.indices.contains(presetPopup.indexOfSelectedItem) {
             let preset = presets[presetPopup.indexOfSelectedItem]
-            let recommended = ExactTrimPlanner().recommendedChoice(
-                for: source,
-                availableVideoPresets: [preset]
-            )
-            if let recommended {
-                choice = ExactTrimChoice(
-                    videoPreset: preset,
-                    videoRateControl: recommended.videoRateControl,
-                    audioPolicy: audioPopup.indexOfSelectedItem == 1
-                        ? .aacPreserveLayout : .packetCopy
-                )
-            } else {
-                choice = nil
-            }
+            choice = exactChoice(for: preset)
         } else {
             choice = nil
         }
@@ -546,5 +661,146 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             range: MediaTrimRange(start: start, end: end),
             exactChoice: choice
         )
+    }
+
+    private func exactChoice(for preset: VideoPreset) -> ExactTrimChoice? {
+        guard
+            let recommended = ExactTrimPlanner().recommendedChoice(
+                for: source,
+                availableVideoPresets: [preset]
+            )
+        else { return nil }
+        var rateControl = recommended.videoRateControl
+        var encoderTuning = recommended.encoderTuning
+        if advancedToggle.state == .off {
+            guard
+                let selectedRateControl = simpleRateControl(
+                    preset: preset,
+                    recommended: recommended.videoRateControl
+                )
+            else { return nil }
+            rateControl = selectedRateControl
+        } else {
+            switch preset {
+            case .av1Quality:
+                guard let rf = Int(rateControlField.stringValue), (0...63).contains(rf),
+                    let speed = Int(av1SpeedField.stringValue),
+                    (VideoEncoderTuning.minimumSVTAV1Preset...VideoEncoderTuning.maximumSVTAV1Preset)
+                        .contains(speed)
+                else { return nil }
+                rateControl = .constantQuality(rf)
+                encoderTuning = .svtAV1Preset(speed)
+            case .hevcCompatibility, .h264Compatibility:
+                guard let kbps = Int(rateControlField.stringValue), kbps > 0 else { return nil }
+                let bitrate = kbps.multipliedReportingOverflow(by: 1_000)
+                guard !bitrate.overflow, (100_000...200_000_000).contains(bitrate.partialValue)
+                else { return nil }
+                rateControl = .averageBitrate(bitrate.partialValue)
+                encoderTuning = .codecDefault
+            case .proRes:
+                break
+            }
+        }
+        return ExactTrimChoice(
+            videoPreset: preset,
+            videoRateControl: rateControl,
+            encoderTuning: encoderTuning,
+            audioPolicy: audioPopup.indexOfSelectedItem == 1
+                ? .aacPreserveLayout : .packetCopy
+        )
+    }
+
+    private func configureQualityPopup(resetSelection: Bool) {
+        guard presets.indices.contains(presetPopup.indexOfSelectedItem) else {
+            qualityPopup.removeAllItems()
+            qualityPopup.isEnabled = false
+            return
+        }
+        let preset = presets[presetPopup.indexOfSelectedItem]
+        if resetSelection || qualityPopup.numberOfItems == 0 {
+            qualityPopup.removeAllItems()
+            if preset == .proRes {
+                qualityPopup.addItem(withTitle: "Codec Default")
+                qualityPopup.selectItem(at: 0)
+            } else {
+                qualityPopup.addItems(withTitles: VideoQualityTier.allCases.map(\.displayName))
+                qualityPopup.selectItem(
+                    at: VideoQualityTier.allCases.firstIndex(of: .balanced) ?? 0
+                )
+            }
+        }
+        qualityPopup.isEnabled = preset != .proRes && reviewTask == nil
+    }
+
+    private func simpleRateControl(
+        preset: VideoPreset,
+        recommended: JoinVideoRateControl
+    ) -> JoinVideoRateControl? {
+        let tier =
+            VideoQualityTier.allCases.indices.contains(qualityPopup.indexOfSelectedItem)
+            ? VideoQualityTier.allCases[qualityPopup.indexOfSelectedItem]
+            : .balanced
+        return VideoQualityTierPolicy.rateControl(
+            preset: preset,
+            recommended: recommended,
+            tier: tier
+        )
+    }
+
+    private func refreshAdvancedControls(resetValues: Bool) {
+        guard presets.indices.contains(presetPopup.indexOfSelectedItem) else {
+            advancedToggle.isHidden = true
+            advancedControls.isHidden = true
+            return
+        }
+        let preset = presets[presetPopup.indexOfSelectedItem]
+        let supportsAdvanced = preset != .proRes
+        advancedToggle.isHidden = !supportsAdvanced
+        if !supportsAdvanced { advancedToggle.state = .off }
+        let isVisible = supportsAdvanced && advancedToggle.state == .on
+        advancedControls.isHidden = !isVisible
+        rateControlField.isEditable = isVisible
+        av1SpeedField.isEditable = isVisible && preset == .av1Quality
+        av1SpeedStack.isHidden = preset != .av1Quality
+        rateControlLabel.stringValue =
+            preset == .av1Quality
+            ? "AV1 quality RF (0–63; lower is higher quality)"
+            : "Video bitrate (kbps)"
+        guard resetValues,
+            let recommended = ExactTrimPlanner().recommendedChoice(
+                for: source,
+                availableVideoPresets: [preset]
+            )
+        else { return }
+        guard
+            let selectedRateControl = simpleRateControl(
+                preset: preset,
+                recommended: recommended.videoRateControl
+            )
+        else { return }
+        switch selectedRateControl {
+        case .constantQuality(let value): rateControlField.stringValue = String(value)
+        case .averageBitrate(let value): rateControlField.stringValue = String(value / 1_000)
+        case .codecDefault: rateControlField.stringValue = ""
+        }
+        switch recommended.encoderTuning {
+        case .svtAV1Preset(let value): av1SpeedField.stringValue = String(value)
+        case .codecDefault:
+            av1SpeedField.stringValue = String(VideoEncoderTuning.defaultSVTAV1Preset)
+        }
+    }
+
+    private func advancedValuesAreValid() -> Bool {
+        guard presets.indices.contains(presetPopup.indexOfSelectedItem) else { return false }
+        return exactChoice(for: presets[presetPopup.indexOfSelectedItem]) != nil
+    }
+
+    private func advancedValidationMessage() -> String {
+        guard presets.indices.contains(presetPopup.indexOfSelectedItem) else {
+            return "Choose an available exact video format."
+        }
+        return presets[presetPopup.indexOfSelectedItem] == .av1Quality
+            ? "Enter AV1 RF from 0–63 and SVT speed from 0–13. Lower values improve quality or compression but take longer."
+            : "Enter a video bitrate from 100–200,000 kbps."
     }
 }

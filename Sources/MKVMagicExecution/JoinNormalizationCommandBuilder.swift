@@ -335,6 +335,7 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         encoder: encoder,
                         preset: output.choice.preset,
                         rateControl: output.choice.rateControl,
+                        encoderTuning: output.choice.encoderTuning,
                         dynamicRange: output.choice.dynamicRange,
                         hdr10Signal: output.hdr10Signal
                     )

@@ -51,6 +51,10 @@ final class ExactTrimPlannerTests: XCTestCase {
         )
         XCTAssertEqual(av1.videoPreset, .av1Quality)
         XCTAssertEqual(av1.videoRateControl, .constantQuality(30))
+        XCTAssertEqual(
+            av1.encoderTuning,
+            .svtAV1Preset(VideoEncoderTuning.defaultSVTAV1Preset)
+        )
         XCTAssertEqual(av1.audioPolicy, .packetCopy)
 
         let hevc = try XCTUnwrap(
@@ -68,6 +72,113 @@ final class ExactTrimPlannerTests: XCTestCase {
             )
         )
         XCTAssertEqual(hdr.videoPreset, .hevcCompatibility)
+    }
+
+    func testValidatesBoundedAV1SpeedWithoutLeakingItToOtherCodecs() throws {
+        let source = makeSource()
+        let planner = ExactTrimPlanner()
+        XCTAssertNoThrow(
+            try planner.resolve(
+                source: source,
+                range: range(2, 8),
+                choice: ExactTrimChoice(
+                    videoPreset: .av1Quality,
+                    videoRateControl: .constantQuality(24),
+                    encoderTuning: .svtAV1Preset(5)
+                ),
+                availableVideoPresets: [.av1Quality],
+                aacAvailable: true
+            )
+        )
+        for choice in [
+            ExactTrimChoice(
+                videoPreset: .av1Quality,
+                videoRateControl: .constantQuality(24),
+                encoderTuning: .svtAV1Preset(14)
+            ),
+            ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000),
+                encoderTuning: .svtAV1Preset(8)
+            ),
+        ] {
+            XCTAssertThrowsError(
+                try planner.resolve(
+                    source: source,
+                    range: range(2, 8),
+                    choice: choice,
+                    availableVideoPresets: [.av1Quality, .hevcCompatibility],
+                    aacAvailable: true
+                )
+            ) { XCTAssertEqual($0 as? ExactTrimPlanningError, .invalidChoice) }
+        }
+    }
+
+    func testLegacyChoicesDecodeWithTheStableCodecDefaultTuning() throws {
+        let exact = ExactTrimChoice(
+            videoPreset: .hevcCompatibility,
+            videoRateControl: .averageBitrate(2_000_000)
+        )
+        let legacyExact = try removingEncoderTuning(from: JSONEncoder().encode(exact))
+        XCTAssertEqual(
+            try JSONDecoder().decode(ExactTrimChoice.self, from: legacyExact).encoderTuning,
+            .codecDefault
+        )
+
+        let join = JoinVideoTargetChoice(
+            preset: .hevcCompatibility,
+            canvas: MediaDimensions(width: 1_920, height: 1_080),
+            frameRatePolicy: .preserveSourceTiming,
+            dynamicRange: .sdr,
+            rateControl: .averageBitrate(4_000_000)
+        )
+        let legacyJoin = try removingEncoderTuning(from: JSONEncoder().encode(join))
+        XCTAssertEqual(
+            try JSONDecoder().decode(JoinVideoTargetChoice.self, from: legacyJoin).encoderTuning,
+            .codecDefault
+        )
+    }
+
+    func testQualityTiersCompileToBoundedCodecSpecificRateControls() {
+        XCTAssertEqual(
+            VideoQualityTierPolicy.rateControl(
+                preset: .av1Quality,
+                recommended: .constantQuality(30),
+                tier: .smallerFile
+            ),
+            .constantQuality(34)
+        )
+        XCTAssertEqual(
+            VideoQualityTierPolicy.rateControl(
+                preset: .av1Quality,
+                recommended: .constantQuality(30),
+                tier: .higherQuality
+            ),
+            .constantQuality(24)
+        )
+        XCTAssertEqual(
+            VideoQualityTierPolicy.rateControl(
+                preset: .hevcCompatibility,
+                recommended: .averageBitrate(10_000_000),
+                tier: .smallerFile
+            ),
+            .averageBitrate(7_000_000)
+        )
+        XCTAssertEqual(
+            VideoQualityTierPolicy.rateControl(
+                preset: .h264Compatibility,
+                recommended: .averageBitrate(10_000_000),
+                tier: .higherQuality
+            ),
+            .averageBitrate(15_000_000)
+        )
+        XCTAssertNil(
+            VideoQualityTierPolicy.rateControl(
+                preset: .hevcCompatibility,
+                recommended: .constantQuality(30),
+                tier: .balanced
+            )
+        )
     }
 
     func testResolvesStaticHDR10ForAV1OrHEVCOnly() throws {
@@ -250,6 +361,14 @@ final class ExactTrimPlannerTests: XCTestCase {
             start: MediaTime(nanoseconds: start * 1_000_000_000),
             end: MediaTime(nanoseconds: end * 1_000_000_000)
         )
+    }
+
+    private func removingEncoderTuning(from data: Data) throws -> Data {
+        var object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: data) as? [String: Any]
+        )
+        object.removeValue(forKey: "encoderTuning")
+        return try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
 }
 

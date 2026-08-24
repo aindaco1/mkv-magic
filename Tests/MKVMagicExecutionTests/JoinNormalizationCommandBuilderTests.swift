@@ -309,11 +309,31 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         }
     }
 
+    func testPassesReviewedSVTAV1SpeedToSharedEncoderCompiler() throws {
+        let sources = incompatibleVideoSources()
+        let resolved = try resolve(
+            sources: sources,
+            mapping: mapping(video: [0, 0]),
+            preset: .av1Quality,
+            rateControl: .constantQuality(24),
+            encoderTuning: .svtAV1Preset(5)
+        )
+        let command = try JoinNormalizationCommandBuilder().build(
+            sources: sources,
+            resolvedPlan: resolved,
+            capabilities: capabilities(),
+            outputURL: URL(fileURLWithPath: "/output/av1-speed.mkv")
+        )
+        XCTAssertEqual(value(after: "-crf:v:0", in: command.arguments), "24")
+        XCTAssertEqual(value(after: "-preset:v:0", in: command.arguments), "5")
+    }
+
     private func resolve(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         preset: VideoPreset = .hevcCompatibility,
         rateControl explicitRateControl: JoinVideoRateControl? = nil,
+        encoderTuning: VideoEncoderTuning = .codecDefault,
         allowsSyntheticSilence: Bool = false
     ) throws -> ResolvedJoinNormalizationPlan {
         let proposal = try JoinNormalizationPlanner().propose(
@@ -339,7 +359,8 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
                 canvas: try XCTUnwrap(lane.recommendedCanvas),
                 frameRatePolicy: try XCTUnwrap(lane.recommendedFrameRatePolicy),
                 dynamicRange: try XCTUnwrap(lane.recommendedDynamicRange),
-                rateControl: rateControl
+                rateControl: rateControl,
+                encoderTuning: encoderTuning
             )
         }
         var audioTargets = [Int: JoinAudioTargetChoice]()

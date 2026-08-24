@@ -9,16 +9,49 @@ public enum ExactTrimAudioPolicy: String, Codable, Hashable, Sendable {
 public struct ExactTrimChoice: Codable, Hashable, Sendable {
     public let videoPreset: VideoPreset
     public let videoRateControl: JoinVideoRateControl
+    public let encoderTuning: VideoEncoderTuning
     public let audioPolicy: ExactTrimAudioPolicy
 
     public init(
         videoPreset: VideoPreset,
         videoRateControl: JoinVideoRateControl,
+        encoderTuning: VideoEncoderTuning = .codecDefault,
         audioPolicy: ExactTrimAudioPolicy = .packetCopy
     ) {
         self.videoPreset = videoPreset
         self.videoRateControl = videoRateControl
+        self.encoderTuning = encoderTuning
         self.audioPolicy = audioPolicy
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case videoPreset
+        case videoRateControl
+        case encoderTuning
+        case audioPolicy
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        videoPreset = try values.decode(VideoPreset.self, forKey: .videoPreset)
+        videoRateControl = try values.decode(
+            JoinVideoRateControl.self,
+            forKey: .videoRateControl
+        )
+        encoderTuning =
+            try values.decodeIfPresent(
+                VideoEncoderTuning.self,
+                forKey: .encoderTuning
+            ) ?? .codecDefault
+        audioPolicy = try values.decode(ExactTrimAudioPolicy.self, forKey: .audioPolicy)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(videoPreset, forKey: .videoPreset)
+        try values.encode(videoRateControl, forKey: .videoRateControl)
+        try values.encode(encoderTuning, forKey: .encoderTuning)
+        try values.encode(audioPolicy, forKey: .audioPolicy)
     }
 }
 
@@ -49,7 +82,7 @@ extension ExactTrimPlanningError: LocalizedError {
         case .unsupportedTags:
             "Exact Trim cannot yet prove preservation of this source's Matroska tags."
         case .unsupportedDynamicRange:
-            "Exact Trim currently requires reviewed BT.709 SDR video; HDR and Dolby Vision fail closed."
+            "Exact Trim requires reviewed BT.709 SDR or static HDR10 video; other HDR formats fail closed."
         case .incompleteVideoFacts:
             "Exact Trim needs complete even video dimensions and color facts."
         case .incompleteAudioFacts(let trackID):
@@ -128,6 +161,9 @@ public struct ExactTrimPlanner: Sendable {
         return ExactTrimChoice(
             videoPreset: preset,
             videoRateControl: rateControl,
+            encoderTuning: preset == .av1Quality
+                ? .svtAV1Preset(VideoEncoderTuning.defaultSVTAV1Preset)
+                : .codecDefault,
             audioPolicy: .packetCopy
         )
     }
@@ -227,6 +263,21 @@ public struct ExactTrimPlanner: Sendable {
                 throw ExactTrimPlanningError.invalidChoice
             }
         case (.proRes, .codecDefault):
+            break
+        default:
+            throw ExactTrimPlanningError.invalidChoice
+        }
+        switch (choice.videoPreset, choice.encoderTuning) {
+        case (.av1Quality, .codecDefault):
+            break
+        case (.av1Quality, .svtAV1Preset(let value)):
+            guard
+                (VideoEncoderTuning.minimumSVTAV1Preset...VideoEncoderTuning.maximumSVTAV1Preset)
+                    .contains(value)
+            else {
+                throw ExactTrimPlanningError.invalidChoice
+            }
+        case (_, .codecDefault):
             break
         default:
             throw ExactTrimPlanningError.invalidChoice

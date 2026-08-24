@@ -83,6 +83,41 @@ final class JoinNormalizationChoiceResolverTests: XCTestCase {
         }
     }
 
+    func testAcceptsOnlyBoundedSVTAV1TuningOnAV1() throws {
+        let sources = incompatibleVideoSources()
+        let proposal = try proposal(for: sources, preferredPreset: .av1Quality)
+        func choice(_ tuning: VideoEncoderTuning) -> JoinNormalizationChoices {
+            JoinNormalizationChoices(videoTargetsByLane: [
+                0: JoinVideoTargetChoice(
+                    preset: .av1Quality,
+                    canvas: proposal.videoLanes[0].recommendedCanvas!,
+                    frameRatePolicy: .preserveSourceTiming,
+                    dynamicRange: .sdr,
+                    rateControl: .constantQuality(24),
+                    encoderTuning: tuning
+                )
+            ])
+        }
+        XCTAssertNoThrow(
+            try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: choice(.svtAV1Preset(5)),
+                availableVideoPresets: [.av1Quality],
+                aacAvailable: false
+            )
+        )
+        XCTAssertThrowsError(
+            try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: choice(.svtAV1Preset(14)),
+                availableVideoPresets: [.av1Quality],
+                aacAvailable: false
+            )
+        ) { XCTAssertEqual($0 as? JoinNormalizationChoiceError, .invalidChoice) }
+    }
+
     func testRejectsChoicesAfterSourceFactsChange() throws {
         let sources = incompatibleVideoSources()
         let proposal = try proposal(for: sources, preferredPreset: .hevcCompatibility)

@@ -81,6 +81,31 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         XCTAssertEqual(command.copiedAudioTrackIDs, [])
     }
 
+    func testPassesReviewedAV1RFAndSpeedToTheSharedEncoderCompiler() throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try resolve(
+            source: fixture.source,
+            choice: ExactTrimChoice(
+                videoPreset: .av1Quality,
+                videoRateControl: .constantQuality(24),
+                encoderTuning: .svtAV1Preset(5)
+            ),
+            range: range(1, 9),
+            presets: [.av1Quality]
+        )
+
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(),
+            outputURL: fixture.root.appendingPathComponent("AV1.mkv")
+        )
+
+        XCTAssertEqual(value(after: "-c:v:0", in: command.arguments), "libsvtav1")
+        XCTAssertEqual(value(after: "-crf:v:0", in: command.arguments), "24")
+        XCTAssertEqual(value(after: "-preset:v:0", in: command.arguments), "5")
+    }
+
     func testHDR10AddsStaticInputMetadataFrameSignalAndTenBitOutput() throws {
         let fixture = try makeFixture(hdr10: true)
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -201,8 +226,8 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
 
     private func capabilities() -> FFmpegEncodingCapabilities {
         FFmpegEncodingCapabilities(
-            softwareAV1: .unavailable,
-            softwareAV1Encoder: nil,
+            softwareAV1: .verified,
+            softwareAV1Encoder: "libsvtav1",
             hevc10VideoToolbox: .verified,
             h264VideoToolbox: .verified,
             proRes: .unavailable,

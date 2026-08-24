@@ -140,6 +140,7 @@ public struct ExactTrimCommandBuilder: Sendable {
                     encoder: encoder,
                     preset: resolvedPlan.choice.videoPreset,
                     rateControl: resolvedPlan.choice.videoRateControl,
+                    encoderTuning: resolvedPlan.choice.encoderTuning,
                     dynamicRange: resolvedPlan.videoDynamicRange,
                     hdr10Signal: resolvedPlan.hdr10Signal
                 )

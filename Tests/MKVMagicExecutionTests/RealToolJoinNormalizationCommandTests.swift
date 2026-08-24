@@ -428,7 +428,8 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
                 frameRatePolicy: .preserveSourceTiming,
                 dynamicRange: .hdr10,
                 rateControl: preset == .av1Quality
-                    ? .constantQuality(30) : .averageBitrate(500_000)
+                    ? .constantQuality(30) : .averageBitrate(500_000),
+                encoderTuning: preset == .av1Quality ? .svtAV1Preset(10) : .codecDefault
             )
             let resolved = try JoinNormalizationChoiceResolver().resolve(
                 sources: sources,

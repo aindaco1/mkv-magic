@@ -2,6 +2,7 @@ import AppKit
 import CryptoKit
 import MKVMagicCore
 import MKVMagicExecution
+import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
@@ -149,6 +150,16 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(
             TrimPresentationPolicy.presetName(.hevcCompatibility),
             "Fast — HEVC 10-bit"
+        )
+        XCTAssertEqual(
+            TrimPresentationPolicy.encodingSummary(
+                ExactTrimChoice(
+                    videoPreset: .av1Quality,
+                    videoRateControl: .constantQuality(24),
+                    encoderTuning: .svtAV1Preset(5)
+                )
+            ),
+            "RF 24 • SVT speed 5"
         )
     }
 
@@ -1616,11 +1627,32 @@ final class AppPolicyTests: XCTestCase {
         let visiblePopups = descendants(in: content).compactMap { $0 as? NSPopUpButton }.filter {
             !$0.isHiddenOrHasHiddenAncestor
         }
-        XCTAssertEqual(visiblePopups.count, 2)
-        XCTAssertEqual(visiblePopups[0].titleOfSelectedItem, "Fast — HEVC 10-bit")
+        XCTAssertEqual(visiblePopups.count, 3)
         XCTAssertEqual(
-            visiblePopups[1].titleOfSelectedItem,
-            "Preserve Audio Exactly (Packet Copy)"
+            Set(visiblePopups.compactMap(\.titleOfSelectedItem)),
+            [
+                "Fast — HEVC 10-bit",
+                "Balanced",
+                "Preserve Audio Exactly (Packet Copy)",
+            ]
+        )
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
+
+        let advanced = try XCTUnwrap(
+            controls.first { $0.title == "Show exact encoding controls" }
+        )
+        XCTAssertFalse(advanced.isHiddenOrHasHiddenAncestor)
+        advanced.performClick(nil)
+        content.layoutSubtreeIfNeeded()
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains("Video bitrate (kbps)")
+        )
+        XCTAssertEqual(
+            descendants(in: content).compactMap { $0 as? NSTextField }.filter {
+                $0.isEditable && !$0.isHiddenOrHasHiddenAncestor
+            }.count,
+            3
         )
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
         for button in controls where !button.isHiddenOrHasHiddenAncestor {
@@ -1653,6 +1685,89 @@ final class AppPolicyTests: XCTestCase {
             descendants(in: content).compactMap { $0 as? NSTextField }.filter(\.isEditable)
                 .allSatisfy(\.isEnabled)
         )
+    }
+
+    @MainActor
+    func testTrimAdvancedAV1ControlsExplainRFAndBoundedSVTSpeed() throws {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/AV1 Source.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 60_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "av1",
+                    dimensions: MediaDimensions(width: 1_920, height: 1_080),
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                )
+            ]
+        )
+        var reviewedRequest: TrimReviewRequest?
+        let controller = TrimWindowController(
+            source: source,
+            thumbnails: [],
+            capabilities: FFmpegEncodingCapabilities(
+                softwareAV1: .verified,
+                softwareAV1Encoder: "libsvtav1",
+                hevc10VideoToolbox: .unavailable,
+                h264VideoToolbox: .unavailable,
+                proRes: .unavailable,
+                proResEncoder: nil,
+                aac: .unavailable,
+                aacEncoder: nil,
+                availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+            ),
+            reviewProvider: { request in
+                reviewedRequest = request
+                throw NSError(domain: "AV1AdvancedReview", code: 1)
+            }
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        let mode = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSSegmentedControl }.first
+        )
+        mode.selectedSegment = 1
+        mode.sendAction(mode.action, to: mode.target)
+        let advanced = try XCTUnwrap(
+            buttons(in: content).first { $0.title == "Show exact encoding controls" }
+        )
+        advanced.performClick(nil)
+        content.layoutSubtreeIfNeeded()
+
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains("AV1 quality RF (0–63; lower is higher quality)"))
+        XCTAssertTrue(labels.contains("AV1 speed (0–13)"))
+        let fields = descendants(in: content).compactMap { $0 as? NSTextField }.filter {
+            $0.isEditable && !$0.isHiddenOrHasHiddenAncestor
+        }
+        XCTAssertEqual(
+            Set(fields.map(\.stringValue)),
+            ["00:00:00.000", "00:01:00.000", "30", "8"]
+        )
+
+        let inField = try XCTUnwrap(fields.first { $0.stringValue == "00:00:00.000" })
+        let rfField = try XCTUnwrap(fields.first { $0.stringValue == "30" })
+        let speedField = try XCTUnwrap(fields.first { $0.stringValue == "8" })
+        inField.stringValue = "00:00:01.000"
+        rfField.stringValue = "24"
+        speedField.stringValue = "5"
+        for field in [inField, rfField, speedField] {
+            field.delegate?.controlTextDidChange?(
+                Notification(name: NSControl.textDidChangeNotification, object: field)
+            )
+        }
+        let review = try XCTUnwrap(buttons(in: content).first { $0.title == "Review Trim" })
+        XCTAssertTrue(review.isEnabled)
+        review.performClick(nil)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertEqual(reviewedRequest?.exactChoice?.videoRateControl, .constantQuality(24))
+        XCTAssertEqual(reviewedRequest?.exactChoice?.encoderTuning, .svtAV1Preset(5))
     }
 
     @MainActor

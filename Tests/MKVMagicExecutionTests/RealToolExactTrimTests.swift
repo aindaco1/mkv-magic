@@ -186,6 +186,7 @@ final class RealToolExactTrimTests: XCTestCase {
             let choice = ExactTrimChoice(
                 videoPreset: preset,
                 videoRateControl: rateControl,
+                encoderTuning: preset == .av1Quality ? .svtAV1Preset(10) : .codecDefault,
                 audioPolicy: .packetCopy
             )
             let executor = ExactTrimExecutor(

@@ -14,6 +14,7 @@ struct FFmpegVideoEncoderArguments: Sendable {
         encoder: String,
         preset: VideoPreset,
         rateControl: JoinVideoRateControl,
+        encoderTuning: VideoEncoderTuning = .codecDefault,
         dynamicRange: JoinVideoDynamicRangeTarget = .sdr,
         hdr10Signal: MediaHDR10Signal? = nil
     ) throws -> [String] {
@@ -28,6 +29,26 @@ struct FFmpegVideoEncoderArguments: Sendable {
             throw FFmpegVideoEncoderArgumentError.invalidChoice
         }
 
+        let svtAV1Preset: Int?
+        switch (preset, encoderTuning, encoder) {
+        case (.av1Quality, .codecDefault, "libsvtav1"):
+            svtAV1Preset = VideoEncoderTuning.defaultSVTAV1Preset
+        case (.av1Quality, .svtAV1Preset(let value), "libsvtav1"):
+            guard
+                (VideoEncoderTuning.minimumSVTAV1Preset...VideoEncoderTuning.maximumSVTAV1Preset)
+                    .contains(value)
+            else {
+                throw FFmpegVideoEncoderArgumentError.invalidChoice
+            }
+            svtAV1Preset = value
+        case (.av1Quality, .codecDefault, _):
+            svtAV1Preset = nil
+        case (_, .codecDefault, _):
+            svtAV1Preset = nil
+        default:
+            throw FFmpegVideoEncoderArgumentError.invalidChoice
+        }
+
         var arguments = ["-c:v:\(outputIndex)", encoder]
         switch (preset, rateControl) {
         case (.av1Quality, .constantQuality(let quality)):
@@ -36,8 +57,10 @@ struct FFmpegVideoEncoderArguments: Sendable {
             }
             // Pin SVT's balanced default so an upstream default change cannot
             // silently alter the reviewed speed/quality impact of a workflow.
-            if encoder == "libsvtav1" {
-                arguments.append(contentsOf: ["-preset:v:\(outputIndex)", "8"])
+            if let svtAV1Preset {
+                arguments.append(contentsOf: [
+                    "-preset:v:\(outputIndex)", String(svtAV1Preset),
+                ])
             }
             arguments.append(contentsOf: [
                 "-crf:v:\(outputIndex)", String(quality),

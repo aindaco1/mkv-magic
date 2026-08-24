@@ -143,6 +143,14 @@ immutable review, use the same cancellable verified-output progress surface,
 disable cancellation during commit, save to a new deterministic MKV name, and
 record a sanitized eight-state History lifecycle.
 
+Exact Trim keeps **Balanced** as the default but also offers plain-language
+**Smaller File** and **Higher Quality** choices. An optional disclosure reveals
+the exact bounded control: AV1 RF 0–63 plus SVT speed preset 0–13, or HEVC/H.264
+bitrate in kbps. The reviewed numeric values are stored in the immutable plan,
+shown in the execution summary, and compiled through the same one-generation
+encoder policy used by common-format Join. Free-form FFmpeg arguments are never
+accepted.
+
 The internal Fast Trim path now scans the primary video track with bounded local
 `ffprobe`, shows the first-keyframe-at-or-after adjustment for both requested
 boundaries, and refuses to call the result frame-exact. For one-video Matroska

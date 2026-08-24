@@ -992,8 +992,12 @@ compile static HDR10 through the same one-generation encoder policy, require
 signaling, and compare the reopened output to the exact reviewed signal. Uniform
 joined sources must agree on static metadata. AV1 is verified at the stream and
 Matroska layers; the HEVC VideoToolbox contract is Matroska-container preservation.
-Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding, user-facing
-advanced preset controls, representative beta-corpus tuning, and physical Intel
+Exact Trim now exposes Smaller File, Balanced, and Higher Quality choices plus
+an optional exact control for AV1 RF and SVT speed or HEVC/H.264 bitrate. Those
+bounded, Codable choices pass planner validation and the shared one-generation
+encoder compiler; old serialized choices decode to the stable codec default.
+Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding,
+representative beta-corpus tuning, advanced audio formats, and physical Intel
 performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue

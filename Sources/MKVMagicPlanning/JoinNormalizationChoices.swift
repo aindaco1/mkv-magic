@@ -7,25 +7,123 @@ public enum JoinVideoRateControl: Codable, Hashable, Sendable {
     case codecDefault
 }
 
+public enum VideoEncoderTuning: Codable, Hashable, Sendable {
+    case codecDefault
+    case svtAV1Preset(Int)
+
+    public static let defaultSVTAV1Preset = 8
+    public static let minimumSVTAV1Preset = 0
+    public static let maximumSVTAV1Preset = 13
+}
+
+public enum VideoQualityTier: String, Codable, CaseIterable, Hashable, Sendable {
+    case smallerFile
+    case balanced
+    case higherQuality
+
+    public var displayName: String {
+        switch self {
+        case .smallerFile: "Smaller File"
+        case .balanced: "Balanced"
+        case .higherQuality: "Higher Quality"
+        }
+    }
+}
+
+public enum VideoQualityTierPolicy {
+    public static func rateControl(
+        preset: VideoPreset,
+        recommended: JoinVideoRateControl,
+        tier: VideoQualityTier
+    ) -> JoinVideoRateControl? {
+        switch (preset, recommended) {
+        case (.av1Quality, .constantQuality):
+            let quality =
+                switch tier {
+                case .smallerFile: 34
+                case .balanced: 30
+                case .higherQuality: 24
+                }
+            return .constantQuality(quality)
+        case (.hevcCompatibility, .averageBitrate(let value)),
+            (.h264Compatibility, .averageBitrate(let value)):
+            guard (100_000...200_000_000).contains(value) else { return nil }
+            let scaled =
+                switch tier {
+                case .smallerFile: value * 7 / 10
+                case .balanced: value
+                case .higherQuality: value * 3 / 2
+                }
+            return .averageBitrate(min(200_000_000, max(100_000, scaled)))
+        case (.proRes, .codecDefault):
+            return .codecDefault
+        default:
+            return nil
+        }
+    }
+}
+
 public struct JoinVideoTargetChoice: Codable, Hashable, Sendable {
     public let preset: VideoPreset
     public let canvas: MediaDimensions
     public let frameRatePolicy: JoinVideoFrameRatePolicy
     public let dynamicRange: JoinVideoDynamicRangeTarget
     public let rateControl: JoinVideoRateControl
+    public let encoderTuning: VideoEncoderTuning
 
     public init(
         preset: VideoPreset,
         canvas: MediaDimensions,
         frameRatePolicy: JoinVideoFrameRatePolicy,
         dynamicRange: JoinVideoDynamicRangeTarget,
-        rateControl: JoinVideoRateControl
+        rateControl: JoinVideoRateControl,
+        encoderTuning: VideoEncoderTuning = .codecDefault
     ) {
         self.preset = preset
         self.canvas = canvas
         self.frameRatePolicy = frameRatePolicy
         self.dynamicRange = dynamicRange
         self.rateControl = rateControl
+        self.encoderTuning = encoderTuning
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case preset
+        case canvas
+        case frameRatePolicy
+        case dynamicRange
+        case rateControl
+        case encoderTuning
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        preset = try values.decode(VideoPreset.self, forKey: .preset)
+        canvas = try values.decode(MediaDimensions.self, forKey: .canvas)
+        frameRatePolicy = try values.decode(
+            JoinVideoFrameRatePolicy.self,
+            forKey: .frameRatePolicy
+        )
+        dynamicRange = try values.decode(
+            JoinVideoDynamicRangeTarget.self,
+            forKey: .dynamicRange
+        )
+        rateControl = try values.decode(JoinVideoRateControl.self, forKey: .rateControl)
+        encoderTuning =
+            try values.decodeIfPresent(
+                VideoEncoderTuning.self,
+                forKey: .encoderTuning
+            ) ?? .codecDefault
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var values = encoder.container(keyedBy: CodingKeys.self)
+        try values.encode(preset, forKey: .preset)
+        try values.encode(canvas, forKey: .canvas)
+        try values.encode(frameRatePolicy, forKey: .frameRatePolicy)
+        try values.encode(dynamicRange, forKey: .dynamicRange)
+        try values.encode(rateControl, forKey: .rateControl)
+        try values.encode(encoderTuning, forKey: .encoderTuning)
     }
 }
 
@@ -284,6 +382,21 @@ public struct JoinNormalizationChoiceResolver: Sendable {
                 throw JoinNormalizationChoiceError.invalidChoice
             }
         case (.proRes, .codecDefault):
+            break
+        default:
+            throw JoinNormalizationChoiceError.invalidChoice
+        }
+        switch (videoChoice.preset, videoChoice.encoderTuning) {
+        case (.av1Quality, .codecDefault):
+            break
+        case (.av1Quality, .svtAV1Preset(let value)):
+            guard
+                (VideoEncoderTuning.minimumSVTAV1Preset...VideoEncoderTuning.maximumSVTAV1Preset)
+                    .contains(value)
+            else {
+                throw JoinNormalizationChoiceError.invalidChoice
+            }
+        case (_, .codecDefault):
             break
         default:
             throw JoinNormalizationChoiceError.invalidChoice

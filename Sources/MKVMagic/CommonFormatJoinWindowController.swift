@@ -60,7 +60,10 @@ enum CommonFormatJoinChoicePolicy {
                     canvas: canvas,
                     frameRatePolicy: timing,
                     dynamicRange: dynamicRange,
-                    rateControl: recommendedRateControl(preset: preset, canvas: canvas)
+                    rateControl: recommendedRateControl(preset: preset, canvas: canvas),
+                    encoderTuning: preset == .av1Quality
+                        ? .svtAV1Preset(VideoEncoderTuning.defaultSVTAV1Preset)
+                        : .codecDefault
                 )
             case .audioTarget, .missingAudio:
                 guard let laneIndex = decision.laneIndex,
@@ -147,7 +150,8 @@ enum CommonFormatJoinChoicePolicy {
                 "Video lane \(lane.laneIndex + 1): \(presetName(choice.preset)), "
                     + "\(choice.canvas.width)×\(choice.canvas.height) fit-and-pad, "
                     + "\(dynamicRangeName(choice.dynamicRange)), preserve source timing, "
-                    + "\(rateControlName(choice.rateControl))."
+                    + "\(rateControlName(choice.rateControl))"
+                    + encoderTuningName(choice.encoderTuning) + "."
             )
         }
         for lane in candidate.proposal.audioLanes where lane.encodesAudio {
@@ -226,6 +230,13 @@ enum CommonFormatJoinChoicePolicy {
         case .averageBitrate(let value): "\(value / 1_000) kbps"
         case .constantQuality(let value): "quality \(value)"
         case .codecDefault: "codec-managed data rate"
+        }
+    }
+
+    private static func encoderTuningName(_ tuning: VideoEncoderTuning) -> String {
+        switch tuning {
+        case .codecDefault: ""
+        case .svtAV1Preset(let value): ", SVT speed preset \(value)"
         }
     }
 }

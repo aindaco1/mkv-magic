@@ -60,6 +60,38 @@ final class FFmpegVideoEncoderArgumentsTests: XCTestCase {
         )
     }
 
+    func testRendersOnlyValidatedSVTAV1SpeedPreset() throws {
+        let builder = FFmpegVideoEncoderArguments()
+        let arguments = try builder.make(
+            outputIndex: 1,
+            encoder: "libsvtav1",
+            preset: .av1Quality,
+            rateControl: .constantQuality(24),
+            encoderTuning: .svtAV1Preset(5)
+        )
+        let flag = try XCTUnwrap(arguments.firstIndex(of: "-preset:v:1"))
+        XCTAssertEqual(arguments[flag + 1], "5")
+
+        XCTAssertThrowsError(
+            try builder.make(
+                outputIndex: 0,
+                encoder: "libsvtav1",
+                preset: .av1Quality,
+                rateControl: .constantQuality(24),
+                encoderTuning: .svtAV1Preset(14)
+            )
+        )
+        XCTAssertThrowsError(
+            try builder.make(
+                outputIndex: 0,
+                encoder: "hevc_videotoolbox",
+                preset: .hevcCompatibility,
+                rateControl: .averageBitrate(4_000_000),
+                encoderTuning: .svtAV1Preset(8)
+            )
+        )
+    }
+
     private func makeHDR10Track() -> MediaTrack {
         MediaTrack(
             id: 0,
