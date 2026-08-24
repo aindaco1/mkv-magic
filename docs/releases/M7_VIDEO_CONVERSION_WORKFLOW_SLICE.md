@@ -3,6 +3,10 @@
 This slice makes complete-file video conversion a portable saved-workflow step
 without weakening MKV Magic's lossless-first or one-generation contracts.
 
+> The original MKV workflow boundary recorded here was extended on 2026-08-24
+> to bounded MP4, M4V, MOV, and chapter-free WebM input. See
+> [M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md](M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md).
+
 ## User contract
 
 - **Add Step…** offers one locally recommended conversion and explicit AV1,
@@ -71,8 +75,10 @@ panel suggestion and does not manufacture an intermediate media pass.
 
 ## Explicit limits
 
-- Saved-workflow audio remains packet copy. Explicit audio conversion continues
-  to live in the standalone Exact Trim/Convert controls.
+- Saved-workflow audio was packet copy at this slice's boundary. Later
+  [fused audio-policy](M7_FUSED_AUDIO_POLICY_WORKFLOW_SLICE.md) and
+  [standalone audio](M7_STANDALONE_AUDIO_WORKFLOW_SLICE.md) slices added the
+  explicit portable conversion policies.
 - Image-subtitle OCR, data tracks, multiple video tracks, unsupported dynamic
   range, and source tags continue to fail closed under the complete-conversion
   planner.

@@ -9,6 +9,8 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case duplicateAction
     case noEnabledSteps
     case unsupportedContainer
+    case commonInputRequiresVideoConversion
+    case commonInputCannotCombineWithMatroskaEdits
     case remuxCannotCombineWithOtherActions
     case unsupportedMKVRemux(MKVRemuxPlanningError)
     case missingExternalSubtitleInput
@@ -36,7 +38,12 @@ extension SavedWorkflowCompilationError: LocalizedError {
         case .duplicateStepIdentifier: "The workflow contains a duplicate step identifier."
         case .duplicateAction: "Each workflow action can appear only once."
         case .noEnabledSteps: "Enable at least one workflow step."
-        case .unsupportedContainer: "Saved workflows currently require a Matroska file."
+        case .unsupportedContainer:
+            "This workflow cannot use the selected media container."
+        case .commonInputRequiresVideoConversion:
+            "MP4, M4V, MOV, and WebM workflow input currently requires one video-conversion step that applies to this file."
+        case .commonInputCannotCombineWithMatroskaEdits:
+            "For MP4, M4V, MOV, and WebM input, combine video conversion only with optional audio conversion and filename cleanup. Apply MKV track, subtitle, title, or chapter edits in a later workflow."
         case .remuxCannotCombineWithOtherActions:
             "Remux to MKV can currently be combined only with output filename cleanup. Disable the other media-changing steps."
         case .unsupportedMKVRemux(let error): error.localizedDescription
@@ -230,6 +237,13 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         }
         return videoConversionChoice?.audioPolicy.transcodePreset
     }
+
+    /// These execution paths always emit Matroska regardless of the source
+    /// filename. Keep Save-panel naming aligned with the reviewed command.
+    public var requiresMKVOutputExtension: Bool {
+        mkvRemuxPlan != nil || videoConversionChoice != nil || audioConversionPreset != nil
+            || externalSubtitleInput != nil
+    }
 }
 
 public struct SavedWorkflowCompiler: Sendable {
@@ -243,6 +257,21 @@ public struct SavedWorkflowCompiler: Sendable {
             MKVRemuxPlanner().canOffer(for: asset)
         {
             return false
+        }
+        let enabledActions = Set(workflow.steps.filter(\.isEnabled).map(\.action))
+        if !MatroskaEditingPolicy.supports(asset) {
+            guard ExactTrimPlanner().recognizesCompleteTranscodeContainer(asset) else {
+                return false
+            }
+            let videoWillRun = workflow.steps.contains {
+                $0.isEnabled && $0.action.videoConversionApplies(to: asset)
+            }
+            guard
+                Self.commonInputCompositionError(
+                    enabledActions: enabledActions,
+                    videoConversionWillRun: videoWillRun
+                ) == nil
+            else { return false }
         }
         let videoWillRun = workflow.steps.contains {
             $0.isEnabled && $0.action.videoConversionApplies(to: asset)
@@ -303,30 +332,6 @@ public struct SavedWorkflowCompiler: Sendable {
             throw SavedWorkflowCompilationError.noEnabledSteps
         }
         let enabledActions = Set(enabledSteps.map(\.action))
-        let mkvRemuxPlan: ResolvedMKVRemuxPlan?
-        if enabledActions.contains(.remuxToMKV) {
-            do {
-                mkvRemuxPlan = try MKVRemuxPlanner().resolve(source: asset)
-            } catch MKVRemuxPlanningError.alreadyMatroskaMKV {
-                guard MatroskaEditingPolicy.supports(asset) else {
-                    throw SavedWorkflowCompilationError.unsupportedContainer
-                }
-                mkvRemuxPlan = nil
-            } catch let error as MKVRemuxPlanningError {
-                throw SavedWorkflowCompilationError.unsupportedMKVRemux(error)
-            }
-        } else {
-            guard MatroskaEditingPolicy.supports(asset) else {
-                throw SavedWorkflowCompilationError.unsupportedContainer
-            }
-            mkvRemuxPlan = nil
-        }
-        if mkvRemuxPlan != nil {
-            let compatibleActions: Set<SavedWorkflowAction> = [.remuxToMKV, .normalizeFilename]
-            guard enabledActions.isSubset(of: compatibleActions) else {
-                throw SavedWorkflowCompilationError.remuxCannotCombineWithOtherActions
-            }
-        }
         let enabledVideoConversions = enabledSteps.filter { $0.action.isVideoConversion }
         guard enabledVideoConversions.count <= 1 else {
             throw SavedWorkflowCompilationError.multipleVideoConversions
@@ -344,6 +349,37 @@ public struct SavedWorkflowCompiler: Sendable {
         let videoConversionWillRun =
             enabledVideoConversions.first?.action
             .videoConversionApplies(to: asset) ?? false
+        let mkvRemuxPlan: ResolvedMKVRemuxPlan?
+        if enabledActions.contains(.remuxToMKV) {
+            do {
+                mkvRemuxPlan = try MKVRemuxPlanner().resolve(source: asset)
+            } catch MKVRemuxPlanningError.alreadyMatroskaMKV {
+                guard MatroskaEditingPolicy.supports(asset) else {
+                    throw SavedWorkflowCompilationError.unsupportedContainer
+                }
+                mkvRemuxPlan = nil
+            } catch let error as MKVRemuxPlanningError {
+                throw SavedWorkflowCompilationError.unsupportedMKVRemux(error)
+            }
+        } else if MatroskaEditingPolicy.supports(asset) {
+            mkvRemuxPlan = nil
+        } else if ExactTrimPlanner().recognizesCompleteTranscodeContainer(asset) {
+            if let error = Self.commonInputCompositionError(
+                enabledActions: enabledActions,
+                videoConversionWillRun: videoConversionWillRun
+            ) {
+                throw error
+            }
+            mkvRemuxPlan = nil
+        } else {
+            throw SavedWorkflowCompilationError.unsupportedContainer
+        }
+        if mkvRemuxPlan != nil {
+            let compatibleActions: Set<SavedWorkflowAction> = [.remuxToMKV, .normalizeFilename]
+            guard enabledActions.isSubset(of: compatibleActions) else {
+                throw SavedWorkflowCompilationError.remuxCannotCombineWithOtherActions
+            }
+        }
         let audioTracks = asset.tracks.filter { $0.kind == .audio }
         let audioTrackCount = audioTracks.count
         let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
@@ -730,6 +766,21 @@ public struct SavedWorkflowCompiler: Sendable {
             disposition: disposition,
             detail: detail
         )
+    }
+
+    private static func commonInputCompositionError(
+        enabledActions: Set<SavedWorkflowAction>,
+        videoConversionWillRun: Bool
+    ) -> SavedWorkflowCompilationError? {
+        guard
+            enabledActions.allSatisfy({ action in
+                action.isVideoConversion || action.isAudioConversion
+                    || action == .normalizeFilename
+            })
+        else {
+            return .commonInputCannotCombineWithMatroskaEdits
+        }
+        return videoConversionWillRun ? nil : .commonInputRequiresVideoConversion
     }
 
     private func cleanupSuggestions(

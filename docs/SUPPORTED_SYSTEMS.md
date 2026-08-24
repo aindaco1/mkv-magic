@@ -58,6 +58,13 @@ offered layout-preserving conversion. Ambiguous data, chaptered WebM, multiple
 video tracks, source tags on MKV, non-MKV output, incomplete color facts, and
 unsupported HDR families are refused before encoding.
 
+Portable saved workflows share this complete-file path. Common-container input
+requires one applicable video-conversion card and may add only one fused
+audio conversion plus filename cleanup. MKV-only edits are refused for that
+source, the reviewed output name is forced to `.mkv`, and automatic queue
+reinspection must reproduce the same one-generation plan. Compatible
+Matroska-only operations remain governed by their individual feature boundaries.
+
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app
 must also be installed and exercised on physical Intel and Apple Silicon Macs.

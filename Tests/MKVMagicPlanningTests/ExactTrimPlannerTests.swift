@@ -116,6 +116,24 @@ final class ExactTrimPlannerTests: XCTestCase {
         XCTAssertEqual(webMPlan.sourceKind, .webM)
     }
 
+    func testCompleteTranscodeContainerRecognitionDoesNotPretendToValidateMedia() {
+        let planner = ExactTrimPlanner()
+        let supportedButStructurallyIncomplete = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Incomplete.mp4"),
+            container: "mov,mp4"
+        )
+        let extensionContainerMismatch = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Mismatch.mp4"),
+            container: "avi"
+        )
+
+        XCTAssertTrue(
+            planner.recognizesCompleteTranscodeContainer(supportedButStructurallyIncomplete)
+        )
+        XCTAssertFalse(planner.canOfferTranscode(for: supportedButStructurallyIncomplete))
+        XCTAssertFalse(planner.recognizesCompleteTranscodeContainer(extensionContainerMismatch))
+    }
+
     func testCommonInputConversionFailsClosedForUnpreservedStructureMetadataAndAudio() throws {
         let planner = ExactTrimPlanner()
         let choice = ExactTrimChoice(

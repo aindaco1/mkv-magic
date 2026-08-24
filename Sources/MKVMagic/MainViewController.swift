@@ -2162,15 +2162,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isEmbeddedSubtitleCleanup = false
         }
-        let isRemuxToMKV: Bool
+        let requiresMKVOutput: Bool
         if case .remuxToMKV = pendingChange {
-            isRemuxToMKV = true
-        } else if case .savedWorkflow(let prepared) = pendingChange,
-            prepared.compiled.mkvRemuxPlan != nil
-        {
-            isRemuxToMKV = true
+            requiresMKVOutput = true
+        } else if case .savedWorkflow(let prepared) = pendingChange {
+            requiresMKVOutput = prepared.compiled.requiresMKVOutputExtension
         } else {
-            isRemuxToMKV = false
+            requiresMKVOutput = false
         }
         panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = prompt
@@ -2181,7 +2179,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             panel.nameFieldStringValue = OutputNamingPolicy.savedWorkflowFilename(
                 for: asset.sourceURL,
                 suggestedFilename: suggestedFilename,
-                requiresMKV: isSubtitleMux || isRemuxToMKV
+                requiresMKV: isSubtitleMux || requiresMKVOutput
             )
         } else if isSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(
@@ -2190,7 +2188,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             panel.nameFieldStringValue = OutputNamingPolicy.subtitledFilename(for: asset.sourceURL)
         } else if isEmbeddedSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedMKVFilename(for: asset.sourceURL)
-        } else if isRemuxToMKV {
+        } else if requiresMKVOutput {
             panel.nameFieldStringValue = OutputNamingPolicy.remuxedFilename(for: asset.sourceURL)
         } else {
             panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
@@ -2199,7 +2197,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let outputExtension =
             isSubtitleCleanup
             ? asset.sourceURL.pathExtension.lowercased()
-            : ((isSubtitleMux || isEmbeddedSubtitleCleanup || isRemuxToMKV)
+            : ((isSubtitleMux || isEmbeddedSubtitleCleanup || requiresMKVOutput)
                 ? "mkv" : asset.sourceURL.pathExtension)
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false

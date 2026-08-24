@@ -529,6 +529,132 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.stepOutcomes.map(\.disposition), [.skipped, .applied])
     }
 
+    func testCommonInputConversionCompilesAsOneDirectMKVPass() throws {
+        let workflow = SavedWorkflow(
+            name: "Portable compact conversion",
+            steps: [
+                SavedWorkflowStep(action: .normalizeFilename),
+                SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .transcodeAllAudioOpus),
+            ]
+        )
+        let source = makeCommonConvertibleAsset(
+            path: "/private/media/Feature.2025.1080p.mp4"
+        )
+        XCTAssertTrue(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: source)
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: source,
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.h264Compatibility],
+                availableAudioPresets: [.opusQuality]
+            )
+        )
+
+        XCTAssertEqual(compiled.videoConversionChoice?.videoPreset, .h264Compatibility)
+        XCTAssertEqual(compiled.videoConversionChoice?.audioPolicy, .opusPreserveLayout)
+        XCTAssertFalse(compiled.hasDeterministicMediaOperations)
+        XCTAssertTrue(compiled.requiresMKVOutputExtension)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Feature (2025).mp4")
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.ffmpegEncode, .verify, .commit])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.stages.filter { $0.mechanism == .ffmpegEncode }.count, 1)
+    }
+
+    func testCommonInputConversionFailsClosedAtItsCompositionBoundary() {
+        let source = makeCommonConvertibleAsset()
+        let matroskaEdit = SavedWorkflow(
+            name: "Edit before conversion",
+            steps: [
+                SavedWorkflowStep(action: .removeSegmentTitle),
+                SavedWorkflowStep(action: .convertVideoH264),
+            ]
+        )
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: matroskaEdit, asset: source)
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                matroskaEdit,
+                for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.h264Compatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .commonInputCannotCombineWithMatroskaEdits
+            )
+        }
+
+        let standaloneAudio = SavedWorkflow(
+            name: "Audio without video",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioOpus)]
+        )
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: standaloneAudio, asset: source)
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                standaloneAudio,
+                for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableAudioPresets: [.opusQuality]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .commonInputRequiresVideoConversion
+            )
+        }
+
+        let alreadyHEVC = makeCommonConvertibleAsset(videoCodec: "hevc")
+        let conditional = SavedWorkflow(
+            name: "Modern common video",
+            steps: [SavedWorkflowStep(action: .convertVideoIfNotAV1OrHEVC)]
+        )
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(for: conditional, asset: alreadyHEVC)
+        )
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(conditional, for: alreadyHEVC)
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .commonInputRequiresVideoConversion
+            )
+        }
+    }
+
+    func testCommonInputConversionSurfacesExactTranslationFailure() {
+        let workflow = SavedWorkflow(
+            name: "Convert unsupported metadata",
+            steps: [SavedWorkflowStep(action: .convertVideoH264)]
+        )
+        let source = makeCommonConvertibleAsset(metadata: ["artist": "Private metadata"])
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.h264Compatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unsupportedMediaConversion(.unsupportedCommonMetadata)
+            )
+        }
+    }
+
     func testActiveRemuxRejectsOtherMediaActionsAndSurfacesPlannerFailure() {
         let conflicting = SavedWorkflow(
             name: "Ambiguous pipeline",
@@ -937,7 +1063,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         }
     }
 
-    func testRejectsNonMatroskaAssetsBeforePlanning() {
+    func testRejectsMatroskaOnlyEditForRecognizedCommonInput() {
         let workflow = SavedWorkflow(
             name: "Clean",
             steps: [SavedWorkflowStep(action: .removeSegmentTitle)]
@@ -949,7 +1075,10 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
 
         XCTAssertThrowsError(try SavedWorkflowCompiler().compile(workflow, for: asset)) { error in
-            XCTAssertEqual(error as? SavedWorkflowCompilationError, .unsupportedContainer)
+            XCTAssertEqual(
+                error as? SavedWorkflowCompilationError,
+                .commonInputCannotCombineWithMatroskaEdits
+            )
         }
     }
 
@@ -1114,6 +1243,52 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 MediaTrack(id: 4, kind: .video, codec: "h264"),
                 MediaTrack(id: 9, kind: .audio, codec: "aac", language: "en"),
             ],
+            chapterEntryCount: 0
+        )
+    }
+
+    private func makeCommonConvertibleAsset(
+        path: String = "/private/media/Feature.mp4",
+        videoCodec: String = "h264",
+        metadata: [String: String] = ["title": "Feature", "major_brand": "isom"]
+    ) -> MediaAsset {
+        MediaAsset(
+            sourceURL: URL(fileURLWithPath: path),
+            container: "mov,mp4,m4a,3gp,3g2,mj2",
+            duration: MediaTime(seconds: 10),
+            fileSize: 1_000,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: videoCodec,
+                    profile: videoCodec == "hevc" ? "Main" : "High",
+                    dimensions: MediaDimensions(width: 160, height: 90),
+                    pixelFormat: "yuv420p",
+                    bitDepth: 8,
+                    frameRate: "24/1",
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt709",
+                        transfer: "bt709",
+                        matrix: "bt709"
+                    )
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    profile: "LC",
+                    language: "en",
+                    title: "Main Audio",
+                    isDefault: true,
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000,
+                    tags: ["handler_name": "SoundHandler"]
+                ),
+            ],
+            metadata: metadata,
             chapterEntryCount: 0
         )
     }

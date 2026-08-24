@@ -198,6 +198,13 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
 public struct ExactTrimPlanner: Sendable {
     public init() {}
 
+    /// Recognizes only the container/extension pairs accepted by the complete-file
+    /// conversion path. Structural, metadata, color, and codec checks still happen
+    /// when the reviewed choice is resolved.
+    public func recognizesCompleteTranscodeContainer(_ source: MediaAsset) -> Bool {
+        (try? sourceKind(for: source, operation: .transcode)) != nil
+    }
+
     public func canOfferTranscode(for source: MediaAsset) -> Bool {
         guard source.duration?.nanoseconds ?? 0 > 0,
             let sourceKind = try? sourceKind(for: source, operation: .transcode)

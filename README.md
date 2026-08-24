@@ -70,6 +70,14 @@ require that encoder. Unsafe layout/rate choices fail before execution. Nested
 chapters, attachments, HDR10, and reviewed metadata are
 verified, and the source revision is bound from plan acceptance through queueing
 or immediate execution. A conversion-only recipe skips the intermediate.
+That direct portable recipe also accepts the bounded MP4, M4V, MOV, and
+chapter-free WebM inputs supported by **Convert Video…**. Common input must
+actually run one video-conversion card and may combine it only with one optional
+audio conversion and filename cleanup; MKV-only track, subtitle, title, and
+chapter edits fail before the capability probe. The Save panel always changes a
+common-input conversion suggestion to `.mkv`. Immediate and automatic queue
+execution re-use the same one-process encoder and verified Matroska output
+transaction.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
@@ -281,7 +289,8 @@ removes only FFmpeg-synthesized statistics tags from a reviewed tag-free source,
 and repeats semantic and chapter audits after reopen. It currently fails closed
 for source tags, subtitle/data tracks, multiple video tracks, ordered editions,
 mixed or unsupported HDR, HDR10+, HLG, Dolby Vision, incomplete color/layout
-facts, unavailable encoders, and non-MKV inputs.
+facts, unavailable encoders, and non-MKV inputs for trimming. Complete-file
+conversion has the separately bounded common-input support described above.
 The bundled FFmpeg includes checksum-pinned, statically linked SVT-AV1 4.1.0
 for native 10-bit software AV1 encoding and dav1d 1.5.4 for software AV1
 decoding on both Apple Silicon and Intel. This allows Macs without hardware AV1

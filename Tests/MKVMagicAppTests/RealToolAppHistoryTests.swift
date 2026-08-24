@@ -332,7 +332,9 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
-    func testQueuedSavedWorkflowConversionRecompilesAndRecordsOneGeneration() async throws {
+    func testQueuedCommonInputSavedWorkflowConversionRecompilesAndRecordsOneGeneration()
+        async throws
+    {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
         }
@@ -349,8 +351,8 @@ final class RealToolAppHistoryTests: XCTestCase {
 
         let rawVideo = fixtureRoot.appendingPathComponent("frames.yuv")
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
-        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
-        let destinationURL = fixtureRoot.appendingPathComponent("Feature — Workflow.mkv")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.2025.1080p.mp4")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature (2025).mkv")
         let width = 96
         let height = 64
         let frameCount = 20
@@ -374,29 +376,15 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "-color_range", "tv", "-bsf:v",
                     "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
                     "-c:a", "aac",
-                    "-metadata", "title=Remove in Workflow",
+                    "-metadata", "title=Preserve in Workflow",
+                    "-metadata:s:a:0", "language=eng",
+                    "-metadata:s:a:0", "title=Main Audio",
                     sourceURL.path,
                 ],
                 timeout: 120
             )
         )
         XCTAssertEqual(create.exitCode, 0, create.standardError.text)
-        let clearTags = try await runner.run(
-            CommandRequest(
-                executableURL: try catalog.url(for: .mkvpropedit),
-                arguments: [
-                    "--abort-on-warnings", sourceURL.path,
-                    "--edit", "track:v1",
-                    "--set", "color-matrix-coefficients=1",
-                    "--set", "color-range=1",
-                    "--set", "color-transfer-characteristics=1",
-                    "--set", "color-primaries=1",
-                    "--tags", "all:",
-                ],
-                timeout: 60
-            )
-        )
-        XCTAssertEqual(clearTags.exitCode, 0, clearTags.standardError.text)
         let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
 
         let applicationSupport = fixtureRoot.appendingPathComponent(
@@ -431,9 +419,9 @@ final class RealToolAppHistoryTests: XCTestCase {
             throw XCTSkip("The bundled H.264 and FLAC encoders are unavailable")
         }
         let recipe = SavedWorkflow(
-            name: "Clean and convert once",
+            name: "Convert common input once",
             steps: [
-                SavedWorkflowStep(action: .removeSegmentTitle),
+                SavedWorkflowStep(action: .normalizeFilename),
                 SavedWorkflowStep(action: .convertVideoH264),
                 SavedWorkflowStep(action: .convertAudioFLAC),
             ]
@@ -445,6 +433,17 @@ final class RealToolAppHistoryTests: XCTestCase {
                 availableVideoPresets: capabilities.availableVideoPresets,
                 availableAudioPresets: capabilities.availableAudioPresets
             )
+        )
+        XCTAssertFalse(compiled.hasDeterministicMediaOperations)
+        XCTAssertTrue(compiled.requiresMKVOutputExtension)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Feature (2025).mp4")
+        XCTAssertEqual(
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: sourceURL,
+                suggestedFilename: compiled.suggestedOutputFilename,
+                requiresMKV: compiled.requiresMKVOutputExtension
+            ),
+            destinationURL.lastPathComponent
         )
         try await queueStore.save(MediaQueueSnapshot(isPaused: true, updatedAt: Date()))
         let waiting = try await model.enqueueSavedWorkflow(
@@ -463,7 +462,9 @@ final class RealToolAppHistoryTests: XCTestCase {
 
         XCTAssertEqual(output.tracks.first?.codec, "h264")
         XCTAssertEqual(output.tracks.dropFirst().first?.codec, "flac")
-        XCTAssertNil(output.metadata["title"])
+        XCTAssertEqual(output.tracks.dropFirst().first?.title, "Main Audio")
+        XCTAssertEqual(output.metadata["title"], "Preserve in Workflow")
+        XCTAssertTrue(output.container.localizedCaseInsensitiveContains("matroska"))
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
         let records = try await historyStore.load()
         let record = try XCTUnwrap(records.first)

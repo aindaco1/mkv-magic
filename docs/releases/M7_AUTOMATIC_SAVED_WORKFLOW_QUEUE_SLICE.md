@@ -1,7 +1,10 @@
 # M7 automatic saved-workflow queue slice
 
-> The one-input boundary recorded here was extended on 2026-08-24 to one
-> explicitly reviewed external SRT, ASS, or SSA input. See
+> The one-input boundary recorded here was extended on 2026-08-24 to bounded
+> common-container video-conversion input and to one explicitly reviewed
+> external SRT, ASS, or SSA input. See
+> [M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md](M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md)
+> and
 > [M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md](M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md).
 
 This slice connects the durable scheduler and fail-closed admission coordinator
@@ -14,7 +17,8 @@ Homebrew tool is involved.
 ## User path and scheduling triggers
 
 - The main footer exposes **Add to Queue** only for a reviewed saved workflow
-  whose execution can be reconstructed from one stored MKV input. The same
+  whose execution can be reconstructed from its stored reviewed input. This now
+  includes bounded MP4/M4V/MOV/WebM complete-file conversion. The same
   shared policy drives authoring and execution, preventing UI/executor drift.
 - The Save panel chooses the final output and the existing off-by-default
   Trash-after-verified-success policy. Queue authoring records a **Waiting** job;

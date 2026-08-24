@@ -76,8 +76,9 @@ packet payload. The source SHA-256 remains unchanged.
 
 ## Explicit limits
 
-- Common-container conversion is currently a direct reviewed action, not a
-  portable saved-workflow input contract.
+- Common-container conversion became a portable saved-workflow input contract
+  in the later M7 common-input workflow slice. Its narrower composition rules
+  are recorded in `M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md`.
 - MP4 TX3G and other common-container subtitles require an explicit future text
   conversion path; they are not silently dropped or rewritten.
 - Alternate output containers, chaptered WebM, attachments, arbitrary data,

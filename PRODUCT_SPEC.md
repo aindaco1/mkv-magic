@@ -1205,16 +1205,20 @@ and permits any actively verified codec compatible with the reviewed SDR or
 static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
-The standalone complete-file route also accepts bounded MP4, M4V, MOV, and
+The complete-file route also accepts bounded MP4, M4V, MOV, and
 chapter-free WebM inputs when their structure, metadata, and color facts can be
 translated to MKV without guessing. It uses the shared Matroska packet-copy
 codec policy for audio, explicitly restores reviewed language and track names,
 fingerprints every copied audio packet, promotes inspected QuickTime chapters
 into one default nested Matroska edition, and still performs only one video
-generation. This direct native route does not yet make common-container video
-conversion a portable saved-workflow input contract.
+generation. The same path is now a portable saved-workflow input contract when
+one video-conversion card actually applies. A common-input recipe may add one
+audio conversion and filename cleanup, but it cannot compose MKV-only track,
+subtitle, title, or chapter edits. Filename review is forced to `.mkv`, and
+automatic queue reinspection must reproduce the same codec-bearing plan before
+the direct one-process executor can run.
 Portable saved workflows now share the complete-file conversion path. Their
-schema-v8 cards choose the local recommendation, one explicit video preset, or
+schema-v9 cards choose the local recommendation, one explicit video preset, or
 the lossless-first AV1/HEVC condition, plus an optional AAC, Opus, AC-3, E-AC-3,
 or FLAC audio policy that may also run without video conversion. Plan
 review binds both locally verified choices and composes deterministic cleanup
@@ -1359,6 +1363,13 @@ Portable common-media remux uses that automatic boundary as lightweight work.
 The queued recipe persists only schema-v9 intent; each admission resolves fresh
 stream and chapter facts, requires the same reviewed zero-encode plan, binds the
 exact original revision, and invokes the verified MKV remux executor directly.
+
+Portable common-input video conversion uses the same boundary as video-heavy
+work. Queue reinspection must recognize the same MP4/M4V/MOV or WebM source,
+resolve the same video and optional fused audio choices, reproduce one FFmpeg
+stage, and retain the `.mkv` destination before execution. A condition that
+skips video conversion on common-container input moves back to interactive review
+instead of creating a misleading unchanged non-MKV copy.
 
 Built-in quick-action queueing, multiple or image-based external subtitles,
 automatic sidecar discovery, watched folders, scheduled wakes, a background
