@@ -382,7 +382,7 @@ and Encoding Test. Standard Minimize, Zoom, and Bring All to Front commands are
 present too. See
 [docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md](docs/releases/M8_WINDOW_MENU_KEYBOARD_SLICE.md).
 
-The main window and all 18 implemented auxiliary windows now share one native
+The main window and all 19 implemented auxiliary windows now share one native
 keyboard-navigation policy: each keeps an intentional starting control and asks
 AppKit to own automatic key-view-loop recalculation as each window's contents
 evolve. A source gate keeps future windows on that policy. This is automated
@@ -400,6 +400,11 @@ The Application menu now follows the standard macOS integration contract with
 a registered Services submenu, Command-Option-H Hide Others, and Show All,
 alongside the existing About, update, Hide, and Quit commands. See
 [docs/releases/M8_STANDARD_APPLICATION_MENU_SLICE.md](docs/releases/M8_STANDARD_APPLICATION_MENU_SLICE.md).
+
+A native Command-? Help window now keeps the essential getting-started,
+output-safety, no-transcode, workflow, queue, keyboard, and privacy guidance
+available offline inside the app. See
+[docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md](docs/releases/M8_OFFLINE_HELP_WINDOW_SLICE.md).
 
 ## Design promises
 

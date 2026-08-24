@@ -1329,7 +1329,7 @@ target, modifier, and shortcut, plus restoration of a hidden main window. This
 improves discoverable keyboard reachability but does not claim a complete Full
 Keyboard Access traversal of every control.
 
-The dynamic key-view-loop continuation puts the main window and all 18
+The dynamic key-view-loop continuation puts the main window and all 19
 implemented window-controller surfaces on one policy: each asks AppKit to own
 automatic key-view-loop recalculation while preserving the intentional initial
 keyboard target already assigned to the window. This covers surfaces with
@@ -1356,6 +1356,15 @@ existing About, explicit update check, Hide, and Quit commands. Live app launch
 coverage verifies the services-menu identity, selectors, and modifier flags.
 This provides expected macOS integration without a custom menu dispatcher or
 network behavior.
+
+The offline-help continuation registers a native Help menu and Command-? action
+that opens a retained, lightweight AppKit window. It explains getting started,
+verified-output safety, when encoding is avoided or required, saved workflows,
+Queue and History, keyboard commands, and the local-only privacy contract. The
+content is bundled as text and needs no browser, account, network connection,
+telemetry, or LLM. Live app-launch coverage invokes the real menu command and
+checks the visible window, initial accessible focus, minimum layout, and core
+safety language.
 
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 

@@ -123,6 +123,43 @@ final class AppPolicyTests: XCTestCase {
             appMenu.item(withTitle: "Show All")?.action,
             #selector(NSApplication.unhideAllApplications(_:))
         )
+        let helpMenu = try XCTUnwrap(
+            NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Help" }
+        )
+        XCTAssertTrue(NSApp.helpMenu === helpMenu)
+        let helpItem = try XCTUnwrap(helpMenu.item(withTitle: "MKV Magic Help"))
+        XCTAssertEqual(helpItem.keyEquivalent, "?")
+        XCTAssertEqual(helpItem.keyEquivalentModifierMask, [.command])
+        XCTAssertEqual(helpItem.action, #selector(AppDelegate.showHelp))
+        XCTAssertTrue(helpItem.target === delegate)
+        XCTAssertTrue(
+            NSApp.sendAction(
+                try XCTUnwrap(helpItem.action),
+                to: helpItem.target,
+                from: helpItem
+            )
+        )
+        let helpWindow = try XCTUnwrap(NSApp.windows.first { $0.title == "MKV Magic Help" })
+        defer { helpWindow.close() }
+        XCTAssertTrue(helpWindow.isVisible)
+        XCTAssertEqual(helpWindow.minSize, NSSize(width: 520, height: 420))
+        XCTAssertEqual(
+            helpWindow.initialFirstResponder?.accessibilityLabel(),
+            "MKV Magic help topics"
+        )
+        let helpText = try XCTUnwrap(
+            descendants(in: try XCTUnwrap(helpWindow.contentView))
+                .compactMap { $0 as? NSTextView }.first
+        )
+        XCTAssertTrue(helpText.string.contains("Metadata edits use MKVToolNix without encoding"))
+        XCTAssertTrue(helpText.string.contains("Moving originals to Trash is explicit"))
+        XCTAssertTrue(helpText.string.contains("has no accounts, analytics, uploads"))
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_HELP_CAPTURE"
+        ], capturePath.hasPrefix("/"), let content = helpWindow.contentView {
+            helpWindow.setContentSize(helpWindow.minSize)
+            try captureWindow(window: helpWindow, content: content, at: capturePath)
+        }
         let windowMenu = try XCTUnwrap(
             NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Window" }
         )

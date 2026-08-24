@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model: AppModel
     private let updateController: UpdateChecking
     private var windowController: NSWindowController?
+    private var helpWindowController: HelpWindowController?
     private var automaticQueueTask: Task<Void, Never>?
 
     init(
@@ -59,6 +60,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func checkForUpdates() {
         updateController.checkForUpdates()
+    }
+
+    @objc func showHelp() {
+        let controller = helpWindowController ?? HelpWindowController()
+        helpWindowController = controller
+        controller.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private func makeMainMenu(openTarget: MainViewController) -> NSMenu {
@@ -189,6 +197,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         windowItem.submenu = windowMenu
         NSApp.windowsMenu = windowMenu
+
+        let helpItem = NSMenuItem()
+        main.addItem(helpItem)
+        let helpMenu = NSMenu(title: "Help")
+        let help = NSMenuItem(
+            title: "MKV Magic Help",
+            action: #selector(showHelp),
+            keyEquivalent: "?"
+        )
+        help.target = self
+        helpMenu.addItem(help)
+        helpItem.submenu = helpMenu
+        NSApp.helpMenu = helpMenu
         return main
     }
 
