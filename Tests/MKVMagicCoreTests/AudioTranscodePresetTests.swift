@@ -2,6 +2,16 @@ import MKVMagicCore
 import XCTest
 
 final class AudioTranscodePresetTests: XCTestCase {
+    func testSourceCodecMatchingIsExactAndCaseInsensitive() {
+        XCTAssertTrue(AudioTranscodePreset.aacCompatibility.matches(sourceCodec: " AAC "))
+        XCTAssertTrue(AudioTranscodePreset.opusQuality.matches(sourceCodec: "opus"))
+        XCTAssertTrue(AudioTranscodePreset.ac3Compatibility.matches(sourceCodec: "AC3"))
+        XCTAssertTrue(AudioTranscodePreset.eac3Compatibility.matches(sourceCodec: "eac3"))
+        XCTAssertTrue(AudioTranscodePreset.flacLossless.matches(sourceCodec: "FLAC"))
+        XCTAssertFalse(AudioTranscodePreset.flacLossless.matches(sourceCodec: "aac"))
+        XCTAssertFalse(AudioTranscodePreset.eac3Compatibility.matches(sourceCodec: "ac3"))
+    }
+
     func testStableNamesAndCodecIdentitiesAreExplicit() {
         XCTAssertEqual(
             AudioTranscodePreset.allCases.map(\.displayName),

@@ -99,8 +99,17 @@ public struct CompleteAudioConversionCommandBuilder: Sendable {
             arguments.append(contentsOf: ["-map", "0:t?"])
         }
         arguments.append(contentsOf: ["-c", "copy"])
-        for (outputIndex, trackID) in resolvedPlan.audioTrackIDs.enumerated() {
-            guard let track = source.tracks.first(where: { $0.id == trackID }),
+        let encodedAudioTrackIDs = Set(resolvedPlan.encodedAudioTrackIDs)
+        var audioOutputIndex = 0
+        for trackID in resolvedPlan.trackIDsInOutputOrder {
+            guard let track = source.tracks.first(where: { $0.id == trackID }) else {
+                throw CompleteAudioConversionCommandError.inconsistentPlan
+            }
+            guard track.kind == .audio else { continue }
+            let currentAudioOutputIndex = audioOutputIndex
+            audioOutputIndex += 1
+            guard encodedAudioTrackIDs.contains(trackID) else { continue }
+            guard
                 let channels = track.channels,
                 let sampleRate = track.sampleRate,
                 let channelLayout = track.channelLayout
@@ -110,7 +119,7 @@ public struct CompleteAudioConversionCommandBuilder: Sendable {
             do {
                 arguments.append(
                     contentsOf: try FFmpegAudioEncoderArguments().make(
-                        outputIndex: outputIndex,
+                        outputIndex: currentAudioOutputIndex,
                         encoder: encoder,
                         preset: resolvedPlan.preset,
                         channels: channels,
@@ -136,7 +145,7 @@ public struct CompleteAudioConversionCommandBuilder: Sendable {
         return CompleteAudioConversionFFmpegCommand(
             arguments: arguments,
             outputURL: outputURL,
-            encodedAudioTrackIDs: resolvedPlan.audioTrackIDs,
+            encodedAudioTrackIDs: resolvedPlan.encodedAudioTrackIDs,
             copiedTrackIDs: resolvedPlan.copiedTrackIDs
         )
     }

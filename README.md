@@ -60,16 +60,19 @@ If cleanup, track removal, title removal, or subtitle muxing is also applicable,
 MKV Magic commits those packet-copy changes only to a private verified
 intermediate, then performs one complete-file video encode into the final
 destination. Audio and subtitles remain exact packet copies by default. One
-optional audio card can explicitly convert every retained audio track once to
-locally verified AAC, Opus, AC-3, E-AC-3, or FLAC while preserving each known
-channel layout. It can run alone while packet-copying video and subtitles, or
-fuse into the video card's same single FFmpeg process. Unsafe layout/rate
-choices fail before execution. Nested chapters, attachments, HDR10, and reviewed metadata are
+optional audio card can explicitly make every retained audio track AAC, Opus,
+AC-3, E-AC-3, or FLAC while preserving each known channel layout. Tracks already
+in the requested codec remain exact packet copies; only mismatched tracks are
+encoded, each at most once. The card can run alone while packet-copying video,
+subtitles, and matching audio, or fuse into the video card's same single FFmpeg
+process. If every audio track already matches, the card is a no-op and does not
+require that encoder. Unsafe layout/rate choices fail before execution. Nested
+chapters, attachments, HDR10, and reviewed metadata are
 verified, and the source revision is bound from plan acceptance through queueing
 or immediate execution. A conversion-only recipe skips the intermediate.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
-every copied video and subtitle packet before commit.
+every copied video, audio, and subtitle packet before commit.
 Workflow schema v8 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
 Original v1-v7 workflow files migrate

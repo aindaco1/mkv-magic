@@ -286,7 +286,10 @@ final class RealToolExactTrimTests: XCTestCase {
                     ),
                     capabilities: capabilities
                 )
-                XCTAssertEqual(preview.resolvedPlan.audioEncodeCount, 1)
+                XCTAssertEqual(
+                    preview.resolvedPlan.audioEncodeCount,
+                    preset.matches(sourceCodec: sourceAudio.codec) ? 0 : 1
+                )
                 let output = try await executor.execute(
                     preview: preview,
                     destinationURL: root.appendingPathComponent("\(preset.rawValue).mkv")
@@ -591,7 +594,8 @@ final class RealToolExactTrimTests: XCTestCase {
                 ffmpegURL: ffmpegURL,
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: fixtureRunner,
-                includeSubtitle: true
+                includeSubtitle: true,
+                includeMatchingFLACAudio: true
             )
             let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
             let runner = WorkflowConversionRecordingRunner()
@@ -603,6 +607,8 @@ final class RealToolExactTrimTests: XCTestCase {
             let source = try await inspector.inspect(sourceURL)
             let sourceVideo = try XCTUnwrap(source.tracks.first { $0.kind == .video })
             let sourceSubtitle = try XCTUnwrap(source.tracks.first { $0.kind == .subtitle })
+            let sourceAudio = source.tracks.filter { $0.kind == .audio }
+            XCTAssertEqual(sourceAudio.map(\.codec), ["aac", "flac"])
             let workflow = SavedWorkflow(
                 name: "Lossless audio",
                 steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
@@ -636,12 +642,15 @@ final class RealToolExactTrimTests: XCTestCase {
             XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
             XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
             XCTAssertTrue(compiled.plan.impact.copiesVideo)
-            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .audio, .subtitle])
             XCTAssertEqual(output.tracks[0].codec, sourceVideo.codec)
             XCTAssertEqual(output.tracks[1].codec, "flac")
-            XCTAssertEqual(output.tracks[2].codec, sourceSubtitle.codec)
-            XCTAssertEqual(output.tracks[2].language, sourceSubtitle.language)
-            XCTAssertEqual(output.tracks[2].title, sourceSubtitle.title)
+            XCTAssertEqual(output.tracks[2].codec, sourceAudio[1].codec)
+            XCTAssertEqual(output.tracks[2].language, sourceAudio[1].language)
+            XCTAssertEqual(output.tracks[2].title, sourceAudio[1].title)
+            XCTAssertEqual(output.tracks[3].codec, sourceSubtitle.codec)
+            XCTAssertEqual(output.tracks[3].language, sourceSubtitle.language)
+            XCTAssertEqual(output.tracks[3].title, sourceSubtitle.title)
             XCTAssertEqual(output.attachments.count, source.attachments.count)
             XCTAssertEqual(output.attachments[0].filename, source.attachments[0].filename)
             XCTAssertEqual(output.attachments[0].mimeType, source.attachments[0].mimeType)
@@ -784,7 +793,8 @@ final class RealToolExactTrimTests: XCTestCase {
         ffmpegURL: URL,
         mkvpropeditURL: URL,
         runner: FoundationCommandRunner,
-        includeSubtitle: Bool = false
+        includeSubtitle: Bool = false,
+        includeMatchingFLACAudio: Bool = false
     ) async throws -> URL {
         let rawVideoURL = root.appendingPathComponent("frames.yuv")
         let rawAudioURL = root.appendingPathComponent("audio.pcm")
@@ -821,6 +831,9 @@ final class RealToolExactTrimTests: XCTestCase {
             arguments.append(contentsOf: ["-f", "srt", "-i", subtitleURL.path])
         }
         arguments.append(contentsOf: ["-map", "0:v:0", "-map", "1:a:0"])
+        if includeMatchingFLACAudio {
+            arguments.append(contentsOf: ["-map", "1:a:0"])
+        }
         if includeSubtitle {
             arguments.append(contentsOf: ["-map", "2:s:0"])
         }
@@ -832,13 +845,21 @@ final class RealToolExactTrimTests: XCTestCase {
             "-colorspace", "bt709", "-color_range", "tv",
             "-bsf:v",
             "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
-            "-c:a", "aac", "-b:a", "192000",
+            "-c:a:0", "aac", "-b:a:0", "192000",
             "-c:s", "srt",
             "-metadata", "title=Exact Trim Fixture",
             "-metadata:s:a:0", "language=eng",
             "-metadata:s:a:0", "title=Original Mix",
             "-disposition:a:0", "default",
         ])
+        if includeMatchingFLACAudio {
+            arguments.append(contentsOf: [
+                "-c:a:1", "flac",
+                "-metadata:s:a:1", "language=fra",
+                "-metadata:s:a:1", "title=Lossless Mix",
+                "-disposition:a:1", "0",
+            ])
+        }
         if includeSubtitle {
             arguments.append(contentsOf: [
                 "-metadata:s:s:0", "language=eng",

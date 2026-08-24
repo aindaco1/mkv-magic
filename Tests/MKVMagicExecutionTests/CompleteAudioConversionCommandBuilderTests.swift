@@ -23,19 +23,20 @@ final class CompleteAudioConversionCommandBuilderTests: XCTestCase {
         XCTAssertEqual(
             values(afterEach: "-map", in: command.arguments),
             [
-                "0:0", "0:1", "0:2", "0:t?",
+                "0:0", "0:1", "0:2", "0:3", "0:t?",
             ])
         XCTAssertEqual(value(after: "-c", in: command.arguments), "copy")
-        XCTAssertEqual(value(after: "-c:a:0", in: command.arguments), "libopus")
-        XCTAssertEqual(value(after: "-ar:a:0", in: command.arguments), "48000")
-        XCTAssertEqual(value(after: "-ac:a:0", in: command.arguments), "6")
-        XCTAssertEqual(value(after: "-channel_layout:a:0", in: command.arguments), "5.1")
-        XCTAssertEqual(value(after: "-mapping_family:a:0", in: command.arguments), "1")
+        XCTAssertNil(value(after: "-c:a:0", in: command.arguments))
+        XCTAssertEqual(value(after: "-c:a:1", in: command.arguments), "libopus")
+        XCTAssertEqual(value(after: "-ar:a:1", in: command.arguments), "48000")
+        XCTAssertEqual(value(after: "-ac:a:1", in: command.arguments), "6")
+        XCTAssertEqual(value(after: "-channel_layout:a:1", in: command.arguments), "5.1")
+        XCTAssertEqual(value(after: "-mapping_family:a:1", in: command.arguments), "1")
         XCTAssertFalse(command.arguments.contains("-c:v:0"))
         XCTAssertEqual(value(after: "-map_metadata", in: command.arguments), "0")
         XCTAssertEqual(value(after: "-map_chapters", in: command.arguments), "-1")
-        XCTAssertEqual(command.encodedAudioTrackIDs, [1])
-        XCTAssertEqual(command.copiedTrackIDs, [0, 2])
+        XCTAssertEqual(command.encodedAudioTrackIDs, [2])
+        XCTAssertEqual(command.copiedTrackIDs, [0, 1, 3])
     }
 
     func testRejectsExistingOutputAndCapabilityRegression() throws {
@@ -105,15 +106,23 @@ final class CompleteAudioConversionCommandBuilderTests: XCTestCase {
                     MediaTrack(
                         id: 1,
                         kind: .audio,
+                        codec: "opus",
+                        channels: 2,
+                        channelLayout: "stereo",
+                        sampleRate: 48_000
+                    ),
+                    MediaTrack(
+                        id: 2,
+                        kind: .audio,
                         codec: "eac3",
                         channels: 6,
                         channelLayout: "5.1",
                         sampleRate: 48_000
                     ),
-                    MediaTrack(id: 2, kind: .subtitle, codec: "subrip"),
+                    MediaTrack(id: 3, kind: .subtitle, codec: "subrip"),
                 ],
                 attachments: [
-                    MediaAttachment(id: 3, filename: "cover.jpg", mimeType: "image/jpeg")
+                    MediaAttachment(id: 4, filename: "cover.jpg", mimeType: "image/jpeg")
                 ],
                 globalTagCount: 0,
                 trackTagCount: 0

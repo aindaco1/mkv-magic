@@ -5,6 +5,7 @@ public enum PlanningError: Error, Equatable, Sendable {
     case emptyWorkflow
     case invalidTrimRange
     case multipleVideoEncodes
+    case multipleAudioConversions
 }
 
 public struct WorkflowPlanner: Sendable {
@@ -16,7 +17,7 @@ public struct WorkflowPlanner: Sendable {
         var needsPropertyEdit = false
         var needsRemux = false
         var needsVideoEncode = false
-        var needsAudioEncode = false
+        var audioTranscodePreset: AudioTranscodePreset?
         var needsStreamCopyTrim = false
         var warnings: [String] = []
 
@@ -36,10 +37,21 @@ public struct WorkflowPlanner: Sendable {
                 }
             case .transcodeVideo:
                 needsVideoEncode = true
-            case .transcodeAudio:
-                needsAudioEncode = true
+            case .transcodeAudio(let preset):
+                guard audioTranscodePreset == nil || audioTranscodePreset == preset else {
+                    throw PlanningError.multipleAudioConversions
+                }
+                audioTranscodePreset = preset
             }
         }
+
+        let audioEncodeCount =
+            audioTranscodePreset.map { preset in
+                asset.tracks.count {
+                    $0.kind == .audio && !preset.matches(sourceCodec: $0.codec)
+                }
+            } ?? 0
+        let needsAudioEncode = audioEncodeCount > 0
 
         var stages: [PlanStage] = []
         if needsVideoEncode || needsAudioEncode {
@@ -50,7 +62,9 @@ public struct WorkflowPlanner: Sendable {
             case (true, false):
                 summary = "Fuse all video-affecting operations into one final encode"
             case (false, true):
-                summary = "Convert every reviewed audio track once while packet-copying video"
+                let noun = audioEncodeCount == 1 ? "track" : "tracks"
+                summary =
+                    "Convert \(audioEncodeCount) mismatched audio \(noun) once while packet-copying video"
             case (false, false):
                 preconditionFailure("An encode stage requires video or audio work")
             }
@@ -97,9 +111,7 @@ public struct WorkflowPlanner: Sendable {
             stages: stages,
             impact: PlanImpact(
                 videoEncodeCount: needsVideoEncode ? 1 : 0,
-                audioEncodeCount: needsAudioEncode
-                    ? asset.tracks.count { $0.kind == .audio }
-                    : 0,
+                audioEncodeCount: audioEncodeCount,
                 copiesVideo: !needsVideoEncode,
                 warnings: warnings
             )

@@ -137,6 +137,57 @@ final class WorkflowPlannerTests: XCTestCase {
         XCTAssertFalse(fused.impact.copiesVideo)
     }
 
+    func testAudioConversionCountsOnlyMismatchesAndRejectsConflictingTargets() throws {
+        let mixedAsset = MediaAsset(
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            tracks: asset.tracks + [
+                MediaTrack(id: 1, kind: .audio, codec: "flac"),
+                MediaTrack(id: 2, kind: .audio, codec: "aac"),
+            ]
+        )
+        let plan = try WorkflowPlanner().plan(
+            asset: mixedAsset,
+            workflow: WorkflowDefinition(
+                name: "Selective FLAC",
+                operations: [.transcodeAudio(.flacLossless)]
+            )
+        )
+
+        XCTAssertEqual(plan.impact.audioEncodeCount, 1)
+        XCTAssertEqual(plan.stages.filter { $0.mechanism == .ffmpegEncode }.count, 1)
+
+        let alreadyFLAC = MediaAsset(
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            tracks: asset.tracks + [MediaTrack(id: 1, kind: .audio, codec: "FLAC")]
+        )
+        let noEncode = try WorkflowPlanner().plan(
+            asset: alreadyFLAC,
+            workflow: WorkflowDefinition(
+                name: "Already FLAC",
+                operations: [.transcodeAudio(.flacLossless)]
+            )
+        )
+        XCTAssertEqual(noEncode.impact.audioEncodeCount, 0)
+        XCTAssertFalse(noEncode.stages.contains { $0.mechanism == .ffmpegEncode })
+
+        XCTAssertThrowsError(
+            try WorkflowPlanner().plan(
+                asset: mixedAsset,
+                workflow: WorkflowDefinition(
+                    name: "Conflicting audio",
+                    operations: [
+                        .transcodeAudio(.flacLossless),
+                        .transcodeAudio(.opusQuality),
+                    ]
+                )
+            )
+        ) {
+            XCTAssertEqual($0 as? PlanningError, .multipleAudioConversions)
+        }
+    }
+
     func testInvalidTrimRangeFailsPlanning() {
         XCTAssertThrowsError(
             try WorkflowPlanner().plan(

@@ -234,9 +234,13 @@ public struct SavedWorkflowCompiler: Sendable {
             $0.isEnabled && $0.action.videoConversionApplies(to: asset)
         }
         if videoWillRun { return true }
-        guard asset.tracks.contains(where: { $0.kind == .audio }) else { return false }
-        return workflow.steps.contains {
-            $0.isEnabled && $0.action.isStandaloneAudioConversion
+        guard
+            let preset = workflow.steps.first(where: {
+                $0.isEnabled && $0.action.isStandaloneAudioConversion
+            })?.action.audioTranscodePreset
+        else { return false }
+        return asset.tracks.contains {
+            $0.kind == .audio && !preset.matches(sourceCodec: $0.codec)
         }
     }
 
@@ -305,9 +309,16 @@ public struct SavedWorkflowCompiler: Sendable {
         let videoConversionWillRun =
             enabledVideoConversions.first?.action
             .videoConversionApplies(to: asset) ?? false
-        let audioTrackCount = asset.tracks.count { $0.kind == .audio }
+        let audioTracks = asset.tracks.filter { $0.kind == .audio }
+        let audioTrackCount = audioTracks.count
+        let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
+        let audioTracksToEncode =
+            selectedAudioPreset.map { preset in
+                audioTracks.filter { !preset.matches(sourceCodec: $0.codec) }
+            } ?? []
+        let audioEncodeCount = audioTracksToEncode.count
         let audioConversionWillRun =
-            audioTrackCount > 0
+            audioEncodeCount > 0
             && (enabledAudioConversions.first?.action.requiresVideoConversion != true
                 || videoConversionWillRun)
         var audioPolicy = ExactTrimAudioPolicy.packetCopy
@@ -483,7 +494,11 @@ public struct SavedWorkflowCompiler: Sendable {
                     outcome(
                         for: step,
                         disposition: .applied,
-                        detail: videoConversionDetail(choice, audioTrackCount: audioTrackCount)
+                        detail: videoConversionDetail(
+                            choice,
+                            audioEncodeCount: audioEncodeCount,
+                            copiedAudioCount: audioTrackCount - audioEncodeCount
+                        )
                     )
                 )
             case .convertAudioAAC, .convertAudioOpus, .convertAudioAC3,
@@ -510,15 +525,29 @@ public struct SavedWorkflowCompiler: Sendable {
                             detail: "No audio tracks are present."
                         )
                     )
+                } else if audioEncodeCount == 0 {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail:
+                                "Every audio track is already \(preset.displayName); keep each packet unchanged."
+                        )
+                    )
                 } else {
                     operations.append(.transcodeAudio(preset))
-                    let noun = audioTrackCount == 1 ? "track" : "tracks"
+                    let noun = audioEncodeCount == 1 ? "track" : "tracks"
+                    let copiedAudioCount = audioTrackCount - audioEncodeCount
+                    let copyDetail =
+                        copiedAudioCount == 0
+                        ? ""
+                        : "; packet-copy \(copiedAudioCount) already-matching audio track\(copiedAudioCount == 1 ? "" : "s")"
                     stepOutcomes.append(
                         outcome(
                             for: step,
                             disposition: .applied,
                             detail:
-                                "Encode \(audioTrackCount) audio \(noun) once as \(preset.displayName), preserving each channel layout"
+                                "Encode \(audioEncodeCount) audio \(noun) once as \(preset.displayName), preserving each channel layout\(copyDetail)"
                         )
                     )
                 }
@@ -582,7 +611,7 @@ public struct SavedWorkflowCompiler: Sendable {
                 videoConversionChoice: videoConversionChoice,
                 audioConversionPreset: audioConversionWillRun
                     ? enabledAudioConversions.first?.action.audioTranscodePreset : nil,
-                audioTrackCount: audioTrackCount
+                audioEncodeCount: audioEncodeCount
             )
         }
         let compiled = CompiledSavedWorkflow(
@@ -770,22 +799,22 @@ public struct SavedWorkflowCompiler: Sendable {
         _ plan: ExecutionPlan,
         videoConversionChoice: ExactTrimChoice?,
         audioConversionPreset: AudioTranscodePreset?,
-        audioTrackCount: Int
+        audioEncodeCount: Int
     ) -> ExecutionPlan {
         guard videoConversionChoice != nil || audioConversionPreset != nil else { return plan }
         let audioPreset = audioConversionPreset
         let encodeSummary: String
         if let videoConversionChoice, let audioPreset {
-            let noun = audioTrackCount == 1 ? "track" : "tracks"
+            let noun = audioEncodeCount == 1 ? "track" : "tracks"
             encodeSummary =
-                "Encode video once as \(videoConversionChoice.videoPreset.displayName) and \(audioTrackCount) audio \(noun) once as \(audioPreset.displayName); packet-copy subtitles"
+                "Encode video once as \(videoConversionChoice.videoPreset.displayName) and \(audioEncodeCount) mismatched audio \(noun) once as \(audioPreset.displayName); packet-copy already-matching audio and subtitles"
         } else if let videoConversionChoice {
             encodeSummary =
                 "Encode video once as \(videoConversionChoice.videoPreset.displayName) while packet-copying audio and subtitles"
         } else if let audioPreset {
-            let noun = audioTrackCount == 1 ? "track" : "tracks"
+            let noun = audioEncodeCount == 1 ? "track" : "tracks"
             encodeSummary =
-                "Encode \(audioTrackCount) audio \(noun) once as \(audioPreset.displayName) while packet-copying video and subtitles"
+                "Encode \(audioEncodeCount) mismatched audio \(noun) once as \(audioPreset.displayName) while packet-copying video, matching audio, and subtitles"
         } else {
             preconditionFailure("A reviewed encoding plan has no encoding policy")
         }
@@ -810,14 +839,20 @@ public struct SavedWorkflowCompiler: Sendable {
 
     private func videoConversionDetail(
         _ choice: ExactTrimChoice,
-        audioTrackCount: Int
+        audioEncodeCount: Int,
+        copiedAudioCount: Int
     ) -> String {
         guard let preset = choice.audioPolicy.transcodePreset else {
             return
                 "Encode video once as \(choice.videoPreset.displayName); packet-copy every audio and subtitle track"
         }
-        let noun = audioTrackCount == 1 ? "track" : "tracks"
+        let noun = audioEncodeCount == 1 ? "track" : "tracks"
+        let copiedNoun = copiedAudioCount == 1 ? "track" : "tracks"
+        let copyDetail =
+            copiedAudioCount == 0
+            ? ""
+            : "; packet-copy \(copiedAudioCount) already-matching audio \(copiedNoun)"
         return
-            "Encode video once as \(choice.videoPreset.displayName) and \(audioTrackCount) audio \(noun) once as \(preset.displayName); packet-copy subtitles"
+            "Encode video once as \(choice.videoPreset.displayName) and \(audioEncodeCount) audio \(noun) once as \(preset.displayName)\(copyDetail); packet-copy subtitles"
     }
 }

@@ -138,6 +138,8 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
     public let videoDynamicRange: JoinVideoDynamicRangeTarget
     public let hdr10Signal: MediaHDR10Signal?
     public let audioTrackIDs: [Int]
+    public let encodedAudioTrackIDs: [Int]
+    public let copiedAudioTrackIDs: [Int]
     public let subtitleTrackIDs: [Int]
     public let trackIDsInOutputOrder: [Int]
 
@@ -150,6 +152,8 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         videoDynamicRange: JoinVideoDynamicRangeTarget,
         hdr10Signal: MediaHDR10Signal?,
         audioTrackIDs: [Int],
+        encodedAudioTrackIDs: [Int],
+        copiedAudioTrackIDs: [Int],
         subtitleTrackIDs: [Int],
         trackIDsInOutputOrder: [Int]
     ) {
@@ -161,14 +165,14 @@ public struct ResolvedExactTrimPlan: Hashable, Sendable {
         self.videoDynamicRange = videoDynamicRange
         self.hdr10Signal = hdr10Signal
         self.audioTrackIDs = audioTrackIDs
+        self.encodedAudioTrackIDs = encodedAudioTrackIDs
+        self.copiedAudioTrackIDs = copiedAudioTrackIDs
         self.subtitleTrackIDs = subtitleTrackIDs
         self.trackIDsInOutputOrder = trackIDsInOutputOrder
     }
 
     public var videoEncodeCount: Int { 1 }
-    public var audioEncodeCount: Int {
-        choice.audioPolicy.transcodePreset == nil ? 0 : audioTrackIDs.count
-    }
+    public var audioEncodeCount: Int { encodedAudioTrackIDs.count }
 }
 
 public struct ExactTrimPlanner: Sendable {
@@ -276,17 +280,21 @@ public struct ExactTrimPlanner: Sendable {
             throw ExactTrimPlanningError.unavailableVideoPreset(choice.videoPreset)
         }
         try validate(choice)
+        let encodedAudioTracks: [MediaTrack]
         if let audioPreset = choice.audioPolicy.transcodePreset {
+            encodedAudioTracks = audios.filter {
+                !audioPreset.matches(sourceCodec: $0.codec)
+            }
             let effectiveAudioPresets = availableAudioPresets.union(
                 aacAvailable ? [.aacCompatibility] : []
             )
-            guard effectiveAudioPresets.contains(audioPreset) else {
+            guard encodedAudioTracks.isEmpty || effectiveAudioPresets.contains(audioPreset) else {
                 if audioPreset == .aacCompatibility {
                     throw ExactTrimPlanningError.unavailableAAC
                 }
                 throw ExactTrimPlanningError.unavailableAudioPreset(audioPreset)
             }
-            for audio in audios {
+            for audio in encodedAudioTracks {
                 guard let channels = audio.channels,
                     let sampleRate = audio.sampleRate,
                     let layout = audio.channelLayout,
@@ -296,7 +304,10 @@ public struct ExactTrimPlanner: Sendable {
                     throw ExactTrimPlanningError.incompleteAudioFacts(trackID: audio.id)
                 }
             }
+        } else {
+            encodedAudioTracks = []
         }
+        let encodedAudioTrackIDs = Set(encodedAudioTracks.map(\.id))
         return ResolvedExactTrimPlan(
             operation: operation,
             source: source,
@@ -306,6 +317,12 @@ public struct ExactTrimPlanner: Sendable {
             videoDynamicRange: videoDynamicRange,
             hdr10Signal: hdr10Signal,
             audioTrackIDs: audios.map(\.id),
+            encodedAudioTrackIDs: audios.filter {
+                encodedAudioTrackIDs.contains($0.id)
+            }.map(\.id),
+            copiedAudioTrackIDs: audios.filter {
+                !encodedAudioTrackIDs.contains($0.id)
+            }.map(\.id),
             subtitleTrackIDs: subtitles.map(\.id),
             trackIDsInOutputOrder: source.tracks.map(\.id)
         )

@@ -172,8 +172,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     public var explanation: String {
         if let preset = audioTranscodePreset {
             return requiresVideoConversion
-                ? "During the same reviewed full-file video conversion, encode every retained audio track once as \(preset.displayName) while preserving each known channel layout."
-                : "Encode every retained audio track once as \(preset.displayName) while packet-copying video and subtitles. If video conversion is also selected, fuse both choices into one FFmpeg process."
+                ? "During the same reviewed full-file video conversion, make every retained audio track \(preset.displayName) while preserving each known channel layout. Tracks already in that codec remain exact packet copies."
+                : "Make every retained audio track \(preset.displayName), encoding only mismatched tracks while packet-copying video, subtitles, and matching audio. If video conversion is also selected, fuse both choices into one FFmpeg process."
         }
         return switch self {
         case .englishLibraryCleanup:

@@ -100,7 +100,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
     }
 
     func testAACPolicyEncodesEachAudioTrackOnceWithoutChangingLayoutFacts() throws {
-        let fixture = try makeFixture()
+        let fixture = try makeFixture(audioCodec: "eac3")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let plan = try resolve(
             source: fixture.source,
@@ -129,7 +129,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
     }
 
     func testEveryVerifiedAudioPresetCompilesOneBoundedLayoutPreservingEncode() throws {
-        let fixture = try makeFixture()
+        let fixture = try makeFixture(audioCodec: "pcm_s16le")
         defer { try? FileManager.default.removeItem(at: fixture.root) }
         let cases: [(AudioTranscodePreset, String, String?)] = [
             (.aacCompatibility, "aac_at", "192000"),
@@ -166,6 +166,70 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
                 XCTAssertEqual(value(after: "-application:a:0", in: command.arguments), "audio")
             }
         }
+    }
+
+    func testAdvancedAudioUsesOutputIndexesWhileCopyingMatchingTracks() throws {
+        let fixture = try makeFixture(
+            audioCodec: "opus",
+            extraTrack: MediaTrack(
+                id: 2,
+                kind: .audio,
+                codec: "eac3",
+                channels: 6,
+                channelLayout: "5.1",
+                sampleRate: 48_000
+            )
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try resolve(
+            source: fixture.source,
+            choice: ExactTrimChoice(
+                videoPreset: .h264Compatibility,
+                videoRateControl: .averageBitrate(3_000_000),
+                audioPolicy: .opusPreserveLayout
+            ),
+            range: range(1, 9),
+            presets: [.h264Compatibility],
+            audioPresets: [.opusQuality]
+        )
+
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(),
+            outputURL: fixture.root.appendingPathComponent("Mixed Opus.mkv")
+        )
+
+        XCTAssertNil(value(after: "-c:a:0", in: command.arguments))
+        XCTAssertEqual(value(after: "-c:a:1", in: command.arguments), "libopus")
+        XCTAssertEqual(value(after: "-ac:a:1", in: command.arguments), "6")
+        XCTAssertEqual(command.encodedAudioTrackIDs, [2])
+        XCTAssertEqual(command.copiedAudioTrackIDs, [1])
+    }
+
+    func testMatchingAudioNeedsNoAudioEncoderAndRemainsACopy() throws {
+        let fixture = try makeFixture(audioCodec: "opus")
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let plan = try resolve(
+            source: fixture.source,
+            choice: ExactTrimChoice(
+                videoPreset: .h264Compatibility,
+                videoRateControl: .averageBitrate(3_000_000),
+                audioPolicy: .opusPreserveLayout
+            ),
+            range: range(1, 9),
+            presets: [.h264Compatibility],
+            audioPresets: []
+        )
+
+        let command = try ExactTrimCommandBuilder().build(
+            resolvedPlan: plan,
+            capabilities: capabilities(includeAudio: false),
+            outputURL: fixture.root.appendingPathComponent("Copied Opus.mkv")
+        )
+
+        XCTAssertFalse(command.arguments.contains("-c:a:0"))
+        XCTAssertEqual(command.encodedAudioTrackIDs, [])
+        XCTAssertEqual(command.copiedAudioTrackIDs, [1])
     }
 
     func testPassesReviewedAV1RFAndSpeedToTheSharedEncoderCompiler() throws {
@@ -273,6 +337,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
 
     private func makeFixture(
         hdr10: Bool = false,
+        audioCodec: String = "aac",
         extraTrack: MediaTrack? = nil
     ) throws -> Fixture {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
@@ -282,7 +347,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         let sourceURL = root.appendingPathComponent("Source.mkv")
         try Data([1]).write(to: sourceURL)
-        var tracks = [videoTrack(hdr10: hdr10), audioTrack()]
+        var tracks = [videoTrack(hdr10: hdr10), audioTrack(codec: audioCodec)]
         if let extraTrack { tracks.append(extraTrack) }
         return Fixture(
             root: root,
@@ -318,7 +383,7 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         )
     }
 
-    private func capabilities() -> FFmpegEncodingCapabilities {
+    private func capabilities(includeAudio: Bool = true) -> FFmpegEncodingCapabilities {
         FFmpegEncodingCapabilities(
             softwareAV1: .verified,
             softwareAV1Encoder: "libsvtav1",
@@ -329,13 +394,14 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
             aac: .verified,
             aacEncoder: "aac_at",
             availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters,
-            audioCapabilities: [
-                .aacCompatibility: .init(status: .verified, encoder: "aac_at"),
-                .opusQuality: .init(status: .verified, encoder: "libopus"),
-                .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
-                .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
-                .flacLossless: .init(status: .verified, encoder: "flac"),
-            ]
+            audioCapabilities: includeAudio
+                ? [
+                    .aacCompatibility: .init(status: .verified, encoder: "aac_at"),
+                    .opusQuality: .init(status: .verified, encoder: "libopus"),
+                    .ac3Compatibility: .init(status: .verified, encoder: "ac3"),
+                    .eac3Compatibility: .init(status: .verified, encoder: "eac3"),
+                    .flacLossless: .init(status: .verified, encoder: "flac"),
+                ] : [:]
         )
     }
 
@@ -364,11 +430,11 @@ final class ExactTrimCommandBuilderTests: XCTestCase {
         )
     }
 
-    private func audioTrack() -> MediaTrack {
+    private func audioTrack(codec: String) -> MediaTrack {
         MediaTrack(
             id: 1,
             kind: .audio,
-            codec: "aac",
+            codec: codec,
             codecID: "A_AAC",
             profile: "LC",
             uid: 101,

@@ -559,6 +559,17 @@ final class OutputVerificationTests: XCTestCase {
             MediaTrack(
                 id: 1,
                 kind: .audio,
+                codec: "flac",
+                codecID: "A_FLAC",
+                language: "fr",
+                title: "Original",
+                channels: 2,
+                channelLayout: "stereo",
+                sampleRate: 48_000
+            ),
+            MediaTrack(
+                id: 2,
+                kind: .audio,
                 codec: "aac",
                 codecID: "A_AAC",
                 language: "en",
@@ -569,7 +580,7 @@ final class OutputVerificationTests: XCTestCase {
                 sampleRate: 48_000
             ),
             MediaTrack(
-                id: 2,
+                id: 3,
                 kind: .subtitle,
                 codec: "subrip",
                 codecID: "S_TEXT/UTF8",
@@ -584,8 +595,9 @@ final class OutputVerificationTests: XCTestCase {
         )
         let outputTracks = [
             sourceTracks[0],
+            sourceTracks[1],
             MediaTrack(
-                id: 1,
+                id: 2,
                 kind: .audio,
                 codec: "flac",
                 codecID: "A_FLAC",
@@ -596,7 +608,7 @@ final class OutputVerificationTests: XCTestCase {
                 channelLayout: "5.1",
                 sampleRate: 48_000
             ),
-            sourceTracks[2],
+            sourceTracks[3],
         ]
         let output = asset(
             title: "Movie",
@@ -648,6 +660,36 @@ final class OutputVerificationTests: XCTestCase {
             XCTAssertEqual(
                 $0 as? CompleteAudioConversionVerificationError,
                 .copiedTrackMismatch(trackID: 0)
+            )
+        }
+
+        var changedCopiedAudio = outputTracks
+        changedCopiedAudio[1] = MediaTrack(
+            id: 1,
+            kind: .audio,
+            codec: "eac3",
+            codecID: "A_EAC3",
+            language: "fr",
+            title: "Original",
+            channels: 2,
+            channelLayout: "stereo",
+            sampleRate: 48_000
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                resolvedPlan: plan,
+                chapters: chapters,
+                output: asset(
+                    title: "Movie",
+                    tracks: changedCopiedAudio,
+                    segmentUID: "2233",
+                    encoder: "ffmpeg"
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? CompleteAudioConversionVerificationError,
+                .copiedTrackMismatch(trackID: 1)
             )
         }
     }

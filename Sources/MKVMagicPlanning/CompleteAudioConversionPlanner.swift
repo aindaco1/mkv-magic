@@ -7,6 +7,7 @@ public enum CompleteAudioConversionPlanningError: Error, Equatable, Sendable {
     case unsupportedTracks
     case unsupportedTags
     case noAudioTracks
+    case noAudioConversionNeeded(AudioTranscodePreset)
     case unavailableAudioPreset(AudioTranscodePreset)
     case incompleteAudioFacts(trackID: Int)
 }
@@ -24,6 +25,8 @@ extension CompleteAudioConversionPlanningError: LocalizedError {
             "Audio-only conversion cannot yet prove preservation of this source's Matroska tags."
         case .noAudioTracks:
             "This file has no audio tracks to convert."
+        case .noAudioConversionNeeded(let preset):
+            "Every audio track is already \(preset.displayName); no conversion is needed."
         case .unavailableAudioPreset(let preset):
             "The selected \(preset.displayName) audio encoder did not pass the active local probe."
         case .incompleteAudioFacts(let trackID):
@@ -35,26 +38,26 @@ extension CompleteAudioConversionPlanningError: LocalizedError {
 public struct ResolvedCompleteAudioConversionPlan: Hashable, Sendable {
     public let source: MediaAsset
     public let preset: AudioTranscodePreset
-    public let audioTrackIDs: [Int]
+    public let encodedAudioTrackIDs: [Int]
     public let copiedTrackIDs: [Int]
     public let trackIDsInOutputOrder: [Int]
 
     public init(
         source: MediaAsset,
         preset: AudioTranscodePreset,
-        audioTrackIDs: [Int],
+        encodedAudioTrackIDs: [Int],
         copiedTrackIDs: [Int],
         trackIDsInOutputOrder: [Int]
     ) {
         self.source = source
         self.preset = preset
-        self.audioTrackIDs = audioTrackIDs
+        self.encodedAudioTrackIDs = encodedAudioTrackIDs
         self.copiedTrackIDs = copiedTrackIDs
         self.trackIDsInOutputOrder = trackIDsInOutputOrder
     }
 
     public var videoEncodeCount: Int { 0 }
-    public var audioEncodeCount: Int { audioTrackIDs.count }
+    public var audioEncodeCount: Int { encodedAudioTrackIDs.count }
 }
 
 public struct CompleteAudioConversionPlanner: Sendable {
@@ -90,10 +93,16 @@ public struct CompleteAudioConversionPlanner: Sendable {
         guard !audioTracks.isEmpty else {
             throw CompleteAudioConversionPlanningError.noAudioTracks
         }
+        let encodedAudioTracks = audioTracks.filter {
+            !preset.matches(sourceCodec: $0.codec)
+        }
+        guard !encodedAudioTracks.isEmpty else {
+            throw CompleteAudioConversionPlanningError.noAudioConversionNeeded(preset)
+        }
         guard availableAudioPresets.contains(preset) else {
             throw CompleteAudioConversionPlanningError.unavailableAudioPreset(preset)
         }
-        for track in audioTracks {
+        for track in encodedAudioTracks {
             guard let channels = track.channels,
                 let layout = track.channelLayout,
                 let sampleRate = track.sampleRate,
@@ -105,11 +114,14 @@ public struct CompleteAudioConversionPlanner: Sendable {
                 )
             }
         }
+        let encodedAudioTrackIDs = Set(encodedAudioTracks.map(\.id))
         return ResolvedCompleteAudioConversionPlan(
             source: source,
             preset: preset,
-            audioTrackIDs: audioTracks.map(\.id),
-            copiedTrackIDs: mediaTracks.filter { $0.kind != .audio }.map(\.id),
+            encodedAudioTrackIDs: encodedAudioTracks.map(\.id),
+            copiedTrackIDs: mediaTracks.filter {
+                !encodedAudioTrackIDs.contains($0.id)
+            }.map(\.id),
             trackIDsInOutputOrder: mediaTracks.map(\.id)
         )
     }

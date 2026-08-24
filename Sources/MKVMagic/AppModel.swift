@@ -73,7 +73,7 @@ final class AppModel {
                     if audioCount > 0 {
                         let noun = audioCount == 1 ? "track" : "tracks"
                         return
-                            "Zero video encodes; encode \(audioCount) audio \(noun) once while packet-copying video and subtitles."
+                            "Zero video encodes; encode \(audioCount) mismatched audio \(noun) once while packet-copying video, matching audio, and subtitles."
                     }
                     return
                         "Zero video encodes; all enabled steps share one verified output pipeline."
@@ -102,17 +102,21 @@ final class AppModel {
             case .trackRemoval: return "Remuxing retained tracks to a temporary output."
             case .saved(let workflow, _):
                 if workflow.videoConversionChoice != nil {
+                    let audioCount = workflow.plan.impact.audioEncodeCount
+                    let audioNoun = audioCount == 1 ? "track" : "tracks"
                     let encoding =
-                        workflow.audioConversionPreset == nil
+                        audioCount == 0
                         ? "encoding video once"
-                        : "encoding video once and each retained audio track once"
+                        : "encoding video once and \(audioCount) mismatched audio \(audioNoun) once"
                     return workflow.hasDeterministicMediaOperations
                         ? "Preparing one verified private remux, then \(encoding)."
                         : "\(encoding.prefix(1).uppercased())\(encoding.dropFirst()) while copying every retained subtitle."
                 } else if workflow.audioConversionPreset != nil {
+                    let audioCount = workflow.plan.impact.audioEncodeCount
+                    let noun = audioCount == 1 ? "track" : "tracks"
                     return workflow.hasDeterministicMediaOperations
-                        ? "Preparing one verified private remux, then encoding every retained audio track once."
-                        : "Encoding every audio track once while packet-copying video and subtitles."
+                        ? "Preparing one verified private remux, then encoding \(audioCount) mismatched audio \(noun) once."
+                        : "Encoding \(audioCount) mismatched audio \(noun) once while packet-copying video, matching audio, and subtitles."
                 } else if workflow.createsUnchangedCopy {
                     return "Creating one unchanged temporary clone."
                 } else if workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil {

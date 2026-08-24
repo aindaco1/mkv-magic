@@ -10,8 +10,8 @@ The native Audio popup starts at **Preserve Audio Exactly (Packet Copy)**. It ca
 then show AAC, Opus, AC-3, E-AC-3, and lossless FLAC, but only when:
 
 - that exact bundled encoder passed the active local smoke;
-- every audio track has known channels, layout, and sample rate; and
-- the chosen codec can represent each exact layout without an implicit downmix
+- every mismatched audio track has known channels, layout, and sample rate; and
+- the chosen codec can represent each mismatched track's exact layout without an implicit downmix
   or rematrix.
 
 Opus discloses its 48 kHz Matroska clock in the popup. Other accepted inputs
@@ -28,11 +28,12 @@ and channel-layout arguments directly to `Process`; Opus receives only its typed
 application and multichannel mapping options. There is no free-form argument or
 shell surface.
 
-All selected audio tracks are encoded in the same FFmpeg invocation as the one
-required video generation. No workflow stage can transcode the audio or video a
-second time. Encoder disappearance, changed source facts, an unrepresentable
-layout/rate, invalid path, existing output, or command-size regression fails
-before commit.
+All mismatched selected audio tracks are encoded in the same FFmpeg invocation
+as the one required video generation; tracks already in the selected codec are
+packet-copied and do not require that encoder. No workflow stage can transcode
+the audio or video a second time. Encoder disappearance, changed source facts,
+an unrepresentable layout/rate, invalid path, existing output, or command-size
+regression fails before commit.
 
 ## Verification contract
 

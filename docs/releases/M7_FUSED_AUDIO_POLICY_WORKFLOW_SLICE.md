@@ -10,25 +10,26 @@ changing packet copy as the default or adding another FFmpeg process.
 - A recipe can contain at most one video card and one dependent audio card.
   Removing or disabling the video card removes or disables its audio card;
   enabling the audio card re-enables the existing video card.
-- The audio card applies to every retained audio track. Plan review names the
-  chosen video and audio formats and reports one video generation plus the exact
-  number of audio tracks encoded once.
+- The audio card applies one target to every retained audio track. Tracks already
+  in that codec remain packet copies; plan review reports one video generation
+  plus the exact number of mismatched audio tracks encoded once.
 - Packet-copy audio remains the safe default when no audio card is present. A
   file with no audio marks the dependent card skipped.
 
 ## Capability and preservation contract
 
-The active bundled-runtime probe must verify the explicit audio encoder. Every
-source audio track must expose a known channel count, channel layout, and sample
-rate that the chosen preset can represent without implicit downmix or rematrix.
+When at least one track differs, the active bundled-runtime probe must verify the
+explicit audio encoder. Every mismatched source audio track must expose a known
+channel count, channel layout, and sample rate that the chosen preset can
+represent without implicit downmix or rematrix.
 AAC, AC-3, E-AC-3, and FLAC retain accepted sample rates; Opus explicitly uses
 its reviewed 48 kHz Matroska clock. Any unavailable encoder or incompatible
 track fails during plan review, before a destination is created.
 
 Video and audio choices resolve through the existing complete-file exact
 planner. The executor emits one FFmpeg invocation: video is encoded once, every
-retained audio track is encoded once, and subtitles are packet-copied and
-fingerprinted. Attachments, nested chapters, track metadata, HDR10, source
+mismatched retained audio track is encoded once, and matching audio plus
+subtitles are packet-copied and fingerprinted. Attachments, nested chapters, track metadata, HDR10, source
 revision, and the existing pre-commit/post-reopen audits retain their prior
 contracts. Deterministic track, subtitle, and title work still occurs in one
 private verified preparation pass before that single encoding process.
@@ -71,7 +72,8 @@ meaning; an older schema claiming a newer action fails closed.
 
 - This card depends on full-file video conversion. It does not claim standalone
   audio-only workflow conversion.
-- It applies one format to every retained audio track. Per-track audio policies
-  and conditional codec predicates remain unimplemented.
+- It applies one target format to every retained audio track and automatically
+  copies matching codecs. User-authored per-track policies and arbitrary codec
+  predicates remain unimplemented.
 - Physical Intel throughput and representative Jellyfin/Plex playback remain
   personal-beta acceptance work.

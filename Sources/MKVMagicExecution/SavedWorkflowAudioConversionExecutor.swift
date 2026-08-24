@@ -24,8 +24,9 @@ extension SavedWorkflowAudioConversionExecutionError: LocalizedError {
 }
 
 /// Applies packet-copy and metadata work to one private verified intermediate,
-/// then converts every audio track exactly once while independently proving that
-/// copied video and subtitle packets match the reviewed source.
+/// then converts each mismatched audio track exactly once while independently
+/// proving that copied video, matching audio, and subtitle packets match the
+/// reviewed source.
 public struct SavedWorkflowAudioConversionExecutor<
     Runner: CommandRunning & CommandLineDigesting,
     Inspector: MediaInspecting

@@ -13,11 +13,46 @@ final class CompleteAudioConversionPlannerTests: XCTestCase {
             availableAudioPresets: [.flacLossless]
         )
 
-        XCTAssertEqual(plan.audioTrackIDs, [1, 3])
+        XCTAssertEqual(plan.encodedAudioTrackIDs, [1, 3])
         XCTAssertEqual(plan.copiedTrackIDs, [0, 2])
         XCTAssertEqual(plan.trackIDsInOutputOrder, [0, 1, 2, 3])
         XCTAssertEqual(plan.videoEncodeCount, 0)
         XCTAssertEqual(plan.audioEncodeCount, 2)
+    }
+
+    func testCopiesAudioAlreadyInTheRequestedFormatAndEncodesOnlyMismatches() throws {
+        let source = makeSource(firstAudioCodec: "flac", secondAudioCodec: "aac")
+
+        let plan = try CompleteAudioConversionPlanner().resolve(
+            source: source,
+            preset: .flacLossless,
+            availableAudioPresets: [.flacLossless]
+        )
+
+        XCTAssertEqual(plan.encodedAudioTrackIDs, [3])
+        XCTAssertEqual(plan.copiedTrackIDs, [0, 1, 2])
+        XCTAssertEqual(plan.trackIDsInOutputOrder, [0, 1, 2, 3])
+        XCTAssertEqual(plan.audioEncodeCount, 1)
+    }
+
+    func testRejectsNoOpBeforeRequiringAnEncoderOrCopiedAudioFacts() {
+        XCTAssertThrowsError(
+            try CompleteAudioConversionPlanner().resolve(
+                source: makeSource(
+                    firstAudioCodec: " FLAC ",
+                    secondAudioCodec: "flac",
+                    secondAudioChannels: 8,
+                    secondAudioLayout: "7.1"
+                ),
+                preset: .flacLossless,
+                availableAudioPresets: []
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? CompleteAudioConversionPlanningError,
+                .noAudioConversionNeeded(.flacLossless)
+            )
+        }
     }
 
     func testRejectsMissingProbeTagsAndImplicitLayoutChanges() {
@@ -118,6 +153,8 @@ final class CompleteAudioConversionPlannerTests: XCTestCase {
 
     private func makeSource(
         globalTags: Int = 0,
+        firstAudioCodec: String = "aac",
+        secondAudioCodec: String = "eac3",
         secondAudioChannels: Int = 6,
         secondAudioLayout: String = "5.1"
     ) -> MediaAsset {
@@ -130,7 +167,7 @@ final class CompleteAudioConversionPlannerTests: XCTestCase {
                 MediaTrack(
                     id: 1,
                     kind: .audio,
-                    codec: "aac",
+                    codec: firstAudioCodec,
                     channels: 2,
                     channelLayout: "stereo",
                     sampleRate: 48_000
@@ -139,7 +176,7 @@ final class CompleteAudioConversionPlannerTests: XCTestCase {
                 MediaTrack(
                     id: 3,
                     kind: .audio,
-                    codec: "eac3",
+                    codec: secondAudioCodec,
                     channels: secondAudioChannels,
                     channelLayout: secondAudioLayout,
                     sampleRate: 48_000

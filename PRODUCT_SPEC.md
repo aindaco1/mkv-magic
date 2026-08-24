@@ -362,11 +362,14 @@ subtitle, or title steps also apply, MKV Magic first creates a private
 verified packet-copy/metadata intermediate and then performs exactly one final
 video encode. It never chains conversion generations. Audio and text subtitles
 remain packet-copied by default. One audio card may instead choose AAC, Opus,
-AC-3, E-AC-3, or FLAC for every retained audio track. The active probe and exact
-layout/rate policy must approve that format. With video conversion, every audio
-track is encoded once inside the same FFmpeg process as the one video generation.
-Without video conversion, one audio-only FFmpeg process packet-copies video and
-subtitles, and independent packet fingerprints prove those copied payloads.
+AC-3, E-AC-3, or FLAC as the target for every retained audio track. Tracks already
+in that codec remain packet copies; only mismatched tracks require the active
+encoder probe and exact layout/rate policy. With video conversion, those
+mismatched tracks are encoded once inside the same FFmpeg process as the one
+video generation. Without video conversion, one audio-only FFmpeg process
+packet-copies video, subtitles, and matching audio, and independent packet
+fingerprints prove those copied payloads. When every audio track already matches,
+the audio card is skipped without requiring an encoder.
 Queue reinspection must reproduce the codec-bearing, audio-policy-bearing
 semantic plan before automatic execution. The reviewed source revision is
 retained through both immediate and queued starts.
@@ -547,10 +550,12 @@ semantics; a file cannot claim an older schema while using a newer action.
 
 Schema v8 adds five standalone **Convert all audio** actions. The editor permits
 one without a video card and keeps it when a video card is removed or disabled.
-Compilation applies one format to every retained audio track, fails closed when
-the local encoder, exact layout, or sample rate is not supported, and reports an
-audio-heavy plan with zero video generations. Audio-only execution packet-copies
-video and subtitles and independently fingerprints their encoded packets.
+Compilation applies one target format to every retained audio track, packet-copies
+tracks already in that codec, fails closed when a mismatched track cannot use the
+local encoder or preserve its exact layout and sample rate, and reports the exact
+number of audio generations. A matching-only card is skipped without capability
+probing. Audio-only execution packet-copies video, subtitles, and matching audio
+and independently fingerprints their encoded packets.
 If a video conversion is also applicable, both policies compile into the same
 single FFmpeg process. Imported schema-v6 **With video conversion** actions keep
 their historical dependency and are not emitted by the current editor.
@@ -1057,8 +1062,9 @@ with one video generation. Strict BT.709 SDR and validated 10-bit static HDR10
 are executable; HDR10 uses only AV1 or HEVC and binds output verification to the
 exact inspected BT.2020/PQ, matrix, mastering-display, and content-light signal.
 Audio is packet-copied by default. Explicit AAC, Opus, AC-3, E-AC-3, and FLAC
-choices each encode a selected track once and retain the exact reviewed channel
-layout. Accepted AAC/AC-3/E-AC-3/FLAC rates remain unchanged; Opus declares a
+choices encode each mismatched selected track once, copy tracks already in the
+requested codec, and retain the exact reviewed channel layout. Accepted
+AAC/AC-3/E-AC-3/FLAC rates remain unchanged; Opus declares a
 48 kHz output clock. Static layout/rate policy plus the active encoder probe hide
 unsafe choices rather than accepting FFmpeg's implicit downmix/rematrix behavior.
 Output-side seeking applies the in-point to copied audio,
@@ -1160,8 +1166,9 @@ or FLAC audio policy that may also run without video conversion. Plan
 review binds both locally verified choices and composes deterministic cleanup
 into a private verified intermediate followed by one final FFmpeg process. A
 pinned-runtime integration proves the edit precedes that only invocation, each
-retained audio track is encoded at most once, the final metadata/track/chapter/
-attachment contract passes, and the source digest is unchanged.
+mismatched retained audio track is encoded at most once, matching audio remains
+a proven packet copy, the final metadata/track/chapter/attachment contract
+passes, and the source digest is unchanged.
 Mixed BT.709 SDR and validated static HDR10 Join lanes now default to BT.709 SDR.
 The compiler preserves each SDR Part's BT.709 path, converts each HDR10 Part from
 PQ to linear light, applies bounded Mobius tone mapping with a peak derived from

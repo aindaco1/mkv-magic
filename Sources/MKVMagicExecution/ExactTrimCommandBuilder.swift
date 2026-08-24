@@ -83,7 +83,8 @@ public struct ExactTrimCommandBuilder: Sendable {
                 resolvedPlan.choice.videoPreset
             )
         }
-        if let audioPreset = resolvedPlan.choice.audioPolicy.transcodePreset,
+        if !resolvedPlan.encodedAudioTrackIDs.isEmpty,
+            let audioPreset = resolvedPlan.choice.audioPolicy.transcodePreset,
             capabilities.verifiedAudioEncoder(for: audioPreset) == nil
         {
             if audioPreset == .aacCompatibility {
@@ -167,15 +168,28 @@ public struct ExactTrimCommandBuilder: Sendable {
         if resolvedPlan.choice.audioPolicy == .packetCopy {
             copiedAudioTrackIDs = resolvedPlan.audioTrackIDs
         } else if let audioPreset = resolvedPlan.choice.audioPolicy.transcodePreset {
-            guard let audioEncoder = capabilities.verifiedAudioEncoder(for: audioPreset) else {
-                if audioPreset == .aacCompatibility {
-                    throw ExactTrimCommandError.unavailableAAC
+            let audioEncoder: String?
+            if resolvedPlan.encodedAudioTrackIDs.isEmpty {
+                audioEncoder = nil
+            } else {
+                guard let verified = capabilities.verifiedAudioEncoder(for: audioPreset) else {
+                    if audioPreset == .aacCompatibility {
+                        throw ExactTrimCommandError.unavailableAAC
+                    }
+                    throw ExactTrimCommandError.unavailableAudioPreset(audioPreset)
                 }
-                throw ExactTrimCommandError.unavailableAudioPreset(audioPreset)
+                audioEncoder = verified
             }
-            encodedAudioTrackIDs = resolvedPlan.audioTrackIDs
-            for (outputIndex, trackID) in resolvedPlan.audioTrackIDs.enumerated() {
-                guard let track = source.tracks.first(where: { $0.id == trackID }),
+            encodedAudioTrackIDs = resolvedPlan.encodedAudioTrackIDs
+            copiedAudioTrackIDs = resolvedPlan.copiedAudioTrackIDs
+            let encodedAudioTrackIDSet = Set(encodedAudioTrackIDs)
+            var audioOutputIndex = 0
+            for trackID in resolvedPlan.audioTrackIDs {
+                let currentAudioOutputIndex = audioOutputIndex
+                audioOutputIndex += 1
+                guard encodedAudioTrackIDSet.contains(trackID) else { continue }
+                guard let audioEncoder,
+                    let track = source.tracks.first(where: { $0.id == trackID }),
                     let channels = track.channels,
                     let sampleRate = track.sampleRate,
                     let channelLayout = track.channelLayout
@@ -185,7 +199,7 @@ public struct ExactTrimCommandBuilder: Sendable {
                 do {
                     arguments.append(
                         contentsOf: try FFmpegAudioEncoderArguments().make(
-                            outputIndex: outputIndex,
+                            outputIndex: currentAudioOutputIndex,
                             encoder: audioEncoder,
                             preset: audioPreset,
                             channels: channels,

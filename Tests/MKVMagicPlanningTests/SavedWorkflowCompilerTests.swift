@@ -235,7 +235,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
         XCTAssertEqual(
             compiled.plan.stages.first(where: { $0.mechanism == .ffmpegEncode })?.summary,
-            "Encode video once as H.264 8-bit and 1 audio track once as Opus; packet-copy subtitles"
+            "Encode video once as H.264 8-bit and 1 mismatched audio track once as Opus; packet-copy already-matching audio and subtitles"
         )
 
         XCTAssertThrowsError(
@@ -310,8 +310,74 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
         XCTAssertEqual(
             compiled.plan.stages[0].summary,
-            "Encode 1 audio track once as FLAC (Lossless) while packet-copying video and subtitles"
+            "Encode 1 mismatched audio track once as FLAC (Lossless) while packet-copying video, matching audio, and subtitles"
         )
+    }
+
+    func testStandaloneAudioSkipsMatchingTracksAndNeedsNoEncoderForANoOp() throws {
+        let workflow = SavedWorkflow(
+            name: "Selective FLAC",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
+        )
+        let matchingAsset = makeConvertibleAsset(audioCodec: "FLAC")
+
+        XCTAssertFalse(
+            SavedWorkflowCompiler().needsEncodingCapabilities(
+                for: workflow,
+                asset: matchingAsset
+            )
+        )
+        let matchingPreview = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: matchingAsset
+        )
+        XCTAssertNil(matchingPreview.compiledWorkflow)
+        XCTAssertEqual(matchingPreview.stepOutcomes.map(\.disposition), [.skipped])
+
+        let mixedAsset = makeConvertibleAsset(
+            audioCodec: "flac",
+            additionalAudioCodec: "aac"
+        )
+        let mixedPreview = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: mixedAsset,
+            inputs: SavedWorkflowResolvedInputs(
+                availableAudioPresets: [.flacLossless]
+            )
+        )
+        let compiled = try XCTUnwrap(mixedPreview.compiledWorkflow)
+
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 1)
+        XCTAssertEqual(
+            mixedPreview.stepOutcomes.map(\.detail),
+            [
+                "Encode 1 audio track once as FLAC (Lossless), preserving each channel layout; packet-copy 1 already-matching audio track"
+            ]
+        )
+    }
+
+    func testVideoConversionCopiesAudioWhenEveryTrackAlreadyMatchesTarget() throws {
+        let workflow = SavedWorkflow(
+            name: "Video plus already Opus",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoH264),
+                SavedWorkflowStep(action: .transcodeAllAudioOpus),
+            ]
+        )
+        let preview = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: makeConvertibleAsset(audioCodec: "opus"),
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.h264Compatibility]
+            )
+        )
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(compiled.videoConversionChoice?.audioPolicy, .packetCopy)
+        XCTAssertNil(compiled.audioConversionPreset)
+        XCTAssertEqual(preview.stepOutcomes.map(\.disposition), [.applied, .skipped])
     }
 
     func testStandaloneAudioConversionFusesWithVideoAndSkipsFilesWithoutAudio() throws {
@@ -875,51 +941,68 @@ final class SavedWorkflowCompilerTests: XCTestCase {
     private func makeConvertibleAsset(
         title: String? = nil,
         hdr10: Bool = false,
+        audioCodec: String = "aac",
+        additionalAudioCodec: String? = nil,
         audioChannels: Int = 2,
         audioLayout: String = "stereo"
     ) -> MediaAsset {
-        MediaAsset(
+        var tracks = [
+            MediaTrack(
+                id: 0,
+                kind: .video,
+                codec: hdr10 ? "hevc" : "h264",
+                codecID: hdr10 ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
+                profile: hdr10 ? "Main 10" : "High",
+                uid: 100,
+                isDefault: true,
+                dimensions: MediaDimensions(width: 160, height: 90),
+                pixelFormat: hdr10 ? "yuv420p10le" : "yuv420p",
+                bitDepth: hdr10 ? 10 : 8,
+                frameRate: "24/1",
+                colorInfo: MediaColorInfo(
+                    range: "tv",
+                    primaries: hdr10 ? "bt2020" : "bt709",
+                    transfer: hdr10 ? "smpte2084" : "bt709",
+                    matrix: hdr10 ? "bt2020nc" : "bt709"
+                ),
+                masteringDisplayMetadata: hdr10 ? savedWorkflowMasteringDisplay : nil,
+                contentLightLevelMetadata: hdr10 ? savedWorkflowContentLight : nil,
+                hdrFormats: hdr10 ? ["HDR10 metadata"] : []
+            ),
+            MediaTrack(
+                id: 1,
+                kind: .audio,
+                codec: audioCodec,
+                codecID: audioCodec.lowercased() == "aac" ? "A_AAC" : nil,
+                profile: audioCodec.lowercased() == "aac" ? "LC" : nil,
+                uid: 101,
+                language: "en",
+                isDefault: true,
+                channels: audioChannels,
+                channelLayout: audioLayout,
+                sampleRate: 48_000
+            ),
+        ]
+        if let additionalAudioCodec {
+            tracks.append(
+                MediaTrack(
+                    id: 2,
+                    kind: .audio,
+                    codec: additionalAudioCodec,
+                    uid: 102,
+                    language: "fr",
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000
+                )
+            )
+        }
+        return MediaAsset(
             sourceURL: URL(fileURLWithPath: "/private/media/Feature.mkv"),
             container: "matroska,webm",
             duration: MediaTime(seconds: 10),
             fileSize: 1_000,
-            tracks: [
-                MediaTrack(
-                    id: 0,
-                    kind: .video,
-                    codec: hdr10 ? "hevc" : "h264",
-                    codecID: hdr10 ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
-                    profile: hdr10 ? "Main 10" : "High",
-                    uid: 100,
-                    isDefault: true,
-                    dimensions: MediaDimensions(width: 160, height: 90),
-                    pixelFormat: hdr10 ? "yuv420p10le" : "yuv420p",
-                    bitDepth: hdr10 ? 10 : 8,
-                    frameRate: "24/1",
-                    colorInfo: MediaColorInfo(
-                        range: "tv",
-                        primaries: hdr10 ? "bt2020" : "bt709",
-                        transfer: hdr10 ? "smpte2084" : "bt709",
-                        matrix: hdr10 ? "bt2020nc" : "bt709"
-                    ),
-                    masteringDisplayMetadata: hdr10 ? savedWorkflowMasteringDisplay : nil,
-                    contentLightLevelMetadata: hdr10 ? savedWorkflowContentLight : nil,
-                    hdrFormats: hdr10 ? ["HDR10 metadata"] : []
-                ),
-                MediaTrack(
-                    id: 1,
-                    kind: .audio,
-                    codec: "aac",
-                    codecID: "A_AAC",
-                    profile: "LC",
-                    uid: 101,
-                    language: "en",
-                    isDefault: true,
-                    channels: audioChannels,
-                    channelLayout: audioLayout,
-                    sampleRate: 48_000
-                ),
-            ],
+            tracks: tracks,
             metadata: title.map { ["title": $0] } ?? [:],
             chapterEntryCount: 0,
             globalTagCount: 0,

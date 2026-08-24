@@ -802,13 +802,14 @@ public struct CompleteAudioConversionOutputVerifier: Sendable {
         guard outputTracks.map(\.kind) == originalTracks.map(\.kind) else {
             throw CompleteAudioConversionVerificationError.wrongTrackOrder
         }
+        let encodedAudioTrackIDs = Set(resolvedPlan.encodedAudioTrackIDs)
         for (sourceTrack, outputTrack) in zip(originalTracks, outputTracks) {
             guard trackMetadataMatches(outputTrack, sourceTrack) else {
                 throw CompleteAudioConversionVerificationError.trackMetadataMismatch(
                     trackID: sourceTrack.id
                 )
             }
-            if sourceTrack.kind == .audio {
+            if encodedAudioTrackIDs.contains(sourceTrack.id) {
                 guard let inputRate = sourceTrack.sampleRate,
                     let expectedRate = resolvedPlan.preset.outputSampleRate(forInput: inputRate),
                     normalized(outputTrack.codec) == resolvedPlan.preset.codecName,

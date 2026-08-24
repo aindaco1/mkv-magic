@@ -119,7 +119,7 @@ final class ExactTrimPlannerTests: XCTestCase {
         XCTAssertEqual(copy.audioEncodeCount, 0)
 
         let aac = try ExactTrimPlanner().resolve(
-            source: source,
+            source: makeSource(audioCodec: "ac3"),
             range: range(2, 8),
             choice: ExactTrimChoice(
                 videoPreset: .hevcCompatibility,
@@ -130,11 +130,13 @@ final class ExactTrimPlannerTests: XCTestCase {
             aacAvailable: true
         )
         XCTAssertEqual(aac.audioEncodeCount, 1)
+        XCTAssertEqual(aac.encodedAudioTrackIDs, [1])
+        XCTAssertEqual(aac.copiedAudioTrackIDs, [])
     }
 
     func testAdvancedAudioRequiresAProbeAndAnExactlyPreservedLayout() throws {
         let planner = ExactTrimPlanner()
-        let source = makeSource()
+        let source = makeSource(audioCodec: "pcm_s16le")
         for preset in AudioTranscodePreset.allCases {
             let plan = try planner.resolve(
                 source: source,
@@ -173,7 +175,11 @@ final class ExactTrimPlannerTests: XCTestCase {
         for policy in [ExactTrimAudioPolicy.aacPreserveLayout, .ac3PreserveLayout] {
             XCTAssertThrowsError(
                 try planner.resolve(
-                    source: makeSource(audioLayout: "7.1", audioChannels: 8),
+                    source: makeSource(
+                        audioCodec: "flac",
+                        audioLayout: "7.1",
+                        audioChannels: 8
+                    ),
                     range: range(2, 8),
                     choice: ExactTrimChoice(
                         videoPreset: .hevcCompatibility,
@@ -193,7 +199,11 @@ final class ExactTrimPlannerTests: XCTestCase {
         }
         XCTAssertNoThrow(
             try planner.resolve(
-                source: makeSource(audioLayout: "7.1", audioChannels: 8),
+                source: makeSource(
+                    audioCodec: "flac",
+                    audioLayout: "7.1",
+                    audioChannels: 8
+                ),
                 range: range(2, 8),
                 choice: ExactTrimChoice(
                     videoPreset: .hevcCompatibility,
@@ -205,6 +215,31 @@ final class ExactTrimPlannerTests: XCTestCase {
                 availableAudioPresets: [.opusQuality]
             )
         )
+    }
+
+    func testAdvancedAudioCopiesMatchingTracksWithoutRequiringTheirFactsOrEncoder() throws {
+        let source = makeSource(
+            audioCodec: "AAC",
+            audioLayout: nil,
+            audioSampleRate: 0
+        )
+        let plan = try ExactTrimPlanner().resolve(
+            source: source,
+            range: range(2, 8),
+            choice: ExactTrimChoice(
+                videoPreset: .hevcCompatibility,
+                videoRateControl: .averageBitrate(2_000_000),
+                audioPolicy: .aacPreserveLayout
+            ),
+            availableVideoPresets: [.hevcCompatibility],
+            aacAvailable: false,
+            availableAudioPresets: []
+        )
+
+        XCTAssertEqual(plan.audioTrackIDs, [1])
+        XCTAssertEqual(plan.encodedAudioTrackIDs, [])
+        XCTAssertEqual(plan.copiedAudioTrackIDs, [1])
+        XCTAssertEqual(plan.audioEncodeCount, 0)
     }
 
     func testRecommendationPrefersFirstVerifiedPresetAndPacketCopiesAudio() throws {
@@ -412,7 +447,7 @@ final class ExactTrimPlannerTests: XCTestCase {
                     .unavailableVideoPreset(.hevcCompatibility)
                 ),
                 (
-                    makeSource(audioLayout: nil),
+                    makeSource(audioCodec: "flac", audioLayout: nil),
                     ExactTrimChoice(
                         videoPreset: .hevcCompatibility,
                         videoRateControl: .averageBitrate(2_000_000),
@@ -467,6 +502,7 @@ final class ExactTrimPlannerTests: XCTestCase {
         globalTagCount: Int = 0,
         hdrFormats: [String] = [],
         hdr10: Bool = false,
+        audioCodec: String = "aac",
         audioLayout: String? = "stereo",
         audioChannels: Int = 2,
         audioSampleRate: Int = 48_000
@@ -497,7 +533,7 @@ final class ExactTrimPlannerTests: XCTestCase {
             MediaTrack(
                 id: 1,
                 kind: .audio,
-                codec: "aac",
+                codec: audioCodec,
                 codecID: "A_AAC",
                 profile: "LC",
                 uid: 101,

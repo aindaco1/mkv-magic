@@ -29,7 +29,7 @@ extension CompleteAudioConversionExecutionError: LocalizedError {
         case .inconsistentCommand:
             "The audio command no longer matches its reviewed encode/copy plan."
         case .copiedTrackVerificationFailed(let reason):
-            "A packet-copied video or subtitle track did not match the reviewed source: \(reason)"
+            "A packet-copied media track did not match the reviewed source: \(reason)"
         case .unsafeChapterOutput:
             "mkvextract did not create a safe, bounded chapter document."
         case .chapterVerificationFailed:

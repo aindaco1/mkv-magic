@@ -32,6 +32,12 @@ public enum AudioTranscodePreset: String, Codable, CaseIterable, Hashable, Senda
 
     public var isLossless: Bool { self == .flacLossless }
 
+    /// Returns whether an inspected source track is already in this preset's
+    /// output codec. Matching tracks can remain exact packet copies.
+    public func matches(sourceCodec rawCodec: String) -> Bool {
+        rawCodec.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == codecName
+    }
+
     /// A conservative channel-count boundary for the bundled encoders. Exact
     /// layout validation remains a planner responsibility so no downmix can be
     /// introduced merely because a count happens to fit.

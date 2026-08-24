@@ -32,8 +32,8 @@ private-library beta acceptance, physical Intel acceptance, or a public release.
 - Fast Trim says **0 video encodes** and shows the first-keyframe-at-or-after
   adjustment for both requested boundaries. It never describes that result as
   exact.
-- Exact Trim says **1 video encode**, names the verified preset, and states whether
-  every audio track will be packet-copied or encoded once to AAC.
+- Exact Trim says **1 video encode**, names the verified preset, and reports how
+  many audio tracks will be packet-copied or encoded once to the selected codec.
 - Editing a field, changing modes, or changing an Exact choice immediately
   invalidates the prior review and disables Save.
 - The app model reconstructs the appropriate revision-bound executor from the
