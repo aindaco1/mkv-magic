@@ -79,8 +79,9 @@ packet payload. The source SHA-256 remains unchanged.
 - Common-container conversion became a portable saved-workflow input contract
   in the later M7 common-input workflow slice. Its narrower composition rules
   are recorded in `M7_COMMON_INPUT_SAVED_WORKFLOW_SLICE.md`.
-- MP4 TX3G and other common-container subtitles require an explicit future text
-  conversion path; they are not silently dropped or rewritten.
+- MP4 TX3G now has a separate verified ASS-sidecar action, delivered in the M3
+  TX3G slice. It and other common-container subtitles are still not silently
+  dropped or rewritten inside complete video conversion.
 - Alternate output containers, chaptered WebM, attachments, arbitrary data,
   multiple video tracks, incomplete color facts, and unknown metadata remain
   fail-closed boundaries.

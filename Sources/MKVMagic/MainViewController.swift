@@ -51,6 +51,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         )
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
+        case timedTextSubtitle(TimedTextSubtitleConversionPreview)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
         case remuxToMKV(MKVRemuxPreview)
     }
@@ -118,6 +119,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private let cleanMKVButton = NSButton(title: "Clean MKV…", target: nil, action: nil)
     private let removeTracksButton = NSButton(title: "Remove Tracks…", target: nil, action: nil)
     private let cleanSubtitleButton = NSButton(title: "Clean Subtitle…", target: nil, action: nil)
+    private let convertTimedTextButton = NSButton(
+        title: "Convert MP4 Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
     private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
@@ -381,6 +384,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanSubtitleButton.target = self
         cleanSubtitleButton.action = #selector(cleanSubtitle)
         cleanSubtitleButton.isEnabled = false
+        convertTimedTextButton.target = self
+        convertTimedTextButton.action = #selector(convertTimedTextSubtitle)
+        convertTimedTextButton.isEnabled = false
+        convertTimedTextButton.setAccessibilityHelp(
+            "Convert one selected MP4 TX3G text track into a separate verified UTF-8 ASS subtitle without changing the video."
+        )
         addSubtitleButton.target = self
         addSubtitleButton.action = #selector(addExternalSubtitle)
         addSubtitleButton.isEnabled = false
@@ -408,6 +417,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let subtitleButtons = NSStackView(views: [cleanSubtitleButton, addSubtitleButton])
         subtitleButtons.orientation = .horizontal
         subtitleButtons.spacing = 8
+        let subtitleConversionButtons = NSStackView(views: [convertTimedTextButton])
+        subtitleConversionButtons.orientation = .horizontal
+        subtitleConversionButtons.spacing = 8
         let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
         chapterButtons.orientation = .horizontal
         chapterButtons.spacing = 8
@@ -417,7 +429,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
-            subtitleButtons, chapterButtons, videoButtons,
+            subtitleButtons, subtitleConversionButtons, chapterButtons, videoButtons,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -1618,10 +1630,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         let controller = EmbeddedSubtitleTrackPickerWindowController(tracks: tracks)
         embeddedSubtitleTrackPickerWindowController = controller
-        controller.beginSheet(for: parentWindow) { [weak self] trackUID in
+        controller.beginSheet(for: parentWindow) { [weak self] track in
             guard let self else { return }
             self.embeddedSubtitleTrackPickerWindowController = nil
-            guard let trackUID else {
+            guard let trackUID = track?.uid else {
                 self.refresh()
                 return
             }
@@ -1635,6 +1647,78 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 trackUID: trackUID,
                 parentWindow: parentWindow
             )
+        }
+    }
+
+    @objc private func convertTimedTextSubtitle() {
+        guard let asset = selectedAsset,
+            let parentWindow = view.window
+        else { return }
+        let tracks = TimedTextSubtitleConversionPolicy.convertibleTracks(in: asset)
+        guard !tracks.isEmpty else { return }
+        clearPendingChange()
+        if tracks.count == 1 {
+            previewTimedTextSubtitleConversion(asset: asset, trackID: tracks[0].id)
+            return
+        }
+        let controller = EmbeddedSubtitleTrackPickerWindowController(
+            tracks: tracks,
+            purpose: .timedTextConversion
+        )
+        embeddedSubtitleTrackPickerWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] track in
+            guard let self else { return }
+            self.embeddedSubtitleTrackPickerWindowController = nil
+            guard let track else {
+                self.refresh()
+                return
+            }
+            guard self.selectedAsset?.id == asset.id else {
+                self.clearPendingChange()
+                self.refresh()
+                return
+            }
+            self.previewTimedTextSubtitleConversion(asset: asset, trackID: track.id)
+        }
+    }
+
+    private func previewTimedTextSubtitleConversion(asset: MediaAsset, trackID: Int) {
+        statusLabel.stringValue = "Converting MP4 timed text privately for review…"
+        convertTimedTextButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewTimedTextSubtitleConversion(
+                    in: asset,
+                    trackID: trackID
+                )
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                pendingChange = .timedTextSubtitle(preview)
+                pendingAssetID = asset.id
+                let noun = preview.eventCount == 1 ? "event" : "events"
+                impactLabel.stringValue =
+                    "0 video/audio encodes • 1 TX3G track → UTF-8 ASS • \(preview.eventCount) \(noun)"
+                statusLabel.stringValue = "MP4 subtitle conversion plan ready"
+                runButton.isEnabled = true
+                runButton.toolTip =
+                    "Repeat the conversion, verify the exact ASS text, styles, and timing, then save a new subtitle while leaving the video unchanged."
+            } catch {
+                convertTimedTextButton.isEnabled =
+                    TimedTextSubtitleConversionPolicy.canOffer(for: asset)
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the MP4 subtitle conversion.",
+                        recovery: "The video is unchanged; inspect it again and retry.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: convertTimedTextButton
+                )
+                clearPendingChange()
+            }
         }
     }
 
@@ -2059,6 +2143,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         restoringIDs: restoringIDs,
                         destinationURL: destination.url
                     ).sourceURL
+                case .timedTextSubtitle(let preview):
+                    outputURL = try await model.executeTimedTextSubtitleConversion(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).outputURL
                 case .chapters(let preview, let desired):
                     outputURL = try await model.editChapters(
                         preview: preview,
@@ -2146,6 +2235,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         default:
             isSubtitleCleanup = false
         }
+        let isTimedTextConversion: Bool
+        if case .timedTextSubtitle = pendingChange {
+            isTimedTextConversion = true
+        } else {
+            isTimedTextConversion = false
+        }
         let isSubtitleMux: Bool
         if case .externalSubtitle = pendingChange {
             isSubtitleMux = true
@@ -2170,7 +2265,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             requiresMKVOutput = false
         }
-        panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
+        panel.title =
+            isSubtitleCleanup || isTimedTextConversion
+            ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = prompt
         panel.canCreateDirectories = true
         if case .savedWorkflow(let prepared) = pendingChange,
@@ -2180,6 +2277,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 for: asset.sourceURL,
                 suggestedFilename: suggestedFilename,
                 requiresMKV: isSubtitleMux || requiresMKVOutput
+            )
+        } else if case .timedTextSubtitle(let preview) = pendingChange {
+            panel.nameFieldStringValue = OutputNamingPolicy.convertedTimedTextFilename(
+                for: asset.sourceURL,
+                track: preview.track,
+                trackCount: TimedTextSubtitleConversionPolicy.convertibleTracks(in: asset).count
             )
         } else if isSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(
@@ -2195,10 +2298,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
         let outputExtension =
-            isSubtitleCleanup
-            ? asset.sourceURL.pathExtension.lowercased()
-            : ((isSubtitleMux || isEmbeddedSubtitleCleanup || requiresMKVOutput)
-                ? "mkv" : asset.sourceURL.pathExtension)
+            isTimedTextConversion
+            ? "ass"
+            : (isSubtitleCleanup
+                ? asset.sourceURL.pathExtension.lowercased()
+                : ((isSubtitleMux || isEmbeddedSubtitleCleanup || requiresMKVOutput)
+                    ? "mkv" : asset.sourceURL.pathExtension))
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -2225,6 +2330,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         cleanMKVButton.isEnabled = false
         removeTracksButton.isEnabled = false
         cleanSubtitleButton.isEnabled = false
+        convertTimedTextButton.isEnabled = false
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
         trimButton.isEnabled = false
@@ -2243,6 +2349,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             for: asset.tracks)
         cleanMKVButton.isEnabled = Self.canOfferEnglishCleanup(for: asset)
         cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
+        convertTimedTextButton.isEnabled =
+            TimedTextSubtitleConversionPolicy.canOffer(for: asset)
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
         trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
@@ -2340,6 +2448,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
+            convertTimedTextButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             trimButton.isEnabled = false
@@ -2367,6 +2476,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             cleanMKVButton.isEnabled = false
             removeTracksButton.isEnabled = false
             cleanSubtitleButton.isEnabled = false
+            convertTimedTextButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
             trimButton.isEnabled = false
@@ -2442,6 +2552,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             : (cleanSubtitleButton.isEnabled
                 ? "Extract, review, and replace one embedded SRT/ASS/SSA track in a verified zero-encode MKV copy."
                 : "Text cleanup requires a standalone subtitle or an MKV with an editable SRT, ASS, or SSA track.")
+        convertTimedTextButton.isEnabled =
+            TimedTextSubtitleConversionPolicy.canOffer(for: asset)
+        convertTimedTextButton.toolTip =
+            convertTimedTextButton.isEnabled
+            ? "Choose one MP4 TX3G text track and create a separate verified UTF-8 ASS subtitle without changing the video."
+            : "MP4 subtitle conversion requires an inspected MP4, M4V, or MOV file with a TX3G text track."
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         addSubtitleButton.toolTip =
             addSubtitleButton.isEnabled
@@ -2691,6 +2807,16 @@ enum OutputNamingPolicy {
             ["srt", "ass", "ssa"].contains(sourceExtension)
             ? sourceExtension : "srt"
         return "\(sourceURL.deletingPathExtension().lastPathComponent) — Clean.\(outputExtension)"
+    }
+
+    static func convertedTimedTextFilename(
+        for sourceURL: URL,
+        track: MediaTrack,
+        trackCount: Int
+    ) -> String {
+        let base = sourceURL.deletingPathExtension().lastPathComponent
+        let trackSuffix = trackCount > 1 ? " Track \(track.id + 1)" : ""
+        return "\(base) — TX3G\(trackSuffix).ass"
     }
 
     static func subtitledFilename(for sourceURL: URL) -> String {

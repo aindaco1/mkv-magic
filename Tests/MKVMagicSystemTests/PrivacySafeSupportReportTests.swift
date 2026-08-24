@@ -17,6 +17,12 @@ final class PrivacySafeSupportReportTests: XCTestCase {
             SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.remuxToMKV),
             .remuxToMKV
         )
+        XCTAssertEqual(
+            SupportWorkflowKind(
+                workflowID: BuiltInWorkflowCatalog.timedTextSubtitleConversion
+            ),
+            .timedTextSubtitleConversion
+        )
     }
 
     override func setUpWithError() throws {

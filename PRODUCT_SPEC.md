@@ -500,6 +500,17 @@ Filename cleanup is a separate workflow action, never an implicit part of media 
 - Extract tracks, subtitles, chapters, attachments, cues, and timestamps.
 - Convert MP4 TX3G text subtitles to a supported editable text format through an explicit action.
 
+Current implementation: **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
+or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable
+chooser appears for multiple tracks. The selected track is converted privately
+with bundled FFmpeg to ASS during review, binding the exact source revision and
+parsed ASS document. Execution repeats the conversion, requires identical text,
+styles, and timing, serializes one normalized UTF-8 ASS sidecar, verifies it
+before commit and after reopen, and leaves the source video byte-unchanged.
+History records zero video and audio encodes. This slice does not silently fold
+TX3G conversion into Remux to MKV or complete video conversion; those paths
+continue to fail closed when timed text is present.
+
 ### 5.14 Saved workflows
 
 V1 workflows are ordered, plain-language recipes rather than node graphs.

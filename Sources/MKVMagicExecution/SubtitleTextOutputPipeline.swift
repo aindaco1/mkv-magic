@@ -42,8 +42,11 @@ struct VerifiedSubtitleTextOutputWriter {
         data: Data,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void,
         verify: @escaping @Sendable (URL) throws -> Void,
+        validateSource: @escaping @Sendable () throws -> Void = {},
         committedAuditError: @escaping @Sendable (URL, String) -> any Error
     ) async throws -> URL {
+        try Task.checkCancellation()
+        try validateSource()
         let transaction = VerifiedOutputTransaction(
             sourceURL: sourceURL,
             destinationURL: destinationURL
@@ -51,13 +54,22 @@ struct VerifiedSubtitleTextOutputWriter {
         do {
             let temporaryURL = try await transaction.prepareEmptyOutput()
             try data.write(to: temporaryURL, options: .withoutOverwriting)
+            try Task.checkCancellation()
+            try validateSource()
             try await onStage(.verifying)
+            try Task.checkCancellation()
             try verify(temporaryURL)
+            try Task.checkCancellation()
+            try validateSource()
             try await transaction.markVerified()
             try await onStage(.committing)
+            try Task.checkCancellation()
+            try validateSource()
             let committedURL = try await transaction.commit()
             do {
                 try verify(committedURL)
+                try Task.checkCancellation()
+                try validateSource()
             } catch {
                 throw committedAuditError(committedURL, error.localizedDescription)
             }

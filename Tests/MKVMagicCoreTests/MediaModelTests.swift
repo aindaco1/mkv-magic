@@ -207,6 +207,12 @@ final class MediaModelTests: XCTestCase {
             BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.remuxToMKV),
             .remuxToMKV
         )
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(
+                for: BuiltInWorkflowCatalog.timedTextSubtitleConversion
+            ),
+            .timedTextSubtitleConversion
+        )
     }
 
     func testEnglishLibraryCleanupSuggestionsPreserveAudioCommentaryAndOnlyUsefulSubtitle() {

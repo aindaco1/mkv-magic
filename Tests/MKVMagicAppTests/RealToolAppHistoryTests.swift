@@ -175,6 +175,121 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testConvertsMP4TimedTextToVerifiedASSAndRecordsZeroEncodeHistory() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("The bundled H.264 fixture encoder is unavailable")
+        }
+
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-tx3g-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        let rawVideo = fixtureRoot.appendingPathComponent("frames.yuv")
+        let subtitle = fixtureRoot.appendingPathComponent("source.srt")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mp4")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature — TX3G.ass")
+        let width = 96
+        let height = 64
+        let frameCount = 20
+        try Data(repeating: 48, count: width * height * 3 / 2 * frameCount).write(to: rawVideo)
+        try Data(
+            "1\n00:00:00,250 --> 00:00:00,900\nFirst cue\n\n"
+                .appending("2\n00:00:01,100 --> 00:00:01,800\nSecond cue\n")
+                .utf8
+        ).write(to: subtitle)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideo.path,
+                    "-f", "srt", "-i", subtitle.path,
+                    "-map", "0:v:0", "-map", "1:s:0",
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-g", "10", "-bf", "0", "-b:v", "300000",
+                    "-pix_fmt", "yuv420p",
+                    "-color_primaries", "bt709", "-color_trc", "bt709",
+                    "-colorspace", "bt709", "-color_range", "tv",
+                    "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:s", "mov_text",
+                    "-metadata:s:s:0", "language=eng",
+                    "-metadata:s:s:0", "title=English Full",
+                    "-disposition:s:0", "forced",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let track = try XCTUnwrap(
+            TimedTextSubtitleConversionPolicy.convertibleTracks(in: source).first
+        )
+
+        let preview = try await model.previewTimedTextSubtitleConversion(
+            in: source,
+            trackID: track.id
+        )
+        XCTAssertEqual(preview.eventCount, 2)
+        let result = try await model.executeTimedTextSubtitleConversion(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+
+        XCTAssertEqual(result.outputURL, destinationURL)
+        XCTAssertEqual(result.document.events.map(\.text), ["First cue", "Second cue"])
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        let reopened = try AdvancedSubStationAlphaCodec().parse(
+            SubtitleTextDecoder().decode(Data(contentsOf: destinationURL))
+        ).document
+        XCTAssertEqual(reopened, result.document)
+        let records = try await historyStore.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, BuiltInWorkflowCatalog.timedTextSubtitleConversion)
+        XCTAssertEqual(record.workflowName, "Convert MP4 timed text to ASS")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

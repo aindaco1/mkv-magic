@@ -97,6 +97,13 @@ sections, style definitions, override tags, layout fields, comments, and unknown
 sections. It refuses to remove every event, detects a source changed since
 preview, writes a new UTF-8 subtitle, and reopens the exact planned result before
 commit while leaving the source intact.
+For inspected MP4, M4V, and MOV files, **Convert MP4 Subtitle…** exposes each
+TX3G/`mov_text` track in a readable chooser and converts one selected track into
+a separate editable UTF-8 ASS sidecar. Review runs bundled FFmpeg privately and
+binds the exact source revision plus parsed text, styles, and timing. Save repeats
+the conversion, requires the same document, writes one normalized temporary
+ASS, reopens it before and after atomic commit, and records zero video/audio
+encodes in History. The source video is never modified or replaced.
 For inspected Matroska video, **Add Subtitle…** accepts a reviewed external SRT,
 ASS, or SSA file, ranks the filename and timing match, infers editable
 language/forced/SDH metadata, and adds it as the last track in a new MKV without
@@ -245,8 +252,9 @@ track names, languages, technical facts, HDR facts, and playback/accessibility
 roles are checked on the result. MKV Magic fingerprints every ordered encoded
 packet promised as copied, validates the source revision throughout one private
 temporary-output transaction, commits atomically, and repeats the semantic and
-packet audits after reopening `— Remuxed.mkv`. MP4 timed text (TX3G) remains an
-explicit future conversion instead of being silently rewritten. Attachments,
+packet audits after reopening `— Remuxed.mkv`. MP4 timed text (TX3G) can be
+explicitly converted to a verified ASS sidecar, but it is still not silently
+rewritten inside this zero-encode remux. Attachments,
 arbitrary data tracks, multiple video tracks, unknown codecs, and chaptered
 WebM fail closed until their exact preservation contracts are available.
 The same operation is available as the portable **If needed: Remux compatible

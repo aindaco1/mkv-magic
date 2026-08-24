@@ -958,6 +958,97 @@ final class AppModel {
         ).preview(source: source)
     }
 
+    func previewTimedTextSubtitleConversion(
+        in source: MediaAsset,
+        trackID: Int
+    ) async throws -> TimedTextSubtitleConversionPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        return try await TimedTextSubtitleConversionExecutor(
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            runner: FoundationCommandRunner()
+        ).preview(source: source, trackID: trackID)
+    }
+
+    @discardableResult
+    func executeTimedTextSubtitleConversion(
+        preview: TimedTextSubtitleConversionPreview,
+        destinationURL: URL
+    ) async throws -> TimedTextSubtitleConversionResult {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Converting and verifying one MP4 subtitle…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.timedTextSubtitleConversion,
+                workflowName: "Convert MP4 timed text to ASS",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed MP4-family media inspection.",
+                planningMessage:
+                    "Zero video and audio encodes; convert one selected TX3G text track to editable ASS.",
+                runningMessage:
+                    "Extracting one selected timed-text track with bundled FFmpeg into a private ASS preview."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let result = try await TimedTextSubtitleConversionExecutor(
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                runner: FoundationCommandRunner()
+            ).execute(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying ASS text, styles, and timing…"
+                                : "Saving and reopening the verified ASS subtitle…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            await finishHistory(
+                execution,
+                destinationURL: result.outputURL,
+                successMessage:
+                    "Verified UTF-8 ASS text, styles, and timing; committed and reopened the subtitle while leaving the video unchanged."
+            )
+            return result
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeRemuxToMKV(
         preview: MKVRemuxPreview,

@@ -65,6 +65,13 @@ source, the reviewed output name is forced to `.mkv`, and automatic queue
 reinspection must reproduce the same one-generation plan. Compatible
 Matroska-only operations remain governed by their individual feature boundaries.
 
+**Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
+M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg
+converts one selected track to a separate UTF-8 ASS file; MKV Magic repeats and
+compares the parsed conversion, binds the source revision through commit, and
+reopens the result. The video remains unchanged. TX3G is not yet converted
+inline during Remux to MKV or complete video conversion.
+
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app
 must also be installed and exercised on physical Intel and Apple Silicon Macs.

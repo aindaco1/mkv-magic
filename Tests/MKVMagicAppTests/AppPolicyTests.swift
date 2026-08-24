@@ -457,6 +457,27 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testConvertedTimedTextOutputNameIsExplicitAndDistinguishesTracks() {
+        let source = URL(fileURLWithPath: "/Media/Movie.MP4")
+        let track = MediaTrack(id: 2, kind: .subtitle, codec: "mov_text")
+        XCTAssertEqual(
+            OutputNamingPolicy.convertedTimedTextFilename(
+                for: source,
+                track: track,
+                trackCount: 1
+            ),
+            "Movie — TX3G.ass"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.convertedTimedTextFilename(
+                for: source,
+                track: track,
+                trackCount: 2
+            ),
+            "Movie — TX3G Track 3.ass"
+        )
+    }
+
     func testSubtitledOutputNameAlwaysUsesMKV() {
         XCTAssertEqual(
             OutputNamingPolicy.subtitledFilename(
@@ -3136,6 +3157,38 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testTimedTextPickerExplainsSeparateVerifiedASSConversion() throws {
+        let timedText = MediaTrack(
+            id: 2,
+            kind: .subtitle,
+            codec: "mov_text",
+            language: "eng",
+            title: "English"
+        )
+        XCTAssertEqual(
+            EmbeddedSubtitleTrackPickerViewController.title(
+                timedText,
+                purpose: .timedTextConversion
+            ),
+            "#3 • TX3G • eng • English"
+        )
+        let controller = EmbeddedSubtitleTrackPickerWindowController(
+            tracks: [timedText],
+            purpose: .timedTextConversion
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+
+        XCTAssertEqual(window.title, "Choose MP4 Subtitle")
+        XCTAssertEqual(window.initialFirstResponder?.accessibilityLabel(), "MP4 timed-text track")
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.contains("separate editable UTF-8 ASS") }
+        )
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Review Conversion" })
+    }
+
+    @MainActor
     func testEmbeddedSRTUsesSharedReviewWindowAndTrackLanguageExplanation() throws {
         let cue = SubRipCue(
             id: 0,
@@ -3476,6 +3529,11 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(splitView.arrangedSubviews.count, 3)
         XCTAssertTrue(splitView.arrangedSubviews.allSatisfy { $0.frame.width > 0 })
         XCTAssertTrue(buttons(in: controller.view).contains { $0.title == "Trim…" })
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
+                button.title == "Convert MP4 Subtitle…" && !button.isEnabled
+            }
+        )
         XCTAssertTrue(
             buttons(in: controller.view).contains { button in
                 button.title == "Remux to MKV…" && !button.isEnabled
