@@ -183,6 +183,7 @@ public struct ExactTrimExecutor<
     public func execute(
         preview: ExactTrimPreview,
         destinationURL: URL,
+        validateReviewedSource: @escaping @Sendable () throws -> Void = {},
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard destinationURL.pathExtension.lowercased() == "mkv" else {
@@ -245,6 +246,7 @@ public struct ExactTrimExecutor<
                 )
                 try await validateCurrent(preview)
             },
+            validateSource: validateReviewedSource,
             committedAuditError: { outputURL, reason in
                 ExactTrimExecutionError.committedOutputAuditFailed(
                     outputURL: outputURL,

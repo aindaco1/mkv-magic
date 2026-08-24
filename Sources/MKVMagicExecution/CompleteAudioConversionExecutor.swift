@@ -155,6 +155,7 @@ public struct CompleteAudioConversionExecutor<
     public func execute(
         preview: CompleteAudioConversionPreview,
         destinationURL: URL,
+        validateReviewedSource: @escaping @Sendable () throws -> Void = {},
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard destinationURL.pathExtension.lowercased() == "mkv" else {
@@ -215,6 +216,7 @@ public struct CompleteAudioConversionExecutor<
                 )
                 try await validateCurrent(preview)
             },
+            validateSource: validateReviewedSource,
             committedAuditError: { outputURL, reason in
                 CompleteAudioConversionExecutionError.committedOutputAuditFailed(
                     outputURL: outputURL,

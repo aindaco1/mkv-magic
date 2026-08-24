@@ -51,6 +51,7 @@ struct VerifiedOutputPipeline<Inspector: MediaInspecting>: Sendable {
                 let committedAsset = try await inspector.inspect(committedURL)
                 try Task.checkCancellation()
                 try await verify(committedAsset)
+                try validateSource()
                 return committedAsset
             } catch {
                 throw committedAuditError(committedURL, error.localizedDescription)

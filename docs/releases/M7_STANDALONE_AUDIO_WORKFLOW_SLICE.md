@@ -20,6 +20,14 @@ It also independently fingerprints every copied video and subtitle packet.
 Source file and chapter revisions remain bound from review through the final
 reopen audit, and the destination is committed only after verification.
 
+The same recipe is eligible for automatic queue execution. Reinspection and
+recompilation must reproduce the reviewed semantic plan, and the scheduler
+classifies it as audio-heavy rather than video-heavy. Composed workflows now
+share one exact original-file revision guard across private preparation and the
+final conversion transaction; changing the original after preparation prevents
+commit, while a change observed during the committed reopen becomes a truthful
+final-audit failure.
+
 When a video card is also selected, the compiler folds the audio policy into the
 existing complete-file video command. Video and all retained audio are encoded
 in the same FFmpeg invocation, never as serial generations. Deterministic track,
@@ -46,9 +54,16 @@ dependency; the editor creates only the clearer schema-v8 standalone actions.
 - A bundled-runtime integration converts audio to FLAC in exactly one FFmpeg
   invocation, preserves nested chapters and attachment facts, fingerprints the
   copied video and subtitle packets, and confirms the source digest is unchanged.
+- A second bundled-runtime integration admits the audio-only recipe through the
+  production queue as audio-heavy work, re-inspects and recompiles it, records
+  **Waiting -> Running -> Succeeded**, and preserves the source digest and copied
+  video while reporting zero video generations and one encoded audio track.
+- Mutation integrations cover both composed video and composed audio workflows:
+  changing the original during their final FFmpeg generation is detected before
+  commit. Shared transaction regressions also exercise the final-reopen guard.
 - `./scripts/ci/local-gate.sh` passed on 2026-08-24: source and security
-  validation; 553 tests with 37 expected environment-dependent skips and zero
-  failures; repository line coverage of 68.41% and non-UI line coverage of
+  validation; 557 tests with 39 expected environment-dependent skips and zero
+  failures; repository line coverage of 68.42% and non-UI line coverage of
   84.89%; AddressSanitizer and ThreadSanitizer suites; and the Universal
   arm64/x86_64 release build.
 - The same complete gate validated the package signatures, Sparkle update

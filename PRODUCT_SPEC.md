@@ -1275,6 +1275,12 @@ record. Per-job cancellation reaches the automatic task and its supervised
 subprocess tree. The current explicit **Verify & Run** path remains an immediate
 user start and is intentionally distinct from persisted automatic pause.
 
+Standalone saved-workflow audio conversion uses the same automatic boundary and
+occupies an audio-heavy scheduler slot. When deterministic preparation precedes
+either video or audio conversion, one shared exact original-file revision guard
+continues across the private intermediate, final generation, pre-commit check,
+and committed reopen audit.
+
 Built-in quick-action queueing, external-subtitle workflow reconstruction,
 watched folders, scheduled wakes, a background helper/daemon, continuous
 power-state monitoring, long queue soak, and physical-Intel acceptance remain

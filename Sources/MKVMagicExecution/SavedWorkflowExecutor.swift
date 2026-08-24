@@ -114,21 +114,11 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
         }
 
-        let executionRevision: MediaFileRevision
-        do {
-            executionRevision = try MediaFileRevisionReader().read(source.sourceURL)
-        } catch {
-            throw SavedWorkflowExecutionError.sourceChangedSinceReview
-        }
-        guard expectedSourceRevision == nil || expectedSourceRevision == executionRevision else {
-            throw SavedWorkflowExecutionError.sourceChangedSinceReview
-        }
-        let validateSource: @Sendable () throws -> Void = {
-            guard (try? MediaFileRevisionReader().read(source.sourceURL)) == executionRevision
-            else {
-                throw SavedWorkflowExecutionError.sourceChangedSinceReview
-            }
-        }
+        let validateSource = try mediaFileRevisionValidator(
+            sourceURL: source.sourceURL,
+            expectedRevision: expectedSourceRevision,
+            changedError: SavedWorkflowExecutionError.sourceChangedSinceReview
+        )
 
         return try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: source,

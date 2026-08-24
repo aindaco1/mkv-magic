@@ -309,6 +309,12 @@ silently refreshing authority. Per-job cancellation reaches the supervised tool
 task. Saved-workflow **Verify & Run** remains a distinct immediate path even
 while automatic starts are paused.
 
+Standalone audio recipes use this same path as audio-heavy work. If packet-copy
+or metadata preparation precedes a final video or audio conversion, the exact
+original-file revision remains guarded through that final generation and the
+committed reopen audit rather than being replaced by the private intermediate's
+revision.
+
 The native **Queue** window shows resource cost, status, and attempts; it offers
 hold/resume, pending reorder, cancel, review-again retry, and persistent pause.
 Opening the window refreshes current work without treating it as a relaunch

@@ -9,11 +9,24 @@ import XCTest
 
 private actor WorkflowConversionRecordingRunner: CommandRunning, CommandLineDigesting {
     private let underlying = FoundationCommandRunner()
+    private let sourceURLToMutateAfterFFmpeg: URL?
     private var executableNames = [String]()
+
+    init(sourceURLToMutateAfterFFmpeg: URL? = nil) {
+        self.sourceURLToMutateAfterFFmpeg = sourceURLToMutateAfterFFmpeg
+    }
 
     func run(_ request: CommandRequest) async throws -> CommandResult {
         executableNames.append(request.executableURL.lastPathComponent)
-        return try await underlying.run(request)
+        let result = try await underlying.run(request)
+        if request.executableURL.lastPathComponent == "ffmpeg",
+            let sourceURLToMutateAfterFFmpeg
+        {
+            try Data("changed during the final generation".utf8).write(
+                to: sourceURLToMutateAfterFFmpeg
+            )
+        }
+        return result
     }
 
     func digestLines(
@@ -643,6 +656,126 @@ final class RealToolExactTrimTests: XCTestCase {
                 SHA256.hash(data: try Data(contentsOf: sourceURL)),
                 sourceDigest
             )
+        }
+    }
+
+    func testBundledToolsComposedConversionsRetainTheOriginalRevisionThroughFinalGeneration()
+        async throws
+    {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let fixtureRunner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: fixtureRunner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified,
+            capabilities.availableAudioPresets.contains(.flacLossless)
+        else {
+            throw XCTSkip("The bundled H.264 and FLAC conversion encoders are unavailable")
+        }
+
+        for convertsVideo in [true, false] {
+            try await PrivateTemporaryDirectory.withDirectory(
+                prefix: convertsVideo
+                    ? "mkv-magic-video-source-revision"
+                    : "mkv-magic-audio-source-revision"
+            ) { root in
+                let sourceURL = try await makeFixture(
+                    root: root,
+                    ffmpegURL: ffmpegURL,
+                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                    runner: fixtureRunner
+                )
+                let runner = WorkflowConversionRecordingRunner(
+                    sourceURLToMutateAfterFFmpeg: sourceURL
+                )
+                let inspector = UnifiedMediaInspector(
+                    ffprobeURL: try catalog.url(for: .ffprobe),
+                    mkvmergeURL: try catalog.url(for: .mkvmerge),
+                    runner: runner
+                )
+                let source = try await inspector.inspect(sourceURL)
+                let workflow = SavedWorkflow(
+                    name: "Bind source through conversion",
+                    steps: [
+                        SavedWorkflowStep(action: .removeSegmentTitle),
+                        SavedWorkflowStep(
+                            action: convertsVideo
+                                ? .convertVideoH264
+                                : .transcodeAllAudioFLAC
+                        ),
+                    ]
+                )
+                let compiled = try SavedWorkflowCompiler().compile(
+                    workflow,
+                    for: source,
+                    inputs: SavedWorkflowResolvedInputs(
+                        availableVideoPresets: capabilities.availableVideoPresets,
+                        availableAudioPresets: capabilities.availableAudioPresets
+                    )
+                )
+                let reviewedRevision = try MediaFileRevisionReader().read(sourceURL)
+                let destination = root.appendingPathComponent("Must Not Commit.mkv")
+
+                do {
+                    if convertsVideo {
+                        _ = try await SavedWorkflowVideoConversionExecutor(
+                            ffmpegURL: ffmpegURL,
+                            ffprobeURL: try catalog.url(for: .ffprobe),
+                            mkvmergeURL: try catalog.url(for: .mkvmerge),
+                            mkvextractURL: try catalog.url(for: .mkvextract),
+                            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                            runner: runner,
+                            inspector: inspector
+                        ).execute(
+                            source: source,
+                            workflow: compiled,
+                            capabilities: capabilities,
+                            expectedSourceRevision: reviewedRevision,
+                            destinationURL: destination
+                        )
+                    } else {
+                        _ = try await SavedWorkflowAudioConversionExecutor(
+                            ffmpegURL: ffmpegURL,
+                            ffprobeURL: try catalog.url(for: .ffprobe),
+                            mkvmergeURL: try catalog.url(for: .mkvmerge),
+                            mkvextractURL: try catalog.url(for: .mkvextract),
+                            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                            runner: runner,
+                            inspector: inspector
+                        ).execute(
+                            source: source,
+                            workflow: compiled,
+                            capabilities: capabilities,
+                            expectedSourceRevision: reviewedRevision,
+                            destinationURL: destination
+                        )
+                    }
+                    XCTFail("Expected the changed original source to prevent commit")
+                } catch {
+                    if convertsVideo {
+                        XCTAssertEqual(
+                            error as? SavedWorkflowVideoConversionExecutionError,
+                            .sourceChangedSinceReview
+                        )
+                    } else {
+                        XCTAssertEqual(
+                            error as? SavedWorkflowAudioConversionExecutionError,
+                            .sourceChangedSinceReview
+                        )
+                    }
+                }
+
+                let executableNames = await runner.capturedExecutableNames()
+                XCTAssertEqual(executableNames.filter { $0 == "ffmpeg" }.count, 1)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            }
         }
     }
 

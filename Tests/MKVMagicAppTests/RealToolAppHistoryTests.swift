@@ -226,6 +226,137 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testAutomaticQueueRunsStandaloneAudioWorkflowAsAudioHeavyWork() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-audio-queue-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawVideo = fixtureRoot.appendingPathComponent("frames.yuv")
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let destinationURL = fixtureRoot.appendingPathComponent("Feature — FLAC.mkv")
+        let width = 96
+        let height = 64
+        let frameCount = 20
+        try Data(repeating: 32, count: width * height * 3 / 2 * frameCount).write(
+            to: rawVideo
+        )
+        try Data(repeating: 0, count: 48_000 * 2 * 2 * 2).write(to: rawAudio)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-nostdin", "-loglevel", "error",
+                    "-f", "rawvideo", "-pixel_format", "yuv420p",
+                    "-video_size", "\(width)x\(height)", "-framerate", "10",
+                    "-i", rawVideo.path,
+                    "-f", "s16le", "-ar", "48000", "-ac", "2", "-i", rawAudio.path,
+                    "-frames:v", "\(frameCount)",
+                    "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                    "-b:v", "400000", "-color_primaries", "bt709",
+                    "-color_trc", "bt709", "-colorspace", "bt709",
+                    "-color_range", "tv", "-bsf:v",
+                    "h264_metadata=colour_primaries=1:transfer_characteristics=1:matrix_coefficients=1",
+                    "-c:a", "aac", "-metadata", "title=Preserve Me",
+                    sourceURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let clearTags = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvpropedit),
+                arguments: ["--abort-on-warnings", sourceURL.path, "--tags", "all:"],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(clearTags.exitCode, 0, clearTags.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let queueStore = try AppHistoryLocation.makeQueueStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(
+            historyRecorderFactory: { historyStore },
+            queueStoreFactory: { queueStore },
+            queueEnvironmentReader: FixedQueueEnvironmentReader(
+                environment: .init(isOnBattery: false, thermalPressure: .nominal)
+            )
+        )
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let sourceVideo = try XCTUnwrap(source.tracks.first { $0.kind == .video })
+        let capabilities = await model.probeEncodingCapabilities()
+        guard capabilities.availableAudioPresets.contains(.flacLossless) else {
+            throw XCTSkip("The bundled FLAC encoder is unavailable")
+        }
+        let recipe = SavedWorkflow(
+            name: "Queue lossless audio",
+            steps: [SavedWorkflowStep(action: .transcodeAllAudioFLAC)]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            recipe,
+            for: source,
+            inputs: SavedWorkflowResolvedInputs(
+                availableAudioPresets: capabilities.availableAudioPresets
+            )
+        )
+        try await queueStore.save(MediaQueueSnapshot(isPaused: true, updatedAt: Date()))
+        let waiting = try await model.enqueueSavedWorkflow(
+            compiled,
+            recipe: recipe,
+            expectedSourceRevision: try XCTUnwrap(model.reviewedSourceRevision(for: source)),
+            in: source,
+            destinationURL: destinationURL
+        )
+        XCTAssertEqual(waiting.jobs.first?.resourceClass, .audioHeavy)
+        XCTAssertEqual(waiting.jobs.first?.reviewedPlan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(waiting.jobs.first?.reviewedPlan.impact.audioEncodeCount, 1)
+        _ = try await queueStore.setPaused(false, at: Date())
+
+        let completedQueue = try await model.runAutomaticQueueCycle()
+        let output = try XCTUnwrap(model.assets.first { $0.sourceURL == destinationURL })
+
+        XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])
+        XCTAssertEqual(output.tracks[0].codec, sourceVideo.codec)
+        XCTAssertEqual(output.tracks[1].codec, "flac")
+        XCTAssertEqual(output.metadata["title"], source.metadata["title"])
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        let historyRecords = try await historyStore.load()
+        let record = try XCTUnwrap(historyRecords.first)
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 1)
+        )
+        XCTAssertEqual(record.events.last?.state, .succeeded)
+        let queuedJob = try XCTUnwrap(completedQueue.jobs.first)
+        XCTAssertEqual(queuedJob.resourceClass, .audioHeavy)
+        XCTAssertEqual(queuedJob.events.map(\.state), [.waiting, .running, .succeeded])
+    }
+
+    @MainActor
     func testExternalSubtitleWorkflowUsesOneVerifiedTransactionAndPortableIntent() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

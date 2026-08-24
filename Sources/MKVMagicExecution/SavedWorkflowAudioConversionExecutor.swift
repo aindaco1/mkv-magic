@@ -74,7 +74,11 @@ public struct SavedWorkflowAudioConversionExecutor<
         guard let preset = workflow.audioConversionPreset else {
             throw SavedWorkflowAudioConversionExecutionError.missingReviewedConversion
         }
-        try validateExpectedRevision(source, expected: expectedSourceRevision)
+        let validateReviewedSource = try mediaFileRevisionValidator(
+            sourceURL: source.sourceURL,
+            expectedRevision: expectedSourceRevision,
+            changedError: SavedWorkflowAudioConversionExecutionError.sourceChangedSinceReview
+        )
 
         if workflow.hasDeterministicMediaOperations {
             return try await PrivateTemporaryDirectory.withDirectory(
@@ -99,6 +103,7 @@ public struct SavedWorkflowAudioConversionExecutor<
                 return try await audioConversionExecutor.execute(
                     preview: preview,
                     destinationURL: destinationURL,
+                    validateReviewedSource: validateReviewedSource,
                     onStage: onStage
                 )
             }
@@ -115,17 +120,9 @@ public struct SavedWorkflowAudioConversionExecutor<
         return try await audioConversionExecutor.execute(
             preview: preview,
             destinationURL: destinationURL,
+            validateReviewedSource: validateReviewedSource,
             onStage: onStage
         )
     }
 
-    private func validateExpectedRevision(
-        _ source: MediaAsset,
-        expected: MediaFileRevision?
-    ) throws {
-        guard let expected else { return }
-        guard (try? MediaFileRevisionReader().read(source.sourceURL)) == expected else {
-            throw SavedWorkflowAudioConversionExecutionError.sourceChangedSinceReview
-        }
-    }
 }
