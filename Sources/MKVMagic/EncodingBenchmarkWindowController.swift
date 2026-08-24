@@ -193,7 +193,11 @@ final class EncodingBenchmarkViewController: NSViewController {
             } catch is CancellationError {
                 statusLabel.stringValue = "Encoding test cancelled; previous recommendation kept."
             } catch {
-                statusLabel.stringValue = "Encoding test failed: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not complete the encoding test.",
+                    recovery: "The previous recommendation is unchanged; try the test again.",
+                    error: error
+                )
             }
             task = nil
             setRunning(false)

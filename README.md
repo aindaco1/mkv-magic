@@ -344,6 +344,13 @@ single-line technical detail capped at 240 characters. This is the first M8
 error-language slice, not a claimed every-window wording pass. See
 [docs/releases/M8_ERROR_LANGUAGE_FOUNDATION_SLICE.md](docs/releases/M8_ERROR_LANGUAGE_FOUNDATION_SLICE.md).
 
+All remaining AppKit catches that previously exposed a raw localized technical
+error now use the same action, safe-state, recovery, and bounded-detail
+contract. The source validation gate prevents that direct pattern from being
+reintroduced. This is a source-level and automated-UI pass, not observed
+VoiceOver, localization, or real-failure acceptance. See
+[docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md](docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

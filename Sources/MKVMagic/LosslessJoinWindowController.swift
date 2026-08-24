@@ -78,7 +78,13 @@ enum LosslessJoinReviewBuilder {
         do {
             proposal = try JoinTrackMappingProposer().propose(sources: sources)
         } catch {
-            return blocked("The track map could not be built: \(error.localizedDescription)")
+            return blocked(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not build the track map.",
+                    recovery: "No join was started; review the selected source tracks.",
+                    error: error
+                )
+            )
         }
         let mapping: JoinTrackMapping
         let unresolvedAmbiguities: [JoinTrackMappingAmbiguity]
@@ -103,7 +109,13 @@ enum LosslessJoinReviewBuilder {
                 mapping: mapping
             )
         } catch {
-            return blocked("The track map could not be built: \(error.localizedDescription)")
+            return blocked(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not validate the track map.",
+                    recovery: "No join was started; revise the mapping and try again.",
+                    error: error
+                )
+            )
         }
 
         let lanes = laneSummaries(mapping: mapping, sources: sources)
@@ -172,7 +184,13 @@ enum LosslessJoinReviewBuilder {
             do {
                 composition = try JoinedChapterComposer().compose(joinedSources)
             } catch {
-                sharedBlockers.append("Joined chapters are invalid: \(error.localizedDescription)")
+                sharedBlockers.append(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not combine the selected chapters.",
+                        recovery: "No join was started; review each source chapter edition.",
+                        error: error
+                    )
+                )
                 composition = nil
             }
         } else {
@@ -453,7 +471,11 @@ enum LosslessJoinReviewBuilder {
         do {
             try JoinFinalAssemblySourcePolicy().validate(sources)
         } catch {
-            let message = error.localizedDescription
+            let message = UserFacingErrorPresentation.message(
+                failure: "Could not approve the final join assembly.",
+                recovery: "No join was started; review the source files and track map.",
+                error: error
+            )
             summaries.append("Blocked: \(message)")
             blockers.append(message)
         }

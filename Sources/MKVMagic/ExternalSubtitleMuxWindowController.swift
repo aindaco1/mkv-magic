@@ -235,7 +235,12 @@ final class ExternalSubtitleMuxViewController: NSViewController {
             validationLabel.stringValue = ""
             onContinue?(metadata)
         } catch {
-            validationLabel.stringValue = error.localizedDescription
+            validationLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare the subtitle track.",
+                recovery:
+                    "No subtitle was added; review the language and track options and try again.",
+                error: error
+            )
         }
     }
 

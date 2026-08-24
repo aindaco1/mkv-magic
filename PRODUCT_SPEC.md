@@ -1281,6 +1281,14 @@ state, concrete recovery, and a whitespace-normalized detail capped at 240
 characters. This is a bounded foundation, not the complete contextual wording,
 VoiceOver-announcement, localization, or representative-failure acceptance pass.
 
+The follow-on source-level error-language pass applies that contract to every
+remaining AppKit catch that previously displayed `error.localizedDescription`
+directly, including media discovery, planning, trim, join, chapter, subtitle,
+track, encoding-test, and queue-review surfaces. A validation gate rejects a
+future direct bypass. This establishes consistent bounded wording in source and
+automated UI regressions; observed VoiceOver announcement, localization, and
+representative real-failure acceptance remain open.
+
 Gate: agreed personal workflows complete safely and repeatably on the M1 server workflow and at least one Intel Mac.
 
 ### M9 — Public signed beta and v1

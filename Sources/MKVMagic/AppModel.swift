@@ -214,7 +214,13 @@ final class AppModel {
             didChange?()
             throw CancellationError()
         } catch {
-            state = .failed("Encoding test failed: \(error.localizedDescription)")
+            state = .failed(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not complete the encoding test.",
+                    recovery: "The previous recommendation is unchanged; try the test again.",
+                    error: error
+                )
+            )
             didChange?()
             throw error
         }
@@ -304,7 +310,12 @@ final class AppModel {
             return
         } catch {
             state = .completedWithWarnings(
-                "Automatic queue starts are waiting: \(error.localizedDescription)"
+                UserFacingErrorPresentation.message(
+                    failure: "Could not start eligible queued work.",
+                    recovery:
+                        "The queue remains saved; reopen or resume it, or add another job, to retry.",
+                    error: error
+                )
             )
             didChange?()
         }
@@ -456,7 +467,13 @@ final class AppModel {
             didChange?()
             return options
         } catch {
-            state = .failed("Could not prepare the join review: \(error.localizedDescription)")
+            state = .failed(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the join review.",
+                    recovery: "No output was created; review the selected files and try again.",
+                    error: error
+                )
+            )
             didChange?()
             throw error
         }
@@ -562,7 +579,13 @@ final class AppModel {
             didChange?()
             return preview
         } catch {
-            state = .failed("Join review is stale or incomplete: \(error.localizedDescription)")
+            state = .failed(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not confirm the lossless join.",
+                    recovery: "No output was created; reopen Join and review every source again.",
+                    error: error
+                )
+            )
             didChange?()
             throw error
         }
@@ -641,7 +664,11 @@ final class AppModel {
             )
         } catch {
             state = .failed(
-                "Common-format review is stale or incomplete: \(error.localizedDescription)"
+                UserFacingErrorPresentation.message(
+                    failure: "Could not confirm the common-format join.",
+                    recovery: "No output was created; reopen Join and review every choice again.",
+                    error: error
+                )
             )
             didChange?()
             throw error
@@ -1101,7 +1128,14 @@ final class AppModel {
             didChange?()
             return preview
         } catch {
-            state = .failed("Trim review stopped: \(error.localizedDescription)")
+            state = .failed(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the trim review.",
+                    recovery:
+                        "No output was created; reopen Trim and review the source and boundaries.",
+                    error: error
+                )
+            )
             didChange?()
             throw error
         }
@@ -1126,7 +1160,14 @@ final class AppModel {
         do {
             inputURLs = try await LocalMediaFileDiscovery().discover(uniqueRoots)
         } catch {
-            state = .failed("Could not scan the selected files: \(error.localizedDescription)")
+            state = .failed(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not scan the selected files.",
+                    recovery:
+                        "Nothing was added; choose accessible files or folders and try again.",
+                    error: error
+                )
+            )
             didChange?()
             return
         }
@@ -1165,8 +1206,12 @@ final class AppModel {
                     assets.append(asset)
                 }
             } catch {
-                let message =
-                    "Could not inspect \(url.lastPathComponent): \(error.localizedDescription)"
+                let message = UserFacingErrorPresentation.message(
+                    failure: "Could not inspect \(url.lastPathComponent).",
+                    recovery:
+                        "That file was skipped; select it again after checking access and format.",
+                    error: error
+                )
                 failures.append(message)
                 state = .failed(message)
                 didChange?()
@@ -2123,7 +2168,13 @@ final class AppModel {
                 message: Self.sanitizedFailureMessage(for: error)
             )
         }
-        state = .failed("Original unchanged. \(error.localizedDescription)")
+        state = .failed(
+            UserFacingErrorPresentation.message(
+                failure: "Could not create a verified output.",
+                recovery: "The original is unchanged; review the operation and try again.",
+                error: error
+            )
+        )
         didChange?()
     }
 

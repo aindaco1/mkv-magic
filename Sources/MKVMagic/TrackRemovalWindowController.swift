@@ -200,7 +200,11 @@ final class TrackRemovalViewController: NSViewController {
             statusLabel.stringValue = ""
             onPreview?(removal)
         } catch {
-            statusLabel.stringValue = error.localizedDescription
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare track removal.",
+                recovery: "No tracks were removed; revise the selection and try again.",
+                error: error
+            )
         }
     }
 }

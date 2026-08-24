@@ -1892,6 +1892,17 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 480, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 540)
         XCTAssertEqual(window.minSize.height, 420)
+
+        try XCTUnwrap(buttons(in: contentView).first { $0.title == "Preview Removal" })
+            .performClick(nil)
+        let labels = descendants(in: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(
+            labels.contains {
+                $0.contains("Could not prepare track removal.")
+                    && $0.contains("No tracks were removed; revise the selection and try again.")
+                    && $0.contains("Details: Check at least one track to remove.")
+            }
+        )
     }
 
     @MainActor
@@ -3060,7 +3071,10 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(
             waitUntil {
                 descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }.contains {
-                    $0 == "Cannot run this trim: Fixture review failed."
+                    $0.contains("Could not confirm this trim.")
+                        && $0.contains(
+                            "No output was created; review the boundaries and try again.")
+                        && $0.contains("Details: Fixture review failed.")
                 }
             }
         )

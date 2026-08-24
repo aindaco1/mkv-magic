@@ -463,7 +463,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 }
             }
         } catch {
-            showError(error.localizedDescription)
+            showDraftError("Could not update the chapter fields.", error: error)
             populateEditor()
         }
     }
@@ -495,7 +495,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 }
             }
         } catch {
-            showError(error.localizedDescription)
+            showDraftError("Could not update the chapter flags.", error: error)
             populateEditor()
         }
     }
@@ -512,7 +512,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         )
         do {
             try applyMutation(selecting: edition.chapters[0].id) { $0.editions.append(edition) }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not add an edition.", error: error) }
     }
 
     @objc private func addChapter() {
@@ -529,26 +529,26 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             editionID = document.editions.first?.id
             afterChapterID = nil
         }
-        var targetEditionID = editionID
-        if targetEditionID == nil {
-            let edition = MatroskaChapterEdition(isDefault: true, chapters: [])
-            document.editions.append(edition)
-            targetEditionID = edition.id
-        }
-        guard let targetEditionID,
-            let editionIndex = document.editions.firstIndex(where: { $0.id == targetEditionID })
-        else { return }
-        let siblings = document.editions[editionIndex].chapters
+        let newEdition =
+            editionID == nil
+            ? MatroskaChapterEdition(isDefault: true, chapters: []) : nil
+        guard let targetEditionID = editionID ?? newEdition?.id else { return }
+        let siblings =
+            document.editions.first(where: { $0.id == targetEditionID })?.chapters ?? []
         let reference = afterChapterID.flatMap(findChapter)
+        let lastSibling = siblings.last
         let proposedStart =
-            reference?.end ?? reference?.start ?? siblings.last?.end
-            ?? siblings.last?.start ?? .zero
+            reference?.end ?? reference?.start ?? lastSibling?.end
+            ?? lastSibling?.start ?? .zero
         let chapter = MatroskaChapterAtom(
             start: proposedStart,
             displays: [ChapterDisplay(title: "Chapter \(document.chapterCount + 1)")]
         )
         do {
             try applyMutation(selecting: chapter.id) { candidate in
+                if let newEdition {
+                    candidate.editions.append(newEdition)
+                }
                 guard let index = candidate.editions.firstIndex(where: { $0.id == targetEditionID })
                 else { return }
                 if let afterChapterID,
@@ -559,7 +559,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 }
                 candidate.editions[index].chapters.append(chapter)
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not add a chapter.", error: error) }
     }
 
     @objc private func addNestedChild() {
@@ -575,7 +575,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             try applyMutation(selecting: child.id) { candidate in
                 mutateChapter(parentID, in: &candidate) { $0.children.append(child) }
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not add a nested chapter.", error: error) }
     }
 
     @objc private func duplicateSelection() {
@@ -611,7 +611,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                     }
                 }
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not duplicate that item.", error: error) }
     }
 
     @objc private func removeSelection() {
@@ -634,7 +634,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                     }
                 }
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not remove that item.", error: error) }
     }
 
     @objc private func nestSelection() {
@@ -654,7 +654,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                     siblings[index - 1].children.append(moved)
                 }
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not nest that chapter.", error: error) }
     }
 
     @objc private func unnestSelection() {
@@ -677,7 +677,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                     siblings.insert(moved, at: parentIndex + 1)
                 }
             }
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not move that chapter out one level.", error: error) }
     }
 
     @objc private func addDisplay() {
@@ -691,7 +691,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             }
             selectedDisplayIndex = newIndex
             populateEditor()
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not add a chapter title translation.", error: error) }
     }
 
     @objc private func removeDisplay() {
@@ -706,7 +706,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             }
             selectedDisplayIndex = max(0, removing - 1)
             populateEditor()
-        } catch { showError(error.localizedDescription) }
+        } catch { showDraftError("Could not remove that chapter title translation.", error: error) }
     }
 
     @objc private func displayChanged() {
@@ -744,7 +744,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 self.reloadOutline(selecting: suggested.editions.first?.chapters.first?.id)
                 self.showInfo("Created \(suggested.chapterCount) chapters.")
             } catch {
-                self.showError(error.localizedDescription)
+                self.showDraftError("Could not create evenly spaced chapters.", error: error)
             }
         }
     }
@@ -815,7 +815,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 _ = try options.validated()
                 self.runSuggestionAnalysis(options: options)
             } catch {
-                self.showError(error.localizedDescription)
+                self.showError(
+                    failure: "Could not use those chapter suggestion settings.",
+                    recovery: "No analysis was started; revise the settings and try again.",
+                    error: error
+                )
             }
         }
     }
@@ -855,7 +859,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             } catch {
                 self.analysisTask = nil
                 self.suggestButton.isEnabled = self.suggestionProvider != nil
-                self.showError("Analysis failed: \(error.localizedDescription)")
+                self.showError(
+                    failure: "Could not finish chapter analysis.",
+                    recovery: "The chapter draft is unchanged; adjust the settings and try again.",
+                    error: error
+                )
             }
         }
     }
@@ -904,7 +912,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 "Added \(result.addedCount) reviewed chapter\(result.addedCount == 1 ? "" : "s")\(skipped)."
             )
         } catch {
-            showError(error.localizedDescription)
+            showDraftError("Could not add the reviewed chapter suggestions.", error: error)
         }
     }
 
@@ -969,7 +977,10 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                             "Set chapter start to \(ChapterTimestamp.format(selectedTime, digits: 3))."
                         )
                     } catch {
-                        self.showError(error.localizedDescription)
+                        self.showDraftError(
+                            "Could not apply the selected thumbnail time.",
+                            error: error
+                        )
                     }
                 }
             } catch is CancellationError {
@@ -978,7 +989,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             } catch {
                 self.thumbnailTask = nil
                 self.updateActionAvailability()
-                self.showError("Thumbnail preview failed: \(error.localizedDescription)")
+                self.showError(
+                    failure: "Could not create the thumbnail preview.",
+                    recovery: "The chapter draft is unchanged; check the video and try again.",
+                    error: error
+                )
             }
         }
     }
@@ -1055,7 +1070,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 self.reloadOutline(selecting: imported.editions.first?.chapters.first?.id)
                 self.showInfo("Imported \(imported.chapterCount) chapters.")
             } catch {
-                self.showError("Import failed: \(error.localizedDescription)")
+                self.showError(
+                    failure: "Could not import those chapters.",
+                    recovery: "The current draft is unchanged; choose another XML or text file.",
+                    error: error
+                )
             }
         }
     }
@@ -1083,7 +1102,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
                 try data.write(to: url, options: .atomic)
                 self.showInfo("Exported \(url.lastPathComponent).")
             } catch {
-                self.showError("Export failed: \(error.localizedDescription)")
+                self.showError(
+                    failure: "Could not export the chapters.",
+                    recovery: "The chapter draft is unchanged; choose another destination.",
+                    error: error
+                )
             }
         }
     }
@@ -1099,7 +1122,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             clearStatus()
             onUseChanges?(desired)
         } catch {
-            showError(error.localizedDescription)
+            showError(
+                failure: "Could not use these chapter changes.",
+                recovery: "The source MKV is unchanged; correct the chapter draft and try again.",
+                error: error
+            )
         }
     }
 
@@ -1263,6 +1290,24 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private func showError(_ message: String) {
         statusLabel.textColor = .systemRed
         statusLabel.stringValue = message
+    }
+
+    private func showError(failure: String, recovery: String, error: Error) {
+        showError(
+            UserFacingErrorPresentation.message(
+                failure: failure,
+                recovery: recovery,
+                error: error
+            )
+        )
+    }
+
+    private func showDraftError(_ failure: String, error: Error) {
+        showError(
+            failure: failure,
+            recovery: "The last valid chapter draft remains shown; revise it and try again.",
+            error: error
+        )
     }
 
     private func showInfo(_ message: String) {

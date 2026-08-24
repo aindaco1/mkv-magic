@@ -192,7 +192,11 @@ final class TrackEditorViewController: NSViewController {
             statusLabel.stringValue = ""
             onPreview?(edit)
         } catch {
-            statusLabel.stringValue = error.localizedDescription
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare the track edit.",
+                recovery: "The original is unchanged; review the track fields and try again.",
+                error: error
+            )
         }
     }
 

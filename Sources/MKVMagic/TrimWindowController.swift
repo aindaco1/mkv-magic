@@ -584,7 +584,11 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
             } catch {
                 guard reviewedRequest == request else { return }
                 reviewedRequest = nil
-                reviewErrorMessage = "Cannot run this trim: \(error.localizedDescription)"
+                reviewErrorMessage = UserFacingErrorPresentation.message(
+                    failure: "Could not confirm this trim.",
+                    recovery: "No output was created; review the boundaries and try again.",
+                    error: error
+                )
             }
             reviewTask = nil
             modeControl.isEnabled = true

@@ -994,7 +994,13 @@ private final class CommonFormatJoinViewController: NSViewController {
             validationMessage.stringValue = ""
             refreshReviewText()
         } catch {
-            showValidation(error.localizedDescription)
+            showValidation(
+                UserFacingErrorPresentation.message(
+                    failure: "Could not update the common-format choices.",
+                    recovery: "No plan was approved; revise the codec or layout and try again.",
+                    error: error
+                )
+            )
         }
     }
 

@@ -281,7 +281,11 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             tableView.reloadData()
             refreshStatus()
         } catch {
-            statusLabel.stringValue = "Could not apply that mapping: \(error.localizedDescription)"
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not update the track mapping.",
+                recovery: "The last valid mapping remains shown; choose a different track.",
+                error: error
+            )
             statusLabel.textColor = .systemRed
             tableView.reloadData()
         }
@@ -300,7 +304,11 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             _ = try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: mapping)
             onUseMapping?(mapping)
         } catch {
-            statusLabel.stringValue = "This mapping is incomplete: \(error.localizedDescription)"
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not use this track mapping.",
+                recovery: "No join was started; complete every required lane and try again.",
+                error: error
+            )
             statusLabel.textColor = .systemRed
         }
     }

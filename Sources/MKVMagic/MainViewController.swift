@@ -580,8 +580,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     ? "Encoding test ready; it will not run without your approval."
                     : "Saved encoding recommendation loaded."
             } catch {
-                statusLabel.stringValue =
-                    "Could not open Encoding Test: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not open Encoding Test.",
+                    recovery: "No test was started; close and reopen Encoding Test to retry.",
+                    error: error
+                )
             }
         }
     }
@@ -690,7 +693,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 statusLabel.stringValue = "Choose numeric trim boundaries and review the result."
             } catch {
                 isPreparingTrim = false
-                statusLabel.stringValue = "Could not open Trim: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not open Trim.",
+                    recovery: "No output was created; check the selected video and try again.",
+                    error: error
+                )
                 refresh()
             }
         }
@@ -801,7 +808,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 }
                 statusLabel.stringValue = "Review source order, track lanes, and chapters."
             } catch {
-                statusLabel.stringValue = "Could not open Join: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not open Join.",
+                    recovery: "No output was created; review the selected files and try again.",
+                    error: error
+                )
                 refresh()
             }
         }
@@ -828,8 +839,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 )
             }
         } catch {
-            statusLabel.stringValue =
-                "Common-format choices are unavailable: \(error.localizedDescription)"
+            statusLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare common-format choices.",
+                recovery: "No plan was approved; close and reopen Join to retry.",
+                error: error
+            )
             refresh()
         }
     }
@@ -849,8 +863,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 guard view.window === parentWindow else { return }
                 chooseCommonFormatJoinDestination(preview, parentWindow: parentWindow)
             } catch {
-                statusLabel.stringValue =
-                    "Common-format review must be reopened: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not confirm the common-format join.",
+                    recovery: "No output was created; reopen Join and review every choice again.",
+                    error: error
+                )
                 refresh()
             }
         }
@@ -928,8 +945,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 guard view.window === parentWindow else { return }
                 chooseLosslessJoinDestination(preview, parentWindow: parentWindow)
             } catch {
-                statusLabel.stringValue =
-                    "Join review must be reopened: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not confirm the lossless join.",
+                    recovery: "No output was created; reopen Join and review every source again.",
+                    error: error
+                )
                 refresh()
             }
         }
@@ -1098,8 +1118,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 )
             }
         } catch {
-            impactLabel.stringValue = "Workflow cannot run: \(error.localizedDescription)"
-            statusLabel.stringValue = "Workflow preview failed"
+            impactLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare this workflow.",
+                recovery: "No output was created; review the selected file and workflow cards.",
+                error: error
+            )
+            statusLabel.stringValue = "Workflow preview needs attention"
             clearPendingChange()
         }
     }
@@ -1161,7 +1185,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             runButton.toolTip =
                 "Create a new MKV from a temporary clone, verify it, then commit it."
         } catch {
-            impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+            impactLabel.stringValue = UserFacingErrorPresentation.message(
+                failure: "Could not prepare the title edit.",
+                recovery: "The original is unchanged; revise the title and try again.",
+                error: error
+            )
             clearPendingChange()
         }
     }
@@ -1189,7 +1217,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 self.runButton.toolTip =
                     "Create a new MKV from a temporary clone, verify it, then commit it."
             } catch {
-                self.impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the track edit.",
+                    recovery: "The original is unchanged; revise the track fields and try again.",
+                    error: error
+                )
                 self.clearPendingChange()
             }
         }
@@ -1253,7 +1285,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Replace chapters on a temporary clone, re-extract the exact hierarchy, verify preserved media, then commit."
                 }
             } catch {
-                statusLabel.stringValue = "Could not open chapters: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not open Chapter Studio.",
+                    recovery: "No chapters were changed; check the selected MKV and try again.",
+                    error: error
+                )
                 chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
                 clearPendingChange()
             }
@@ -1353,8 +1389,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Write a normalized subtitle copy, verify text, timing, and style structure, then commit it."
                 }
             } catch {
-                statusLabel.stringValue =
-                    "Could not preview subtitle: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the subtitle cleanup preview.",
+                    recovery: "The subtitle is unchanged; check the file and try again.",
+                    error: error
+                )
                 cleanSubtitleButton.isEnabled = true
                 clearPendingChange()
             }
@@ -1464,8 +1503,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         "Remux once, restore the original track UID and position, verify the MKV and extracted subtitle, then commit it."
                 }
             } catch {
-                statusLabel.stringValue =
-                    "Could not preview embedded subtitle: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the embedded subtitle preview.",
+                    recovery: "The MKV is unchanged; choose the track again or inspect the file.",
+                    error: error
+                )
                 cleanSubtitleButton.isEnabled = Self.canCleanSubtitle(asset)
                 clearPendingChange()
             }
@@ -1575,8 +1617,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     )
                 }
             } catch {
-                statusLabel.stringValue =
-                    "Could not preview subtitle: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not prepare the external subtitle preview.",
+                    recovery: "No subtitle was added; check the subtitle file and try again.",
+                    error: error
+                )
                 addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
                 clearPendingChange()
                 completion(nil)
@@ -1622,7 +1667,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 try payload.validateForReview()
                 completion(payload)
             } catch {
-                self.impactLabel.stringValue = error.localizedDescription
+                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not use the reviewed subtitle cleanup.",
+                    recovery: "No subtitle was added; reopen the preview and review it again.",
+                    error: error
+                )
                 self.clearPendingChange()
                 completion(nil)
             }
@@ -1693,7 +1742,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 self.runButton.toolTip =
                     "Remux retained tracks, verify the new MKV, then commit it."
             } catch {
-                self.impactLabel.stringValue = "Plan failed: \(error.localizedDescription)"
+                self.impactLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not prepare track removal.",
+                    recovery:
+                        "The original is unchanged; revise the selected tracks and try again.",
+                    error: error
+                )
                 self.clearPendingChange()
             }
         }
@@ -1832,7 +1886,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 refreshOpenQueue()
                 await model.runAutomaticQueueCycleIfEligible()
             } catch {
-                statusLabel.stringValue = "Could not add to queue: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not add this workflow to the queue.",
+                    recovery: "Nothing was queued; review the destination and try again.",
+                    error: error
+                )
                 restoreEditingControls(for: asset)
             }
         }
@@ -1967,8 +2025,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     retryingQueueJobID: job.id
                 )
             } catch {
-                statusLabel.stringValue =
-                    "Could not restore queued input: \(error.localizedDescription)"
+                statusLabel.stringValue = UserFacingErrorPresentation.message(
+                    failure: "Could not restore the queued input.",
+                    recovery:
+                        "The queued job remains saved; choose Review Again after checking the file.",
+                    error: error
+                )
             }
         }
     }
