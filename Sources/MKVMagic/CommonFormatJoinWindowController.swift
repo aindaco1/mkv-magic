@@ -374,6 +374,7 @@ final class CommonFormatJoinWindowController: NSWindowController {
             width: 620,
             height: hasVideoTarget ? 610 : (hasAudioTarget ? 520 : 460)
         )
+        window.initialFirstResponder = choiceViewController.preferredInitialFirstResponder
         super.init(window: window)
         choiceViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         choiceViewController.onContinue = { [weak self] plan in self?.finish(with: plan) }
@@ -425,6 +426,8 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
     private let rateField = NSTextField()
     private let speedStack = NSStackView()
     private let speedField = NSTextField()
+
+    var preferredInitialFirstResponder: NSView { formatPopup }
 
     init(
         lane: JoinVideoLaneProposal,
@@ -715,6 +718,8 @@ private final class CommonFormatJoinAudioLaneControls: NSObject {
     private let formatPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let detail = NSTextField(wrappingLabelWithString: "")
 
+    var preferredInitialFirstResponder: NSView { formatPopup }
+
     init(
         lane: JoinAudioLaneProposal,
         capabilities: FFmpegEncodingCapabilities,
@@ -811,6 +816,13 @@ private final class CommonFormatJoinViewController: NSViewController {
         action: nil
     )
 
+    var preferredInitialFirstResponder: NSView {
+        _ = view
+        return videoControls.first?.preferredInitialFirstResponder
+            ?? audioControls.first?.preferredInitialFirstResponder
+            ?? approval
+    }
+
     init(
         candidate: CommonFormatJoinCandidate,
         resolvedPlan: ResolvedJoinNormalizationPlan
@@ -841,6 +853,9 @@ private final class CommonFormatJoinViewController: NSViewController {
         review.font = .systemFont(ofSize: 12)
         review.textContainerInset = NSSize(width: 10, height: 10)
         review.setAccessibilityLabel("Reviewed common-format choices")
+        review.setAccessibilityHelp(
+            "Read-only explanation of which lanes are copied and which are converted once."
+        )
         refreshReviewText()
         let scroll = NSScrollView()
         scroll.documentView = review
@@ -897,6 +912,9 @@ private final class CommonFormatJoinViewController: NSViewController {
         approval.target = self
         approval.action = #selector(toggleApproval)
         approval.setAccessibilityLabel("Approve every reviewed common-format choice")
+        approval.setAccessibilityHelp(
+            "Required confirmation that the visible formats and encoding impact are acceptable."
+        )
         let warning = NSTextField(
             wrappingLabelWithString:
                 "The source files are never modified. Cancelled or failed work is removed; only a fully verified final MKV is committed."
@@ -904,10 +922,15 @@ private final class CommonFormatJoinViewController: NSViewController {
         warning.textColor = .secondaryLabelColor
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityHelp("Close without accepting this common-format plan.")
         continueButton.target = self
         continueButton.action = #selector(continueJoin)
         continueButton.keyEquivalent = "\r"
         continueButton.isEnabled = false
+        continueButton.setAccessibilityHelp(
+            "Continue with the approved one-pass conversion and final verified join."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [spacer, cancel, continueButton])

@@ -1284,6 +1284,15 @@ notifications, and explicit atomic-commit cancellation closure. These checks
 are not manual VoiceOver, keyboard-only, contrast, reduced-motion, localization,
 or every-window acceptance; those broader passes remain open.
 
+The every-window continuation assigns intentional first focus and explicit
+assistive semantics to all 18 implemented AppKit window-controller surfaces,
+including otherwise ambiguous join inclusion and track-mapping controls. Safe
+modal cancellation uses Escape. An automatically discovered source gate now
+requires focus and accessibility semantics for every window-controller file and
+rejects custom UI animation APIs until they have an explicit Reduce Motion
+policy and regression. This remains automated evidence rather than an observed
+VoiceOver, visual-accessibility-settings, or physical-hardware pass.
+
 The first error-language slice centralizes workflow save/import/export, Queue
 mutation, History report export, and main-window History/Queue/workflow load
 failures. Each migrated message names the failed action, safe or last-confirmed

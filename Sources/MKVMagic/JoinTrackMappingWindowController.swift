@@ -17,6 +17,7 @@ final class JoinTrackMappingWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 920, height: 520))
         window.minSize = NSSize(width: 700, height: 420)
+        window.initialFirstResponder = mappingViewController.preferredInitialFirstResponder
         super.init(window: window)
         mappingViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         mappingViewController.onUseMapping = { [weak self] mapping in
@@ -72,6 +73,8 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
     private let resetButton = NSButton(title: "Reset Proposal", target: nil, action: nil)
     private let useButton = NSButton(title: "Use This Mapping", target: nil, action: nil)
 
+    var preferredInitialFirstResponder: NSView { tableView }
+
     init(sources: [MediaAsset], mapping: JoinTrackMapping, requiresResolution: Bool) {
         self.sources = sources
         initialMapping = mapping
@@ -117,6 +120,10 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
         tableView.rowHeight = 34
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsEmptySelection = true
+        tableView.setAccessibilityLabel("Output track mapping")
+        tableView.setAccessibilityHelp(
+            "Review one output lane per row and choose its corresponding track in every Part."
+        )
         let tableScroll = NSScrollView()
         tableScroll.documentView = tableView
         tableScroll.hasVerticalScroller = true
@@ -133,13 +140,20 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
 
         resetButton.target = self
         resetButton.action = #selector(resetMapping)
+        resetButton.setAccessibilityHelp("Restore the original proposed track mapping.")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without changing the proposed track mapping.")
         useButton.target = self
         useButton.action = #selector(useMapping)
         useButton.keyEquivalent = "\r"
+        useButton.setAccessibilityHelp(
+            "Accept this exact track mapping for the compatibility review."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         statusLabel.maximumNumberOfLines = 2
+        statusLabel.setAccessibilityLabel("Track mapping status")
         let actions = NSStackView(views: [
             statusLabel, spacer, resetButton, cancelButton, useButton,
         ])
@@ -238,6 +252,12 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             popup.selectItem(at: 0)
         }
         popup.toolTip = currentTrackID.map { "Source track #\($0)" } ?? "Explicit gap"
+        popup.setAccessibilityLabel(
+            "Part \(sourceIndex + 1) track for output lane \(laneIndex + 1)"
+        )
+        popup.setAccessibilityHelp(
+            "Choose a \(lane.kind.rawValue) track or keep an explicit gap for this Part."
+        )
         return popup
     }
 

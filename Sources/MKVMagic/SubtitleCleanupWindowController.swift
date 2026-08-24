@@ -193,6 +193,7 @@ final class SubtitleCleanupWindowController: NSWindowController {
         window.minSize = NSSize(width: 640, height: 480)
         window.styleMask.insert(.resizable)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = cleanupViewController.preferredInitialFirstResponder
         super.init(window: window)
     }
 
@@ -236,6 +237,8 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
     )
     private var appliedChangeIDs = Set<Int>()
 
+    var preferredInitialFirstResponder: NSView { tableView }
+
     fileprivate init(review: SubtitleCleanupReviewPreview) {
         self.review = review
         appliedChangeIDs = review.defaultAppliedChangeIDs
@@ -269,6 +272,10 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         tableView.delegate = self
         tableView.rowHeight = 86
         tableView.allowsEmptySelection = true
+        tableView.setAccessibilityLabel("Subtitle cleanup suggestions")
+        tableView.setAccessibilityHelp(
+            "Review each suggested text change and uncheck any change you do not want."
+        )
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
@@ -277,14 +284,22 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         let normalization = NSTextField(
             wrappingLabelWithString: review.normalization
         )
+        summaryLabel.setAccessibilityLabel("Subtitle cleanup selection summary")
         normalization.textColor = .secondaryLabelColor
         normalization.font = .systemFont(ofSize: 11)
+        normalization.setAccessibilityLabel("Subtitle normalization details")
         validationLabel.textColor = .systemRed
         validationLabel.font = .systemFont(ofSize: 11)
+        validationLabel.setAccessibilityLabel("Subtitle cleanup status")
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityHelp("Close without saving or muxing cleaned subtitles.")
         saveButton.target = self
         saveButton.action = #selector(confirm)
         saveButton.keyEquivalent = "\r"
+        saveButton.setAccessibilityHelp(
+            "Accept the selected text changes and continue to the verified output step."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [validationLabel, spacer, cancel, saveButton])

@@ -356,6 +356,15 @@ final class AppPolicyTests: XCTestCase {
             controls.first { $0.title == "I approve every common-format choice above." }
         )
         let save = try XCTUnwrap(controls.first { $0.title == "Continue to Save…" })
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Common format audio lane 1 format"
+        )
+        XCTAssertTrue(approval.accessibilityHelp()?.contains("Required confirmation") == true)
+        XCTAssertEqual(
+            try XCTUnwrap(controls.first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
         XCTAssertFalse(save.isEnabled)
         approval.performClick(nil)
         XCTAssertTrue(save.isEnabled)
@@ -932,6 +941,8 @@ final class AppPolicyTests: XCTestCase {
             descendants(in: editorContent).compactMap { $0 as? NSTableView }.first
         )
         XCTAssertEqual(mappingTable.numberOfRows, 4)
+        XCTAssertEqual(mappingTable.accessibilityLabel(), "Output track mapping")
+        XCTAssertTrue(editorWindow.initialFirstResponder === mappingTable)
         let editorButtons = buttons(in: editorContent)
         for title in ["Reset Proposal", "Cancel", "Use This Mapping"] {
             XCTAssertTrue(editorButtons.contains { $0.title == title })
@@ -947,6 +958,13 @@ final class AppPolicyTests: XCTestCase {
 
         let firstPopup = try XCTUnwrap(
             mappingTable.view(atColumn: 2, row: 0, makeIfNecessary: true) as? NSPopUpButton
+        )
+        XCTAssertEqual(
+            firstPopup.accessibilityLabel(),
+            "Part 2 track for output lane 1"
+        )
+        XCTAssertTrue(
+            firstPopup.accessibilityHelp()?.contains("subtitle track") == true
         )
         let track11 = try XCTUnwrap(
             firstPopup.itemArray.first {
@@ -1003,6 +1021,12 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(window.minSize, NSSize(width: 720, height: 560))
         let table = try XCTUnwrap(descendants(in: content).compactMap { $0 as? NSTableView }.first)
         XCTAssertEqual(table.numberOfRows, 2)
+        XCTAssertEqual(table.accessibilityLabel(), "Join source order")
+        XCTAssertTrue(window.initialFirstResponder === table)
+        let reviewText = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextView }.first
+        )
+        XCTAssertEqual(reviewText.accessibilityLabel(), "Join compatibility review")
         let controls = buttons(in: content)
         for title in ["Move Up", "Move Down", "Cancel", "Continue to Save…"] {
             XCTAssertTrue(controls.contains { $0.title == title }, "Missing join action \(title)")
@@ -1010,6 +1034,14 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(
             try XCTUnwrap(controls.first { $0.title == "Continue to Save…" }).isEnabled
         )
+        XCTAssertEqual(
+            try XCTUnwrap(controls.first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
+        let include = try XCTUnwrap(
+            table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSButton
+        )
+        XCTAssertTrue(include.accessibilityLabel()?.hasPrefix("Include Part source") == true)
         for button in controls where !button.isHidden {
             let frame = button.convert(button.bounds, to: content)
             XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
@@ -1871,6 +1903,18 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 510, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 520)
         XCTAssertEqual(window.minSize.height, 480)
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Track to edit"
+        )
+        let labels = descendants(in: contentView).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Track display name"))
+        XCTAssertTrue(labels.contains("Track language tag"))
+        XCTAssertTrue(labels.contains("Track edit status"))
+        XCTAssertEqual(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
     }
 
     @MainActor
@@ -1892,6 +1936,16 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 480, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 540)
         XCTAssertEqual(window.minSize.height, 420)
+
+        let firstTrack = try XCTUnwrap(
+            buttons(in: contentView).first { $0.title.contains("#1 Video") }
+        )
+        XCTAssertTrue(window.initialFirstResponder === firstTrack)
+        XCTAssertTrue(firstTrack.accessibilityHelp()?.contains("verified copy") == true)
+        XCTAssertEqual(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
 
         try XCTUnwrap(buttons(in: contentView).first { $0.title == "Preview Removal" })
             .performClick(nil)
@@ -2479,6 +2533,19 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 640)
         XCTAssertEqual(window.minSize.height, 480)
+        let table = try XCTUnwrap(
+            descendants(in: contentView).compactMap { $0 as? NSTableView }.first
+        )
+        XCTAssertEqual(table.accessibilityLabel(), "Subtitle cleanup suggestions")
+        XCTAssertTrue(window.initialFirstResponder === table)
+        let labels = descendants(in: contentView).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Subtitle cleanup selection summary"))
+        XCTAssertTrue(labels.contains("Subtitle normalization details"))
+        XCTAssertTrue(labels.contains("Subtitle cleanup status"))
+        XCTAssertEqual(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
     }
 
     @MainActor
@@ -2539,6 +2606,16 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 280, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 540)
         XCTAssertEqual(window.minSize.height, 260)
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Embedded subtitle track"
+        )
+        let labels = descendants(in: contentView).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Embedded subtitle selection status"))
+        XCTAssertEqual(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
     }
 
     @MainActor
@@ -2647,6 +2724,18 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(contentView.frame.size.height, 530, accuracy: 1)
         XCTAssertEqual(window.minSize.width, 560)
         XCTAssertEqual(window.minSize.height, 500)
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Subtitle language tag"
+        )
+        let labels = descendants(in: contentView).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Subtitle track name"))
+        XCTAssertTrue(labels.contains("Subtitle match and cleanup warning"))
+        XCTAssertTrue(labels.contains("Subtitle track status"))
+        XCTAssertEqual(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
+            "\u{1b}"
+        )
     }
 
     @MainActor
@@ -2902,6 +2991,20 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(controls.contains { $0.title == "Run Again" && $0.isEnabled })
         XCTAssertTrue(controls.contains { $0.title == "Close" && $0.isEnabled })
         XCTAssertTrue(controls.contains { $0.title == "Cancel" && $0.isHidden })
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Run local encoding test"
+        )
+        XCTAssertTrue(
+            controls.first { $0.title == "Run Again" }?.accessibilityHelp()?
+                .contains("without reading private media") == true
+        )
+        XCTAssertEqual(controls.first { $0.title == "Close" }?.keyEquivalent, "\u{1b}")
+        XCTAssertTrue(
+            descendants(in: content).contains {
+                $0.accessibilityLabel() == "Encoding test status"
+            }
+        )
         let results = try XCTUnwrap(
             descendants(in: content).compactMap { $0 as? NSTextView }.first
         ).string
@@ -2980,6 +3083,10 @@ final class AppPolicyTests: XCTestCase {
 
         XCTAssertEqual(window.title, "Trim MKV")
         XCTAssertEqual(window.minSize, NSSize(width: 700, height: 570))
+        XCTAssertEqual(window.initialFirstResponder?.accessibilityLabel(), "Trim in point")
+        let accessibilityLabels = descendants(in: content).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(accessibilityLabels.contains("Trim input status"))
+        XCTAssertTrue(accessibilityLabels.contains("Trim review summary"))
         XCTAssertEqual(descendants(in: content).compactMap { $0 as? NSImageView }.count, 5)
         XCTAssertEqual(
             descendants(in: content).compactMap { $0 as? NSTextField }.filter {
@@ -3305,10 +3412,19 @@ final class AppPolicyTests: XCTestCase {
             suggestionProvider: { _, _ in [] },
             thumbnailProvider: { _ in [] }
         )
-        let content = try XCTUnwrap(controller.window?.contentView)
-        controller.window?.setContentSize(NSSize(width: 820, height: 580))
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(NSSize(width: 820, height: 580))
         content.layoutSubtreeIfNeeded()
         let titles = buttonTitles(in: content)
+
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Nested chapter hierarchy"
+        )
+        XCTAssertTrue(
+            window.initialFirstResponder?.accessibilityHelp()?.contains("change nesting") == true
+        )
 
         for expected in [
             "Add Edition", "Add Chapter", "Add Child", "Duplicate", "Remove", "Nest",
@@ -3369,6 +3485,9 @@ final class AppPolicyTests: XCTestCase {
         let controls = buttons(in: content)
         XCTAssertEqual(controls.filter { $0.title == "Use This Time" }.count, 3)
         XCTAssertTrue(controls.contains { $0.title == "Cancel" })
+        let firstChoice = try XCTUnwrap(controls.first { $0.title == "Use This Time" })
+        XCTAssertTrue(window.initialFirstResponder === firstChoice)
+        XCTAssertTrue(firstChoice.accessibilityHelp()?.contains("exact numeric time") == true)
         let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
         for expected in [
             "Before", "Current", "After", "00:00:05.000", "00:00:10.000",
@@ -3414,8 +3533,9 @@ final class AppPolicyTests: XCTestCase {
                 ),
             ]
         )
-        let content = try XCTUnwrap(controller.window?.contentView)
-        controller.window?.setContentSize(NSSize(width: 560, height: 400))
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(NSSize(width: 560, height: 400))
         content.layoutSubtreeIfNeeded()
         let controls = buttons(in: content)
         XCTAssertTrue(controls.contains { $0.title == "Select All" })
@@ -3424,6 +3544,13 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Add Selected" }).isEnabled)
         let table = try XCTUnwrap(descendants(in: content).compactMap { $0 as? NSTableView }.first)
         XCTAssertEqual(table.numberOfRows, 2)
+        XCTAssertTrue(window.initialFirstResponder === table)
+        XCTAssertTrue(table.accessibilityHelp()?.contains("false positives") == true)
+        XCTAssertTrue(
+            descendants(in: content).contains {
+                $0.accessibilityLabel() == "Selected chapter suggestion count"
+            }
+        )
         XCTAssertGreaterThan(table.enclosingScrollView?.frame.height ?? 0, 150)
         for button in controls where !button.isHidden {
             let frame = button.convert(button.bounds, to: content)

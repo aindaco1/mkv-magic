@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$repo_root"
 
 ./scripts/ci/check-local-only.sh
+./scripts/ci/check-appkit-accessibility.sh
 ./scripts/ci/check-user-facing-errors.sh
 ./scripts/ci/scan-secrets.sh
 ./scripts/ci/verify-actions-pinning.sh

@@ -147,6 +147,7 @@ final class TrimWindowController: NSWindowController {
         window.styleMask = [.titled, .resizable]
         window.setContentSize(NSSize(width: 840, height: 650))
         window.minSize = NSSize(width: 700, height: 570)
+        window.initialFirstResponder = trimViewController.preferredInitialFirstResponder
         super.init(window: window)
         trimViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         trimViewController.onContinue = { [weak self] preview in
@@ -221,6 +222,8 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     private var reviewedRequest: TrimReviewRequest?
     private var reviewedPreview: TrimExecutionPreview?
     private var reviewErrorMessage: String?
+
+    var preferredInitialFirstResponder: NSView { inField }
     private var presets: [VideoPreset] {
         guard let video = source.tracks.first(where: { $0.kind == .video }),
             MediaHDR10Signal(track: video) != nil
@@ -398,17 +401,26 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
 
         inputMessage.textColor = .secondaryLabelColor
         inputMessage.font = .systemFont(ofSize: 12)
+        inputMessage.setAccessibilityLabel("Trim input status")
         reviewText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         reviewText.textColor = .secondaryLabelColor
+        reviewText.setAccessibilityLabel("Trim review summary")
 
         reviewButton.target = self
         reviewButton.action = #selector(reviewTrim)
+        reviewButton.setAccessibilityHelp(
+            "Validate these times and inspect the exact copy or encoding boundary plan."
+        )
         continueButton.target = self
         continueButton.action = #selector(continueToSave)
         continueButton.keyEquivalent = "\r"
         continueButton.isEnabled = false
+        continueButton.setAccessibilityHelp(
+            "Continue with the exact reviewed trim and create one verified MKV output."
+        )
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without trimming or changing the source file.")
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let footer = NSStackView(views: [spacer, cancelButton, reviewButton, continueButton])

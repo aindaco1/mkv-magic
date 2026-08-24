@@ -14,6 +14,7 @@ final class EmbeddedSubtitleTrackPickerWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 620, height: 280))
         window.minSize = NSSize(width: 540, height: 260)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = pickerViewController.preferredInitialFirstResponder
         super.init(window: window)
         pickerViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         pickerViewController.onContinue = { [weak self] trackUID in
@@ -51,6 +52,8 @@ final class EmbeddedSubtitleTrackPickerViewController: NSViewController {
     private let trackPopup = NSPopUpButton()
     private let validationLabel = NSTextField(labelWithString: "")
 
+    var preferredInitialFirstResponder: NSView { trackPopup }
+
     init(tracks: [MediaTrack]) {
         self.tracks = tracks.filter {
             $0.uid != nil && EmbeddedTextSubtitlePolicy.format(for: $0) != nil
@@ -74,6 +77,9 @@ final class EmbeddedSubtitleTrackPickerViewController: NSViewController {
         explanation.textColor = .secondaryLabelColor
         trackPopup.addItems(withTitles: tracks.map(Self.title))
         trackPopup.setAccessibilityLabel("Embedded subtitle track")
+        trackPopup.setAccessibilityHelp(
+            "Choose one embedded SRT, ASS, or SSA text track to extract privately for review."
+        )
         let selector = NSGridView(views: [
             [NSTextField(labelWithString: "Subtitle"), trackPopup]
         ])
@@ -90,11 +96,17 @@ final class EmbeddedSubtitleTrackPickerViewController: NSViewController {
         note.font = .systemFont(ofSize: 11)
         validationLabel.textColor = .systemRed
         validationLabel.font = .systemFont(ofSize: 11)
+        validationLabel.setAccessibilityLabel("Embedded subtitle selection status")
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelAction))
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityHelp("Close without extracting or changing a subtitle track.")
         let review = NSButton(
             title: "Review Cleanup", target: self, action: #selector(reviewAction))
         review.keyEquivalent = "\r"
         review.isEnabled = !tracks.isEmpty
+        review.setAccessibilityHelp(
+            "Extract the selected text track privately and open its cleanup review."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [validationLabel, spacer, cancel, review])

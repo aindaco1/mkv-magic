@@ -14,6 +14,7 @@ final class TrackEditorWindowController: NSWindowController {
         window.styleMask = [.titled, .closable]
         window.setContentSize(NSSize(width: 560, height: 510))
         window.minSize = NSSize(width: 520, height: 480)
+        window.initialFirstResponder = editorViewController.preferredInitialFirstResponder
         super.init(window: window)
         editorViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         editorViewController.onPreview = { [weak self] edit in self?.finish(with: edit) }
@@ -66,6 +67,8 @@ final class TrackEditorViewController: NSViewController {
         checkboxWithTitle: "Text descriptions", target: nil, action: nil)
     private let statusLabel = NSTextField(labelWithString: "")
 
+    var preferredInitialFirstResponder: NSView { trackPopup }
+
     init(asset: MediaAsset) {
         tracks = asset.tracks.filter { $0.kind != .attachment && $0.uid != nil }
         super.init(nibName: nil, bundle: nil)
@@ -89,11 +92,21 @@ final class TrackEditorViewController: NSViewController {
         trackPopup.addItems(withTitles: tracks.map(TrackEditorPresentation.label))
         trackPopup.target = self
         trackPopup.action = #selector(selectedTrackChanged)
+        trackPopup.setAccessibilityLabel("Track to edit")
+        trackPopup.setAccessibilityHelp(
+            "Choose one Matroska track whose header metadata will be changed."
+        )
         nameField.placeholderString = "Optional display name"
+        nameField.setAccessibilityLabel("Track display name")
+        nameField.setAccessibilityHelp("Set an optional name shown by media players.")
         languageField.addItems(withObjectValues: [
             "en", "en-US", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "und",
         ])
         languageField.placeholderString = "en, en-US, es, und…"
+        languageField.setAccessibilityLabel("Track language tag")
+        languageField.setAccessibilityHelp(
+            "Enter a language tag such as en, en-US, or und for undetermined."
+        )
 
         let fields = NSGridView(views: [
             [fieldLabel("Track"), trackPopup],
@@ -121,11 +134,17 @@ final class TrackEditorViewController: NSViewController {
         statusLabel.textColor = .systemRed
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 2
+        statusLabel.setAccessibilityLabel("Track edit status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without preparing a track edit.")
         let previewButton = NSButton(
             title: "Preview Changes", target: self, action: #selector(preview))
         previewButton.keyEquivalent = "\r"
         previewButton.bezelStyle = .rounded
+        previewButton.setAccessibilityHelp(
+            "Review this metadata-only change before creating a verified MKV copy."
+        )
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [statusLabel, buttonSpacer, cancelButton, previewButton])

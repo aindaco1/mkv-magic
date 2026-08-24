@@ -20,6 +20,7 @@ final class ChapterThumbnailWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 720, height: 350))
         window.minSize = NSSize(width: 560, height: 300)
+        window.initialFirstResponder = chooser.preferredInitialFirstResponder
         super.init(window: window)
         chooser.onCancel = { [weak self] in self?.finish(with: nil) }
         chooser.onChoose = { [weak self] time in self?.finish(with: time) }
@@ -64,6 +65,13 @@ private final class ChapterThumbnailViewController: NSViewController {
 
     private let thumbnails: [(thumbnail: ChapterThumbnail, image: NSImage)]
     private let currentTime: MediaTime
+    private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
+    private var chooseButtons = [NSButton]()
+
+    var preferredInitialFirstResponder: NSView {
+        _ = view
+        return chooseButtons.first ?? cancelButton
+    }
 
     init?(thumbnails: [ChapterThumbnail], currentTime: MediaTime) {
         guard !thumbnails.isEmpty, thumbnails.count <= 5 else { return nil }
@@ -100,8 +108,10 @@ private final class ChapterThumbnailViewController: NSViewController {
         cardRow.distribution = .fillEqually
         cardRow.spacing = 10
 
-        let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.target = self
+        cancelButton.action = #selector(cancel)
         cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without changing the chapter start time.")
         let footerSpacer = NSView()
         footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let footer = NSStackView(views: [footerSpacer, cancelButton])
@@ -151,6 +161,8 @@ private final class ChapterThumbnailViewController: NSViewController {
         choose.setAccessibilityLabel(
             "Use \(relationship.lowercased()) time \(time.stringValue)"
         )
+        choose.setAccessibilityHelp("Set this exact numeric time as the chapter start.")
+        chooseButtons.append(choose)
 
         let card = NSStackView(views: [title, imageView, time, choose])
         card.orientation = .vertical

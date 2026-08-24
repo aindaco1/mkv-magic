@@ -58,6 +58,7 @@ final class EncodingBenchmarkWindowController: NSWindowController, NSWindowDeleg
         window.setContentSize(NSSize(width: 610, height: 500))
         window.minSize = NSSize(width: 540, height: 440)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = content.preferredInitialFirstResponder
         super.init(window: window)
         window.delegate = self
         window.center()
@@ -83,6 +84,8 @@ final class EncodingBenchmarkViewController: NSViewController {
     private let closeButton = NSButton(title: "Close", target: nil, action: nil)
     private var report: EncodingBenchmarkReport?
     private var task: Task<Void, Never>?
+
+    var preferredInitialFirstResponder: NSView { runButton }
 
     init(
         report: EncodingBenchmarkReport?,
@@ -120,6 +123,9 @@ final class EncodingBenchmarkViewController: NSViewController {
         resultsText.textContainerInset = NSSize(width: 8, height: 8)
         resultsText.string = EncodingBenchmarkPresentation.results(report)
         resultsText.setAccessibilityLabel("Encoding test results")
+        resultsText.setAccessibilityHelp(
+            "Read-only local AV1 and HEVC speed, size, and quality results."
+        )
         let resultsScroll = NSScrollView()
         resultsScroll.documentView = resultsText
         resultsScroll.hasVerticalScroller = true
@@ -129,14 +135,21 @@ final class EncodingBenchmarkViewController: NSViewController {
         runButton.action = #selector(runTest)
         runButton.keyEquivalent = "\r"
         runButton.setAccessibilityLabel("Run local encoding test")
+        runButton.setAccessibilityHelp(
+            "Explicitly start a short synthetic local test without reading private media."
+        )
         if report != nil { runButton.title = "Run Again" }
         cancelButton.target = self
         cancelButton.action = #selector(cancelTest)
         cancelButton.isHidden = true
+        cancelButton.setAccessibilityHelp("Stop the running synthetic encoding test safely.")
         closeButton.target = self
         closeButton.action = #selector(closeWindow)
+        closeButton.keyEquivalent = "\u{1b}"
+        closeButton.setAccessibilityHelp("Close and keep the current saved recommendation.")
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.setAccessibilityLabel("Encoding test status")
 
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -217,5 +230,7 @@ final class EncodingBenchmarkViewController: NSViewController {
         runButton.isEnabled = !isRunning
         closeButton.isEnabled = !isRunning
         cancelButton.isHidden = !isRunning
+        closeButton.keyEquivalent = isRunning ? "" : "\u{1b}"
+        cancelButton.keyEquivalent = isRunning ? "\u{1b}" : ""
     }
 }

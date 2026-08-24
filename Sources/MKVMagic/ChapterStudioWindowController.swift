@@ -32,6 +32,7 @@ final class ChapterStudioWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 980, height: 680))
         window.minSize = NSSize(width: 820, height: 580)
+        window.initialFirstResponder = studioViewController.preferredInitialFirstResponder
         super.init(window: window)
         studioViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         studioViewController.onUseChanges = { [weak self] document in
@@ -134,6 +135,8 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private let removeDisplayButton = NSButton(title: "−", target: nil, action: nil)
     private let useChangesButton = NSButton(title: "Use Changes", target: nil, action: nil)
 
+    var preferredInitialFirstResponder: NSView { outlineView }
+
     init(
         preview: ChapterEditPreview,
         suggestionProvider: ChapterSuggestionProvider?,
@@ -170,10 +173,16 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
 
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.maximumNumberOfLines = 2
+        statusLabel.setAccessibilityLabel("Chapter Studio status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without adding chapter changes to the plan.")
         useChangesButton.target = self
         useChangesButton.action = #selector(useChanges)
         useChangesButton.keyEquivalent = "\r"
+        useChangesButton.setAccessibilityHelp(
+            "Accept this nested chapter document for a new verified MKV copy."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let footer = NSStackView(views: [statusLabel, spacer, cancelButton, useChangesButton])
@@ -219,6 +228,9 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         outlineView.delegate = self
         outlineView.allowsMultipleSelection = false
         outlineView.setAccessibilityLabel("Nested chapter hierarchy")
+        outlineView.setAccessibilityHelp(
+            "Select an edition or chapter to edit it, add children, or change nesting."
+        )
         let scroll = NSScrollView()
         scroll.documentView = outlineView
         scroll.hasVerticalScroller = true

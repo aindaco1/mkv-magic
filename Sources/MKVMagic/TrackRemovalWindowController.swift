@@ -41,6 +41,7 @@ final class TrackRemovalWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 620, height: 480))
         window.minSize = NSSize(width: 540, height: 420)
+        window.initialFirstResponder = removalViewController.preferredInitialFirstResponder
         super.init(window: window)
         removalViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         removalViewController.onPreview = { [weak self] removal in
@@ -81,6 +82,10 @@ final class TrackRemovalViewController: NSViewController {
     private let suggestions: [UInt64: CleanMKVTrackSuggestion]
     private var checkboxes = [NSButton]()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let previewButton = NSButton(
+        title: "Preview Removal", target: nil, action: nil)
+
+    var preferredInitialFirstResponder: NSView { checkboxes.first ?? previewButton }
 
     init(asset: MediaAsset, mode: TrackRemovalSheetMode) {
         tracks = asset.tracks.filter { $0.kind != .attachment }
@@ -127,6 +132,7 @@ final class TrackRemovalViewController: NSViewController {
                 checkbox.isEnabled
                 ? "Remove this track from the verified copy."
                 : "This track type or identity cannot be removed safely yet."
+            checkbox.setAccessibilityHelp(checkbox.toolTip)
             rows.addArrangedSubview(checkbox)
             return checkbox
         }
@@ -147,10 +153,16 @@ final class TrackRemovalViewController: NSViewController {
         statusLabel.textColor = .systemRed
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 2
+        statusLabel.setAccessibilityLabel("Track removal status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
-        let previewButton = NSButton(
-            title: "Preview Removal", target: self, action: #selector(preview))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without removing any tracks.")
+        previewButton.target = self
+        previewButton.action = #selector(preview)
         previewButton.keyEquivalent = "\r"
+        previewButton.setAccessibilityHelp(
+            "Review the selected omissions before creating a verified MKV copy."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [statusLabel, spacer, cancelButton, previewButton])

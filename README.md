@@ -346,6 +346,14 @@ commit. These native AppKit regressions are a baseline, not a claimed manual
 keyboard-only or VoiceOver walkthrough. See
 [docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
 
+The follow-on every-window foundation now gives all 18 implemented AppKit
+window-controller surfaces intentional first focus and explicit assistive
+semantics. Modal workflow cancellation uses Escape where safe, and a source
+gate prevents new windows without these contracts or custom motion without an
+explicit Reduce Motion policy. This remains automated evidence, not an observed
+VoiceOver or visual-accessibility-settings pass. See
+[docs/releases/M8_EVERY_WINDOW_ACCESSIBILITY_FOUNDATION_SLICE.md](docs/releases/M8_EVERY_WINDOW_ACCESSIBILITY_FOUNDATION_SLICE.md).
+
 Central workflow, Queue, and History failures now use one bounded message
 contract: what failed, what remains safe or last-confirmed, how to retry, and a
 single-line technical detail capped at 240 characters. This is the first M8

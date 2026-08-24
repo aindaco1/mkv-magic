@@ -41,6 +41,7 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
         window.setContentSize(NSSize(width: 620, height: 530))
         window.minSize = NSSize(width: 560, height: 500)
         window.tabbingMode = .disallowed
+        window.initialFirstResponder = muxViewController.preferredInitialFirstResponder
         super.init(window: window)
         muxViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         muxViewController.onContinue = { [weak self] metadata in
@@ -92,6 +93,8 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         checkboxWithTitle: "Hearing impaired / SDH", target: nil, action: nil)
     private let validationLabel = NSTextField(wrappingLabelWithString: "")
 
+    var preferredInitialFirstResponder: NSView { languageField }
+
     init(
         media: MediaAsset,
         preview: ExternalSubtitleFilePreview,
@@ -136,8 +139,14 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         ])
         languageField.placeholderString = "en, en-US, es, und…"
         languageField.stringValue = match.suggestedMetadata.language
+        languageField.setAccessibilityLabel("Subtitle language tag")
+        languageField.setAccessibilityHelp(
+            "Confirm a language tag such as en, en-US, or und for undetermined."
+        )
         nameField.placeholderString = "Optional display name"
         nameField.stringValue = match.suggestedMetadata.name ?? ""
+        nameField.setAccessibilityLabel("Subtitle track name")
+        nameField.setAccessibilityHelp("Set an optional subtitle name shown by media players.")
         defaultCheck.state = match.suggestedMetadata.isDefault ? .on : .off
         forcedCheck.state = match.suggestedMetadata.isForced ? .on : .off
         hearingCheck.state = match.suggestedMetadata.isHearingImpaired ? .on : .off
@@ -169,14 +178,21 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         warningLabel.textColor = warnings.isEmpty ? .secondaryLabelColor : .systemOrange
         warningLabel.font = .systemFont(ofSize: 11)
         warningLabel.maximumNumberOfLines = 0
+        warningLabel.setAccessibilityLabel("Subtitle match and cleanup warning")
 
         validationLabel.textColor = .systemRed
         validationLabel.font = .systemFont(ofSize: 11)
         validationLabel.maximumNumberOfLines = 2
+        validationLabel.setAccessibilityLabel("Subtitle track status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without adding this subtitle to the plan.")
         let continueButton = NSButton(
             title: "Add to Plan", target: self, action: #selector(confirm))
         continueButton.keyEquivalent = "\r"
+        continueButton.setAccessibilityHelp(
+            "Accept these subtitle options and add one remux step to the reviewed plan."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [validationLabel, spacer, cancelButton, continueButton])

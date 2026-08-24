@@ -13,6 +13,7 @@ final class ChapterSuggestionReviewWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 680, height: 520))
         window.minSize = NSSize(width: 560, height: 400)
+        window.initialFirstResponder = reviewViewController.preferredInitialFirstResponder
         super.init(window: window)
         reviewViewController.onCancel = { [weak self] in self?.finish(with: []) }
         reviewViewController.onAdd = { [weak self] suggestions in
@@ -64,6 +65,8 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
     private let selectionLabel = NSTextField(labelWithString: "")
     private let addButton = NSButton(title: "Add Selected", target: nil, action: nil)
 
+    var preferredInitialFirstResponder: NSView { tableView }
+
     init(suggestions: [ChapterSuggestion]) {
         self.suggestions = suggestions
         selectedRows = Set(suggestions.indices)
@@ -107,6 +110,9 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         tableView.usesAlternatingRowBackgroundColors = true
         tableView.allowsMultipleSelection = false
         tableView.setAccessibilityLabel("Detected chapter boundaries")
+        tableView.setAccessibilityHelp(
+            "Review each locally detected timestamp and uncheck false positives."
+        )
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
@@ -117,6 +123,7 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         let selectNone = NSButton(
             title: "Select None", target: self, action: #selector(selectNoRows))
         selectionLabel.textColor = .secondaryLabelColor
+        selectionLabel.setAccessibilityLabel("Selected chapter suggestion count")
         let selectionSpacer = NSView()
         selectionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let selectionTools = NSStackView(views: [
@@ -127,9 +134,14 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         selectionTools.spacing = 8
 
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancelButton.keyEquivalent = "\u{1b}"
+        cancelButton.setAccessibilityHelp("Close without adding detected chapter boundaries.")
         addButton.target = self
         addButton.action = #selector(addSelected)
         addButton.keyEquivalent = "\r"
+        addButton.setAccessibilityHelp(
+            "Add every checked timestamp as an editable chapter."
+        )
         let footerSpacer = NSView()
         footerSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let footer = NSStackView(views: [footerSpacer, cancelButton, addButton])

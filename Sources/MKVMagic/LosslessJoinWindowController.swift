@@ -591,6 +591,7 @@ final class LosslessJoinWindowController: NSWindowController {
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 860, height: 650))
         window.minSize = NSSize(width: 720, height: 560)
+        window.initialFirstResponder = joinViewController.preferredInitialFirstResponder
         super.init(window: window)
         joinViewController.onCancel = { [weak self] in self?.finish(with: nil) }
         joinViewController.onContinue = { [weak self] selection in
@@ -686,6 +687,8 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let mappingButton = NSButton(title: "Edit Track Mapping…", target: nil, action: nil)
 
+    var preferredInitialFirstResponder: NSView { tableView }
+
     init(
         options: [LosslessJoinSourceOption],
         encodingCapabilities: FFmpegEncodingCapabilities?
@@ -731,6 +734,10 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         tableView.rowHeight = 30
         tableView.allowsEmptySelection = false
         tableView.usesAlternatingRowBackgroundColors = true
+        tableView.setAccessibilityLabel("Join source order")
+        tableView.setAccessibilityHelp(
+            "Choose, include, and order complete MKV files before reviewing compatibility."
+        )
         let tableScroll = NSScrollView()
         tableScroll.documentView = tableView
         tableScroll.hasVerticalScroller = true
@@ -739,10 +746,15 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
 
         moveUpButton.target = self
         moveUpButton.action = #selector(moveSourceUp)
+        moveUpButton.setAccessibilityHelp("Move the selected included source one Part earlier.")
         moveDownButton.target = self
         moveDownButton.action = #selector(moveSourceDown)
+        moveDownButton.setAccessibilityHelp("Move the selected included source one Part later.")
         mappingButton.target = self
         mappingButton.action = #selector(editMapping)
+        mappingButton.setAccessibilityHelp(
+            "Review or resolve which source tracks continue each output lane."
+        )
         let orderSpacer = NSView()
         orderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let orderButtons = NSStackView(views: [
@@ -759,16 +771,26 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         reviewText.drawsBackground = false
         reviewText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
         reviewText.textContainerInset = NSSize(width: 8, height: 8)
+        reviewText.setAccessibilityLabel("Join compatibility review")
+        reviewText.setAccessibilityHelp(
+            "Read-only track, chapter, copy, and encoding consequences for this source order."
+        )
         let reviewScroll = NSScrollView()
         reviewScroll.documentView = reviewText
         reviewScroll.hasVerticalScroller = true
         reviewScroll.borderType = .bezelBorder
 
         statusLabel.maximumNumberOfLines = 2
+        statusLabel.setAccessibilityLabel("Join readiness status")
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
+        cancel.keyEquivalent = "\u{1b}"
+        cancel.setAccessibilityHelp("Close without joining these files.")
         continueButton.target = self
         continueButton.action = #selector(continueJoin)
         continueButton.keyEquivalent = "\r"
+        continueButton.setAccessibilityHelp(
+            "Continue with the exact reviewed join or common-format proposal."
+        )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let actions = NSStackView(views: [statusLabel, spacer, cancel, continueButton])
@@ -822,6 +844,12 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             checkbox.state = includedIDs.contains(option.source.id) ? .on : .off
             checkbox.tag = row
             checkbox.toolTip = "Include \(option.source.sourceURL.lastPathComponent)"
+            checkbox.setAccessibilityLabel(
+                "Include Part source \(option.source.sourceURL.lastPathComponent)"
+            )
+            checkbox.setAccessibilityHelp(
+                "Include or omit this complete MKV from the final joined file."
+            )
             return checkbox
         case "chapters":
             return editionPopup(option: option, row: row)
@@ -852,6 +880,10 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         popup.target = self
         popup.action = #selector(selectEdition)
         popup.tag = row
+        popup.setAccessibilityLabel("Chapter edition for Part \(row + 1)")
+        popup.setAccessibilityHelp(
+            "Choose the one nested chapter edition to retain from this source."
+        )
         if option.editions.isEmpty {
             popup.addItem(withTitle: "No source chapters")
             popup.isEnabled = false
