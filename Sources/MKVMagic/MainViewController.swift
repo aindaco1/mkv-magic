@@ -2,6 +2,7 @@ import AppKit
 import MKVMagicCore
 import MKVMagicExecution
 import MKVMagicPlanning
+import MKVMagicSystem
 import UniformTypeIdentifiers
 
 @MainActor
@@ -12,6 +13,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let externalSubtitlePayload: ExternalSubtitleMuxPayload?
         let sourceDisposition: MediaQueueSourceDisposition
         let retryingQueueJobID: UUID?
+        let expectedSourceRevision: MediaFileRevision
     }
 
     private struct ReviewedExternalSubtitle {
@@ -1143,12 +1145,66 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?
     ) {
+        let needsVideoCapabilities = workflow.steps.contains {
+            $0.isEnabled && $0.action.isVideoConversion
+        }
+        guard needsVideoCapabilities else {
+            compileAndPresentSavedWorkflowReview(
+                workflow,
+                asset: asset,
+                parentWindow: parentWindow,
+                externalSubtitle: externalSubtitle,
+                availableVideoPresets: [],
+                sourceDisposition: sourceDisposition,
+                retryingQueueJobID: retryingQueueJobID
+            )
+            return
+        }
+
+        statusLabel.stringValue = "Checking compatible video encoders on this Mac…"
+        Task { [weak self, weak parentWindow] in
+            guard let self else { return }
+            let capabilities = await model.probeEncodingCapabilities()
+            guard let parentWindow, view.window === parentWindow,
+                selectedAsset?.id == asset.id
+            else {
+                clearPendingChange()
+                return
+            }
+            compileAndPresentSavedWorkflowReview(
+                workflow,
+                asset: asset,
+                parentWindow: parentWindow,
+                externalSubtitle: externalSubtitle,
+                availableVideoPresets: capabilities.availableVideoPresets,
+                sourceDisposition: sourceDisposition,
+                retryingQueueJobID: retryingQueueJobID
+            )
+        }
+    }
+
+    private func compileAndPresentSavedWorkflowReview(
+        _ workflow: SavedWorkflow,
+        asset: MediaAsset,
+        parentWindow: NSWindow,
+        externalSubtitle: ReviewedExternalSubtitle?,
+        availableVideoPresets: [VideoPreset],
+        sourceDisposition: MediaQueueSourceDisposition,
+        retryingQueueJobID: UUID?
+    ) {
+        guard let reviewedSourceRevision = model.reviewedSourceRevision(for: asset) else {
+            statusLabel.stringValue = "The source changed after inspection"
+            impactLabel.stringValue = "Inspect the file again before reviewing this workflow"
+            clearPendingChange()
+            return
+        }
         do {
             let preview = try SavedWorkflowCompiler().preview(
                 workflow,
                 for: asset,
                 inputs: SavedWorkflowResolvedInputs(
-                    externalSubtitle: externalSubtitle?.resolvedInput
+                    externalSubtitle: externalSubtitle?.resolvedInput,
+                    availableVideoPresets: availableVideoPresets
                 )
             )
             let controller = WorkflowPlanReviewWindowController(
@@ -1184,7 +1240,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     externalSubtitlePayload: externalSubtitle?.payload,
                     sourceDisposition: sourceDisposition,
                     retryingQueueJobID: retryingQueueJobID,
-                    assetID: asset.id
+                    asset: asset,
+                    reviewedSourceRevision: reviewedSourceRevision
                 )
             }
         } catch {
@@ -1209,8 +1266,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
         sourceDisposition: MediaQueueSourceDisposition,
         retryingQueueJobID: UUID?,
-        assetID: UUID
+        asset: MediaAsset,
+        reviewedSourceRevision: MediaFileRevision
     ) {
+        guard model.reviewedSourceRevision(for: asset) == reviewedSourceRevision else {
+            statusLabel.stringValue = "The source changed during workflow review"
+            impactLabel.stringValue = "Inspect the file again and review the workflow"
+            clearPendingChange()
+            return
+        }
         impactLabel.stringValue = WorkflowPlanReviewPresentation.impactSummary(for: compiled)
         statusLabel.stringValue = "Workflow plan ready for verification"
         pendingChange = .savedWorkflow(
@@ -1219,10 +1283,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 compiled: compiled,
                 externalSubtitlePayload: externalSubtitlePayload,
                 sourceDisposition: sourceDisposition,
-                retryingQueueJobID: retryingQueueJobID
+                retryingQueueJobID: retryingQueueJobID,
+                expectedSourceRevision: reviewedSourceRevision
             )
         )
-        pendingAssetID = assetID
+        pendingAssetID = asset.id
         runButton.isEnabled = true
         runButton.toolTip = compiled.summaries.joined(separator: "; ")
         updateQueueButton()
@@ -1917,6 +1982,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         externalSubtitlePayload: prepared.externalSubtitlePayload,
                         sourceDisposition: destination.sourceDisposition,
                         retryingQueueJobID: prepared.retryingQueueJobID,
+                        expectedSourceRevision: prepared.expectedSourceRevision,
                         in: asset,
                         destinationURL: destination.url
                     ).sourceURL
@@ -1987,6 +2053,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     recipe: prepared.recipe,
                     sourceDisposition: destination.sourceDisposition,
                     retryingQueueJobID: prepared.retryingQueueJobID,
+                    expectedSourceRevision: prepared.expectedSourceRevision,
                     in: asset,
                     destinationURL: destination.url
                 )

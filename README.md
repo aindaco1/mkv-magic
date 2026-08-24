@@ -51,10 +51,23 @@ editable in the Save panel. If naming is the only applicable card, MKV Magic
 creates a clone-based byte-identical verified copy—no remux and no encode. The
 existing opt-in Trash-after-verified-success choice can make that path behave
 like a recoverable rename; otherwise the original remains beside the copy.
-Workflow schema v4 still stores only portable action intent—never paths,
-subtitle text, or per-file review IDs. Original v1-v3 workflow files migrate
+Saved workflows can now add exactly one **Convert video** card: use the locally
+recommended verified encoder or request AV1, HEVC, H.264, or ProRes explicitly.
+The reviewed plan binds the actual local preset and its one-generation impact.
+If cleanup, track removal, title removal, or subtitle muxing is also applicable,
+MKV Magic commits those packet-copy changes only to a private verified
+intermediate, then performs one complete-file video encode into the final
+destination. Audio and subtitles remain exact packet copies, nested chapters,
+attachments, HDR10, and reviewed metadata are verified, and the source revision
+is bound from plan acceptance through queueing or immediate execution. A
+conversion-only recipe skips the intermediate. Automatic queue reinspection
+must resolve the same codec-bearing semantic plan or move the job to Needs
+Review.
+Workflow schema v5 still stores only portable action intent—never paths, local
+capability results, bitrate controls, subtitle text, or per-file review IDs.
+Original v1-v4 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
-Older schema numbers cannot claim the newer filename action.
+Older schema numbers cannot claim actions introduced by a newer schema.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

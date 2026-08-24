@@ -100,6 +100,42 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
     }
 
+    func testPortableFileStoresConversionIntentWithoutLocalProbeOrEncodingDetails() throws {
+        let workflow = SavedWorkflow(
+            name: "Recommended conversion",
+            steps: [SavedWorkflowStep(action: .convertVideoRecommended)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("convertVideoRecommended"))
+        XCTAssertFalse(json.contains("availableVideoPresets"))
+        XCTAssertFalse(json.contains("videoRateControl"))
+        XCTAssertFalse(json.contains("encoderTuning"))
+        XCTAssertFalse(json.contains("ffmpeg"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionFourMigratesButCannotClaimVersionFiveConversionAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":4,"name":"Clean name","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"normalizeFilename"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":4,"name":"Invalid backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"convertVideoAV1"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
     func testVersionThreeMigratesButCannotClaimVersionFourFilenameAction() throws {
         let valid = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":3,"name":"Clean subtitle","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"cleanExternalSubtitleText"}]}"#

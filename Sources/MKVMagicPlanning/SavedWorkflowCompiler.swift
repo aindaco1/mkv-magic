@@ -13,6 +13,10 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case invalidExternalSubtitleInput
     case externalSubtitleCleanupRequiresAddStep
     case missingExternalSubtitleCleanupReview
+    case multipleVideoConversions
+    case noAvailableVideoEncoder
+    case unavailableVideoPreset(VideoPreset)
+    case unsupportedVideoConversion(ExactTrimPlanningError)
     case unstableTrackIdentity
     case wouldRemoveAllTracks
     case noApplicableChanges
@@ -36,6 +40,14 @@ extension SavedWorkflowCompilationError: LocalizedError {
             "Enable Add one external text subtitle before cleaning its text."
         case .missingExternalSubtitleCleanupReview:
             "Review the external subtitle cleanup suggestions before previewing this workflow."
+        case .multipleVideoConversions:
+            "A saved workflow can contain only one enabled video-conversion step."
+        case .noAvailableVideoEncoder:
+            "No bundled video encoder passed the local capability check on this Mac."
+        case .unavailableVideoPreset(let preset):
+            "The selected \(preset.displayName) encoder did not pass the local capability check on this Mac."
+        case .unsupportedVideoConversion(let error):
+            error.localizedDescription
         case .unstableTrackIdentity:
             "This file does not expose stable Matroska identifiers for every track."
         case .wouldRemoveAllTracks: "This workflow would remove every playable track."
@@ -65,9 +77,16 @@ public struct SavedWorkflowExternalSubtitleInput: Equatable, Sendable {
 
 public struct SavedWorkflowResolvedInputs: Equatable, Sendable {
     public let externalSubtitle: SavedWorkflowExternalSubtitleInput?
+    /// Ordered by the active local recommendation. Paths and probe details never
+    /// enter the portable recipe.
+    public let availableVideoPresets: [VideoPreset]
 
-    public init(externalSubtitle: SavedWorkflowExternalSubtitleInput? = nil) {
+    public init(
+        externalSubtitle: SavedWorkflowExternalSubtitleInput? = nil,
+        availableVideoPresets: [VideoPreset] = []
+    ) {
         self.externalSubtitle = externalSubtitle
+        self.availableVideoPresets = availableVideoPresets
     }
 }
 
@@ -124,6 +143,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let stepOutcomes: [SavedWorkflowStepOutcome]
     public let externalSubtitleCleanupChangeCount: Int?
     public let suggestedOutputFilename: String?
+    public let videoConversionChoice: ExactTrimChoice?
 
     public init(
         workflowID: UUID,
@@ -133,7 +153,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         summaries: [String],
         stepOutcomes: [SavedWorkflowStepOutcome] = [],
         externalSubtitleCleanupChangeCount: Int? = nil,
-        suggestedOutputFilename: String? = nil
+        suggestedOutputFilename: String? = nil,
+        videoConversionChoice: ExactTrimChoice? = nil
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
@@ -143,6 +164,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         self.stepOutcomes = stepOutcomes
         self.externalSubtitleCleanupChangeCount = externalSubtitleCleanupChangeCount
         self.suggestedOutputFilename = suggestedOutputFilename
+        self.videoConversionChoice = videoConversionChoice
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -175,6 +197,10 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
 
     public var createsUnchangedCopy: Bool {
         operations.isEmpty && suggestedOutputFilename != nil
+    }
+
+    public var hasDeterministicMediaOperations: Bool {
+        trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
     }
 }
 
@@ -229,6 +255,10 @@ public struct SavedWorkflowCompiler: Sendable {
             throw SavedWorkflowCompilationError.unsupportedContainer
         }
         let enabledActions = Set(enabledSteps.map(\.action))
+        let enabledVideoConversions = enabledSteps.filter { $0.action.isVideoConversion }
+        guard enabledVideoConversions.count <= 1 else {
+            throw SavedWorkflowCompilationError.multipleVideoConversions
+        }
         if enabledActions.contains(.cleanExternalSubtitleText),
             !enabledActions.contains(.addExternalSubtitle)
         {
@@ -240,6 +270,7 @@ public struct SavedWorkflowCompiler: Sendable {
         var removalTrackUIDs = Set<UInt64>()
         var removalInsertionIndex: Int?
         var suggestedOutputFilename: String?
+        var videoConversionChoice: ExactTrimChoice?
         for step in workflow.steps {
             guard step.isEnabled else {
                 stepOutcomes.append(
@@ -367,6 +398,23 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 }
+            case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
+                .convertVideoH264, .convertVideoProRes:
+                let choice = try resolveVideoConversionChoice(
+                    for: step.action,
+                    asset: asset,
+                    availableVideoPresets: inputs.availableVideoPresets
+                )
+                videoConversionChoice = choice
+                operations.append(.transcodeVideo(choice.videoPreset))
+                stepOutcomes.append(
+                    outcome(
+                        for: step,
+                        disposition: .applied,
+                        detail:
+                            "Encode video once as \(choice.videoPreset.displayName); packet-copy every audio and subtitle track"
+                    )
+                )
             }
         }
         if !removalTrackUIDs.isEmpty {
@@ -422,7 +470,10 @@ public struct SavedWorkflowCompiler: Sendable {
                 name: workflow.name,
                 operations: operations
             )
-            plan = try WorkflowPlanner().plan(asset: asset, workflow: resolved)
+            plan = reviewedPlan(
+                try WorkflowPlanner().plan(asset: asset, workflow: resolved),
+                videoConversionChoice: videoConversionChoice
+            )
         }
         let compiled = CompiledSavedWorkflow(
             workflowID: workflow.id,
@@ -434,7 +485,8 @@ public struct SavedWorkflowCompiler: Sendable {
             externalSubtitleCleanupChangeCount: enabledActions.contains(
                 .cleanExternalSubtitleText
             ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil,
-            suggestedOutputFilename: suggestedOutputFilename
+            suggestedOutputFilename: suggestedOutputFilename,
+            videoConversionChoice: videoConversionChoice
         )
         return SavedWorkflowCompilationPreview(
             workflowID: workflow.id,
@@ -490,6 +542,9 @@ public struct SavedWorkflowCompiler: Sendable {
             "Add one external subtitle"
         case .cleanExternalSubtitleText:
             "Clean the added subtitle text"
+        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
+            .convertVideoH264, .convertVideoProRes:
+            "Convert video once"
         }
     }
 
@@ -509,6 +564,98 @@ public struct SavedWorkflowCompiler: Sendable {
             "No external subtitle was selected."
         case .cleanExternalSubtitleText:
             "No subtitle text cleanup changes were selected."
+        case .convertVideoRecommended, .convertVideoAV1, .convertVideoHEVC,
+            .convertVideoH264, .convertVideoProRes:
+            "No video conversion was selected."
         }
+    }
+
+    private func resolveVideoConversionChoice(
+        for action: SavedWorkflowAction,
+        asset: MediaAsset,
+        availableVideoPresets: [VideoPreset]
+    ) throws -> ExactTrimChoice {
+        let orderedPresets = availableVideoPresets.reduce(into: [VideoPreset]()) {
+            if !$0.contains($1) { $0.append($1) }
+        }
+        guard !orderedPresets.isEmpty else {
+            throw SavedWorkflowCompilationError.noAvailableVideoEncoder
+        }
+        let candidatePresets: [VideoPreset]
+        switch action {
+        case .convertVideoRecommended:
+            candidatePresets = orderedPresets
+        case .convertVideoAV1:
+            candidatePresets = [.av1Quality]
+        case .convertVideoHEVC:
+            candidatePresets = [.hevcCompatibility]
+        case .convertVideoH264:
+            candidatePresets = [.h264Compatibility]
+        case .convertVideoProRes:
+            candidatePresets = [.proRes]
+        default:
+            preconditionFailure("A non-conversion action reached conversion resolution")
+        }
+        if action != .convertVideoRecommended,
+            let requestedPreset = candidatePresets.first,
+            !orderedPresets.contains(requestedPreset)
+        {
+            throw SavedWorkflowCompilationError.unavailableVideoPreset(requestedPreset)
+        }
+        let planner = ExactTrimPlanner()
+        guard let duration = asset.duration else {
+            throw SavedWorkflowCompilationError.unsupportedVideoConversion(.invalidDuration)
+        }
+        guard asset.tracks.contains(where: { $0.kind == .video }) else {
+            throw SavedWorkflowCompilationError.unsupportedVideoConversion(.unsupportedTracks)
+        }
+        guard
+            let choice = planner.recommendedChoice(
+                for: asset,
+                availableVideoPresets: candidatePresets
+            )
+        else {
+            throw SavedWorkflowCompilationError.unsupportedVideoConversion(
+                .unsupportedDynamicRange
+            )
+        }
+        do {
+            _ = try planner.resolve(
+                source: asset,
+                range: MediaTrimRange(start: .zero, end: duration),
+                choice: choice,
+                operation: .transcode,
+                availableVideoPresets: Set(orderedPresets),
+                aacAvailable: false
+            )
+        } catch let error as ExactTrimPlanningError {
+            throw SavedWorkflowCompilationError.unsupportedVideoConversion(error)
+        }
+        return choice
+    }
+
+    private func reviewedPlan(
+        _ plan: ExecutionPlan,
+        videoConversionChoice: ExactTrimChoice?
+    ) -> ExecutionPlan {
+        guard let videoConversionChoice else { return plan }
+        let encode = plan.stages.filter { $0.mechanism == .ffmpegEncode }.map {
+            PlanStage(
+                id: $0.id,
+                mechanism: $0.mechanism,
+                summary:
+                    "Encode video once as \(videoConversionChoice.videoPreset.displayName) while packet-copying audio and subtitles"
+            )
+        }
+        let preparation = plan.stages.filter {
+            $0.mechanism != .ffmpegEncode && $0.mechanism != .verify && $0.mechanism != .commit
+        }
+        let completion = plan.stages.filter {
+            $0.mechanism == .verify || $0.mechanism == .commit
+        }
+        return ExecutionPlan(
+            stages: preparation + encode + completion,
+            impact: plan.impact
+        )
     }
 }

@@ -677,6 +677,11 @@ enum WorkflowEditorPolicy {
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,
+        .convertVideoRecommended,
+        .convertVideoAV1,
+        .convertVideoHEVC,
+        .convertVideoH264,
+        .convertVideoProRes,
     ]
 
     static func newWorkflow() -> SavedWorkflow {
@@ -703,8 +708,12 @@ enum WorkflowEditorPolicy {
         let existing = Set(workflow.steps.map(\.action))
         return actionCatalog.filter { action in
             guard !existing.contains(action) else { return false }
-            return action != .cleanExternalSubtitleText
-                || existing.contains(.addExternalSubtitle)
+            if action.isVideoConversion,
+                workflow.steps.contains(where: { $0.action.isVideoConversion })
+            {
+                return false
+            }
+            return action != .cleanExternalSubtitleText || existing.contains(.addExternalSubtitle)
         }
     }
 

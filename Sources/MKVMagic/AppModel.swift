@@ -5,6 +5,14 @@ import MKVMagicMedia
 import MKVMagicPlanning
 import MKVMagicSystem
 
+private enum InspectedAssetRevisionError: Error, LocalizedError {
+    case changedDuringInspection
+
+    var errorDescription: String? {
+        "The media file changed while it was being inspected. Inspect it again."
+    }
+}
+
 @MainActor
 final class AppModel {
     private struct HistoryExecution: Sendable {
@@ -74,11 +82,17 @@ final class AppModel {
             case .metadata: "Editing a temporary clone."
             case .trackRemoval: "Remuxing retained tracks to a temporary output."
             case .saved(let workflow, _):
-                workflow.createsUnchangedCopy
-                    ? "Creating one unchanged temporary clone."
-                    : workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil
-                        ? "Editing one temporary clone."
-                        : "Applying all workflow steps to one temporary remux."
+                if workflow.videoConversionChoice != nil {
+                    workflow.hasDeterministicMediaOperations
+                        ? "Preparing one verified private remux, then encoding video once."
+                        : "Encoding video once while copying audio and subtitles."
+                } else if workflow.createsUnchangedCopy {
+                    "Creating one unchanged temporary clone."
+                } else if workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil {
+                    "Editing one temporary clone."
+                } else {
+                    "Applying all workflow steps to one temporary remux."
+                }
             case .externalSubtitle:
                 "Adding one reviewed subtitle to a temporary MKV remux."
             case .embeddedSubtitle:
@@ -122,6 +136,7 @@ final class AppModel {
     private(set) var assets: [MediaAsset] = []
     private(set) var state: State = .ready
     private(set) var activeQueueJobID: UUID?
+    private var inspectedAssetRevisions = [UUID: MediaFileRevision]()
     var didChange: (() -> Void)?
     var queueDidChange: (() -> Void)?
     private var cachedEncodingCapabilities: FFmpegEncodingCapabilities?
@@ -356,6 +371,15 @@ final class AppModel {
 
     func saveWorkflows(_ workflows: [SavedWorkflow]) async throws {
         try await workflowStoreFactory().save(workflows)
+    }
+
+    func reviewedSourceRevision(for asset: MediaAsset) -> MediaFileRevision? {
+        guard let revision = inspectedAssetRevisions[asset.id],
+            (try? MediaFileRevisionReader().read(asset.sourceURL)) == revision
+        else {
+            return nil
+        }
+        return revision
     }
 
     func previewSubtitleCleanup(at sourceURL: URL) async throws -> SubtitleCleanupFilePreview {
@@ -762,11 +786,7 @@ final class AppModel {
                     }
                 }
             )
-            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
-                assets[existing] = output
-            } else {
-                assets.append(output)
-            }
+            registerInspectedAsset(output)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
@@ -861,11 +881,7 @@ final class AppModel {
                     )
                 }
             )
-            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
-                assets[existing] = output
-            } else {
-                assets.append(output)
-            }
+            registerInspectedAsset(output)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
@@ -1016,11 +1032,7 @@ final class AppModel {
                     }
                 )
             }
-            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
-                assets[existing] = output
-            } else {
-                assets.append(output)
-            }
+            registerInspectedAsset(output)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
@@ -1225,12 +1237,14 @@ final class AppModel {
             state = .inspecting(url.lastPathComponent)
             didChange?()
             do {
+                let revision = try MediaFileRevisionReader().read(url)
                 let asset = try await inspector.inspect(url)
-                if let existing = assets.firstIndex(where: { $0.sourceURL == asset.sourceURL }) {
-                    assets[existing] = asset
-                } else {
-                    assets.append(asset)
+                guard (try? MediaFileRevisionReader().read(url)) == revision,
+                    asset.fileSize == nil || asset.fileSize == revision.fileSize
+                else {
+                    throw InspectedAssetRevisionError.changedDuringInspection
                 }
+                registerInspectedAsset(asset, revision: revision)
             } catch {
                 let message = UserFacingErrorPresentation.message(
                     failure: "Could not inspect \(url.lastPathComponent).",
@@ -1342,11 +1356,17 @@ final class AppModel {
         recipe: SavedWorkflow,
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil,
+        expectedSourceRevision: MediaFileRevision? = nil,
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaQueueSnapshot {
         guard workflow.externalSubtitleInput == nil else {
             throw JobQueueStoreError.malformedQueue
+        }
+        if let expectedSourceRevision,
+            (try? MediaFileRevisionReader().read(asset.sourceURL)) != expectedSourceRevision
+        {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
         }
         let execution = try await prepareQueueExecution(
             recipe: recipe,
@@ -1381,6 +1401,7 @@ final class AppModel {
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil,
+        expectedSourceRevision: MediaFileRevision? = nil,
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaAsset {
@@ -1397,7 +1418,8 @@ final class AppModel {
             in: asset,
             destinationURL: destinationURL,
             edit: .saved(workflow, externalSubtitlePayload),
-            queueExecution: queueExecution
+            queueExecution: queueExecution,
+            expectedSourceRevision: expectedSourceRevision
         )
     }
 
@@ -1583,6 +1605,12 @@ final class AppModel {
         queueExecution: QueueExecution? = nil,
         expectedSourceRevision: MediaFileRevision? = nil
     ) async throws -> MediaAsset {
+        if case .saved(let workflow, _) = edit,
+            workflow.videoConversionChoice != nil,
+            cachedEncodingCapabilities == nil
+        {
+            _ = await probeEncodingCapabilities()
+        }
         let scopedURLs = ([asset.sourceURL, destinationURL] + edit.externalInputURLs).map {
             ($0, $0.startAccessingSecurityScopedResource())
         }
@@ -1655,30 +1683,57 @@ final class AppModel {
                     }
                 )
             case .saved(let workflow, let externalSubtitlePayload):
-                let executor = SavedWorkflowExecutor(
-                    mkvmergeURL: try catalog.url(for: .mkvmerge),
-                    mkvpropeditURL: try catalog.url(for: .mkvpropedit),
-                    mkvextractURL: try catalog.url(for: .mkvextract),
-                    runner: runner,
-                    inspector: inspector
-                )
-                output = try await executor.execute(
-                    source: asset,
-                    trackRemoval: workflow.trackRemoval,
-                    removesSegmentTitle: workflow.removesSegmentTitle,
-                    externalSubtitleInput: workflow.externalSubtitleInput,
-                    externalSubtitlePayload: externalSubtitlePayload,
-                    createsUnchangedCopy: workflow.createsUnchangedCopy,
-                    expectedSourceRevision: expectedSourceRevision,
-                    destinationURL: destinationURL,
-                    onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
-                    }
-                )
+                if workflow.videoConversionChoice != nil {
+                    let executor = SavedWorkflowVideoConversionExecutor(
+                        ffmpegURL: try catalog.url(for: .ffmpeg),
+                        ffprobeURL: try catalog.url(for: .ffprobe),
+                        mkvmergeURL: try catalog.url(for: .mkvmerge),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
+                        mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                        runner: runner,
+                        inspector: inspector
+                    )
+                    output = try await executor.execute(
+                        source: asset,
+                        workflow: workflow,
+                        externalSubtitlePayload: externalSubtitlePayload,
+                        capabilities: cachedEncodingCapabilities ?? .unavailable,
+                        expectedSourceRevision: expectedSourceRevision,
+                        destinationURL: destinationURL,
+                        onStage: { stage in
+                            try await Self.record(
+                                stage,
+                                jobID: execution.jobID,
+                                using: execution.recorder
+                            )
+                        }
+                    )
+                } else {
+                    let executor = SavedWorkflowExecutor(
+                        mkvmergeURL: try catalog.url(for: .mkvmerge),
+                        mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
+                        runner: runner,
+                        inspector: inspector
+                    )
+                    output = try await executor.execute(
+                        source: asset,
+                        trackRemoval: workflow.trackRemoval,
+                        removesSegmentTitle: workflow.removesSegmentTitle,
+                        externalSubtitleInput: workflow.externalSubtitleInput,
+                        externalSubtitlePayload: externalSubtitlePayload,
+                        createsUnchangedCopy: workflow.createsUnchangedCopy,
+                        expectedSourceRevision: expectedSourceRevision,
+                        destinationURL: destinationURL,
+                        onStage: { stage in
+                            try await Self.record(
+                                stage,
+                                jobID: execution.jobID,
+                                using: execution.recorder
+                            )
+                        }
+                    )
+                }
             case .externalSubtitle(let subtitlePreview, let metadata):
                 let executor = ExternalSubtitleMuxExecutor(
                     mkvmergeURL: try catalog.url(for: .mkvmerge),
@@ -1740,11 +1795,7 @@ final class AppModel {
                     }
                 )
             }
-            if let existing = assets.firstIndex(where: { $0.sourceURL == output.sourceURL }) {
-                assets[existing] = output
-            } else {
-                assets.append(output)
-            }
+            registerInspectedAsset(output)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
@@ -1773,6 +1824,25 @@ final class AppModel {
                 await failHistory(historyExecution, error: error)
             }
             throw error
+        }
+    }
+
+    private func registerInspectedAsset(
+        _ asset: MediaAsset,
+        revision suppliedRevision: MediaFileRevision? = nil
+    ) {
+        if let existing = assets.firstIndex(where: { $0.sourceURL == asset.sourceURL }) {
+            inspectedAssetRevisions.removeValue(forKey: assets[existing].id)
+            assets[existing] = asset
+        } else {
+            assets.append(asset)
+        }
+        if let revision = suppliedRevision
+            ?? (try? MediaFileRevisionReader().read(asset.sourceURL))
+        {
+            inspectedAssetRevisions[asset.id] = revision
+        } else {
+            inspectedAssetRevisions.removeValue(forKey: asset.id)
         }
     }
 
@@ -2089,9 +2159,21 @@ final class AppModel {
             runner: runner
         )
         let asset = try await inspector.inspect(sourceURL)
+        let availableVideoPresets: [VideoPreset]
+        if workflow.steps.contains(where: { $0.isEnabled && $0.action.isVideoConversion }) {
+            availableVideoPresets = await probeEncodingCapabilities().availableVideoPresets
+        } else {
+            availableVideoPresets = []
+        }
         let compiled: CompiledSavedWorkflow
         do {
-            compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+            compiled = try SavedWorkflowCompiler().compile(
+                workflow,
+                for: asset,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: availableVideoPresets
+                )
+            )
         } catch is SavedWorkflowCompilationError {
             return .needsReview
         }

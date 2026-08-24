@@ -5,6 +5,105 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testRecommendedConversionBindsLocalPresetAndRunsAfterDeterministicEdits() throws {
+        let workflow = SavedWorkflow(
+            name: "Clean and convert",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoRecommended),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeConvertibleAsset(title: "Feature"),
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.hevcCompatibility, .av1Quality]
+            )
+        )
+
+        XCTAssertEqual(compiled.videoConversionChoice?.videoPreset, .hevcCompatibility)
+        XCTAssertEqual(compiled.videoConversionChoice?.audioPolicy, .packetCopy)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvPropEdit, .ffmpegEncode, .verify, .commit]
+        )
+        XCTAssertEqual(
+            compiled.plan.stages.first(where: { $0.mechanism == .ffmpegEncode })?.summary,
+            "Encode video once as HEVC 10-bit VideoToolbox while packet-copying audio and subtitles"
+        )
+        XCTAssertTrue(compiled.hasDeterministicMediaOperations)
+        XCTAssertFalse(compiled.createsUnchangedCopy)
+    }
+
+    func testRecommendedConversionSkipsLocallyPreferredPresetWhenHDRIncompatible() throws {
+        let workflow = SavedWorkflow(
+            name: "Preserve HDR",
+            steps: [SavedWorkflowStep(action: .convertVideoRecommended)]
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeConvertibleAsset(hdr10: true),
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.h264Compatibility, .hevcCompatibility]
+            )
+        )
+
+        XCTAssertEqual(compiled.videoConversionChoice?.videoPreset, .hevcCompatibility)
+    }
+
+    func testFixedConversionRequiresItsLocallyVerifiedEncoder() {
+        let workflow = SavedWorkflow(
+            name: "AV1 conversion",
+            steps: [SavedWorkflowStep(action: .convertVideoAV1)]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeConvertibleAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.hevcCompatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unavailableVideoPreset(.av1Quality)
+            )
+        }
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(workflow, for: makeConvertibleAsset())
+        ) {
+            XCTAssertEqual($0 as? SavedWorkflowCompilationError, .noAvailableVideoEncoder)
+        }
+    }
+
+    func testMultipleEnabledConversionStepsFailClosed() {
+        let workflow = SavedWorkflow(
+            name: "Ambiguous conversion",
+            steps: [
+                SavedWorkflowStep(action: .convertVideoAV1),
+                SavedWorkflowStep(action: .convertVideoHEVC),
+            ]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeConvertibleAsset(),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.av1Quality, .hevcCompatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual($0 as? SavedWorkflowCompilationError, .multipleVideoConversions)
+        }
+    }
+
     func testFilenameOnlyWorkflowCreatesReviewedUnchangedCopyPlan() throws {
         let workflow = SavedWorkflow(
             name: "Jellyfin filename",
@@ -519,4 +618,73 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             metadata: title.map { ["title": $0] } ?? [:]
         )
     }
+
+    private func makeConvertibleAsset(title: String? = nil, hdr10: Bool = false) -> MediaAsset {
+        MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Feature.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(seconds: 10),
+            fileSize: 1_000,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: hdr10 ? "hevc" : "h264",
+                    codecID: hdr10 ? "V_MPEGH/ISO/HEVC" : "V_MPEG4/ISO/AVC",
+                    profile: hdr10 ? "Main 10" : "High",
+                    uid: 100,
+                    isDefault: true,
+                    dimensions: MediaDimensions(width: 160, height: 90),
+                    pixelFormat: hdr10 ? "yuv420p10le" : "yuv420p",
+                    bitDepth: hdr10 ? 10 : 8,
+                    frameRate: "24/1",
+                    colorInfo: MediaColorInfo(
+                        range: "tv",
+                        primaries: hdr10 ? "bt2020" : "bt709",
+                        transfer: hdr10 ? "smpte2084" : "bt709",
+                        matrix: hdr10 ? "bt2020nc" : "bt709"
+                    ),
+                    masteringDisplayMetadata: hdr10 ? savedWorkflowMasteringDisplay : nil,
+                    contentLightLevelMetadata: hdr10 ? savedWorkflowContentLight : nil,
+                    hdrFormats: hdr10 ? ["HDR10 metadata"] : []
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    codecID: "A_AAC",
+                    profile: "LC",
+                    uid: 101,
+                    language: "en",
+                    isDefault: true,
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000
+                ),
+            ],
+            metadata: title.map { ["title": $0] } ?? [:],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: "SOURCE"
+        )
+    }
 }
+
+private let savedWorkflowMasteringDisplay = MediaMasteringDisplayMetadata(
+    redX: 34_000,
+    redY: 16_000,
+    greenX: 13_250,
+    greenY: 34_500,
+    blueX: 7_500,
+    blueY: 3_000,
+    whitePointX: 15_635,
+    whitePointY: 16_450,
+    maxLuminance: 10_000_000,
+    minLuminance: 50
+)
+
+private let savedWorkflowContentLight = MediaContentLightLevelMetadata(
+    maxContentLightLevel: 1_000,
+    maxFrameAverageLightLevel: 400
+)

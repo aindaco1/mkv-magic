@@ -2534,6 +2534,11 @@ final class AppPolicyTests: XCTestCase {
                 .removeSegmentTitle,
                 .normalizeFilename,
                 .addExternalSubtitle,
+                .convertVideoRecommended,
+                .convertVideoAV1,
+                .convertVideoHEVC,
+                .convertVideoH264,
+                .convertVideoProRes,
             ]
         )
         XCTAssertTrue(WorkflowEditorPolicy.add(.removeSegmentTitle, to: &workflow))
@@ -2543,6 +2548,24 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(WorkflowEditorPolicy.removeStep(at: -1, from: &workflow))
         XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
         XCTAssertTrue(workflow.steps.isEmpty)
+    }
+
+    func testWorkflowEditorOffersOnlyOneVideoConversionIntentAtATime() {
+        var workflow = SavedWorkflow(name: "Portable conversion", steps: [])
+
+        XCTAssertTrue(WorkflowEditorPolicy.add(.convertVideoRecommended, to: &workflow))
+        XCTAssertFalse(WorkflowEditorPolicy.add(.convertVideoAV1, to: &workflow))
+        XCTAssertFalse(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(where: {
+                $0.isVideoConversion
+            })
+        )
+        XCTAssertTrue(WorkflowEditorPolicy.removeStep(at: 0, from: &workflow))
+        XCTAssertTrue(
+            WorkflowEditorPolicy.availableActions(for: workflow).contains(
+                .convertVideoAV1
+            )
+        )
     }
 
     func testWorkflowEditorKeepsExternalSubtitleCleanupDependencyIntuitive() {

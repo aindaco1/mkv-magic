@@ -78,6 +78,15 @@ final class JobQueueTests: XCTestCase {
 
         XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 1))
         XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                SavedWorkflow(
+                    name: "Convert once",
+                    steps: [SavedWorkflowStep(action: .convertVideoRecommended)]
+                ),
+                inputCount: 1
+            )
+        )
+        XCTAssertTrue(
             MediaQueueAutomaticWorkflowPolicy.supports(disabledInteractiveStep, inputCount: 1)
         )
         XCTAssertFalse(MediaQueueAutomaticWorkflowPolicy.supports(supported, inputCount: 0))

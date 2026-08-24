@@ -7,6 +7,39 @@ import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
+private actor WorkflowConversionRecordingRunner: CommandRunning, CommandLineDigesting {
+    private let underlying = FoundationCommandRunner()
+    private var executableNames = [String]()
+
+    func run(_ request: CommandRequest) async throws -> CommandResult {
+        executableNames.append(request.executableURL.lastPathComponent)
+        return try await underlying.run(request)
+    }
+
+    func digestLines(
+        _ requests: [CommandRequest],
+        policy: CommandLineDigestPolicy
+    ) async throws -> CommandLineDigest {
+        try await underlying.digestLines(requests, policy: policy)
+    }
+
+    func digestTrailingHexLines(
+        _ requests: [CommandRequest],
+        policy: CommandTrailingHexDigestPolicy
+    ) async throws -> CommandLineDigest {
+        try await underlying.digestTrailingHexLines(requests, policy: policy)
+    }
+
+    func digestIntegerKeyedLines(
+        _ requests: [CommandIntegerKeyedDigestRequest],
+        policy: CommandIntegerKeyedLineDigestPolicy
+    ) async throws -> [Int: CommandLineDigest] {
+        try await underlying.digestIntegerKeyedLines(requests, policy: policy)
+    }
+
+    func capturedExecutableNames() -> [String] { executableNames }
+}
+
 final class RealToolExactTrimTests: XCTestCase {
     func testBundledToolsExactTrimOnceAtRequestedTimesWithPreservedAudioAttachmentAndChapters()
         async throws
@@ -425,6 +458,95 @@ final class RealToolExactTrimTests: XCTestCase {
         }
     }
 
+    func testBundledToolsSavedWorkflowPreparesEditsThenEncodesVideoExactlyOnce() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let fixtureRunner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: fixtureRunner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("The bundled H.264 fixture and conversion encoder is unavailable")
+        }
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-workflow-convert"
+        ) { root in
+            let sourceURL = try await makeFixture(
+                root: root,
+                ffmpegURL: ffmpegURL,
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: fixtureRunner,
+                includeSubtitle: true
+            )
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let runner = WorkflowConversionRecordingRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            XCTAssertEqual(segmentTitle(source), "Exact Trim Fixture")
+            XCTAssertEqual(source.tracks.map(\.kind), [.video, .audio, .subtitle])
+            let workflow = SavedWorkflow(
+                name: "Clean title and convert",
+                steps: [
+                    SavedWorkflowStep(action: .removeSegmentTitle),
+                    SavedWorkflowStep(action: .convertVideoH264),
+                ]
+            )
+            let compiled = try SavedWorkflowCompiler().compile(
+                workflow,
+                for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: capabilities.availableVideoPresets
+                )
+            )
+            let destination = root.appendingPathComponent("Workflow Converted.mkv")
+            let executor = SavedWorkflowVideoConversionExecutor(
+                ffmpegURL: ffmpegURL,
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+                runner: runner,
+                inspector: inspector
+            )
+            let output = try await executor.execute(
+                source: source,
+                workflow: compiled,
+                capabilities: capabilities,
+                expectedSourceRevision: try MediaFileRevisionReader().read(sourceURL),
+                destinationURL: destination
+            )
+
+            let executableNames = await runner.capturedExecutableNames()
+            XCTAssertEqual(executableNames.filter { $0 == "ffmpeg" }.count, 1)
+            XCTAssertLessThan(
+                try XCTUnwrap(executableNames.firstIndex(of: "mkvpropedit")),
+                try XCTUnwrap(executableNames.firstIndex(of: "ffmpeg"))
+            )
+            XCTAssertNil(segmentTitle(output))
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+            XCTAssertEqual(output.tracks[0].codec, "h264")
+            XCTAssertEqual(output.attachments.count, 1)
+            XCTAssertEqual(output.chapterEntryCount, 1)
+            XCTAssertEqual(
+                SHA256.hash(data: try Data(contentsOf: sourceURL)),
+                sourceDigest
+            )
+            let reopenedSource = try await inspector.inspect(sourceURL)
+            XCTAssertEqual(segmentTitle(reopenedSource), "Exact Trim Fixture")
+        }
+    }
+
     private func makeFixture(
         root: URL,
         ffmpegURL: URL,
@@ -617,5 +739,11 @@ final class RealToolExactTrimTests: XCTestCase {
         case .h264Compatibility: "h264"
         case .proRes: "prores"
         }
+    }
+
+    private func segmentTitle(_ asset: MediaAsset) -> String? {
+        asset.metadata.first(where: {
+            $0.key.caseInsensitiveCompare("title") == .orderedSame
+        })?.value
     }
 }

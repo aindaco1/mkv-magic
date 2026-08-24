@@ -2,7 +2,7 @@
 
 **Status:** Scope locked for initial implementation
 
-**Last updated:** 2026-08-23
+**Last updated:** 2026-08-24
 
 **Purpose:** Canonical product, architecture, and delivery specification
 
@@ -350,6 +350,18 @@ every compatible verified alternative, and uses a deterministic
 unsupported or incomplete HDR/color facts, non-MKV inputs, and non-MKV outputs
 fail closed in this first standalone slice.
 
+Saved workflows now expose the same complete-file conversion as portable intent:
+**Recommended for this Mac**, AV1, HEVC, H.264, or ProRes. Plan review resolves
+and names the exact locally verified preset; the portable JSON retains only the
+intent. At most one conversion card may be present. A conversion-only workflow
+encodes directly to the final verified output. When deterministic track,
+subtitle, or title steps also apply, MKV Magic first creates a private
+verified packet-copy/metadata intermediate and then performs exactly one final
+video encode. It never chains conversion generations. Audio and text subtitles
+remain packet-copied, and queue reinspection must reproduce the codec-bearing
+semantic plan before automatic execution. The reviewed source revision is
+retained through both immediate and queued starts.
+
 #### Video presets
 
 | User-facing choice | Preferred implementation | Intent |
@@ -520,7 +532,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v4 preserves that boundary. v1-v3 workflows
+identifier—and current schema v5 preserves that boundary. v1-v4 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 
@@ -1122,6 +1134,13 @@ and permits any actively verified codec compatible with the reviewed SDR or
 static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
+Portable saved workflows now share the complete-file conversion path. Their
+schema-v5 cards choose the local recommendation or one explicit video preset,
+bind the resolved codec into plan review, and compose deterministic cleanup into
+a private verified intermediate followed by one final encode. A pinned-runtime
+integration proves the edit precedes the only FFmpeg video invocation, the final
+metadata/track/chapter/attachment contract passes, and the source digest is
+unchanged.
 Mixed BT.709 SDR and validated static HDR10 Join lanes now default to BT.709 SDR.
 The compiler preserves each SDR Part's BT.709 path, converts each HDR10 Part from
 PQ to linear light, applies bounded Mobius tone mapping with a peak derived from
@@ -1169,9 +1188,10 @@ clone-based unchanged file copy, reopens the temporary and committed MKV, and
 compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
-workflow; leaving it off preserves both files. Workflow schema v4 stores only
-the naming intent, never a source or generated filename, and strictly migrates
-v1-v3 without allowing an older schema to claim the new action. Broader
+workflow; leaving it off preserves both files. Workflow schema v4 introduced
+only the naming intent, never a source or generated filename; current schema v5
+retains that boundary and strictly migrates v1-v4 without allowing an older
+schema to claim a newer action. Broader
 conditions remain open.
 
 The production-queue persistence and scheduling foundation is implemented as a
