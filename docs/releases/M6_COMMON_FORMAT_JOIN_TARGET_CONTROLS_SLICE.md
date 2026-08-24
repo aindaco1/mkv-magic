@@ -74,8 +74,7 @@ packaging gate are required before this slice is landed.
 
 ## Still pending
 
-- Opus, AC-3, E-AC-3, and lossless advanced audio presets.
-- Mixed SDR/HDR tone mapping and SDR-to-HDR conversion.
+- SDR-to-HDR conversion.
 - Representative Jellyfin/Plex corpus tuning and physical Intel performance.
 - Public Developer ID signing, notarization, publication, and downloaded-artifact
   verification.

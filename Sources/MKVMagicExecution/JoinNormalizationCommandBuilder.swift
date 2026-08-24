@@ -190,17 +190,26 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                         laneIndex: lane.laneIndex
                     )
                 }
-                let isReviewedDynamicRange =
-                    switch choice.dynamicRange {
-                    case .sdr:
-                        MediaHDR10Signal.isBT709SDR(track)
-                    case .hdr10:
-                        MediaHDR10Signal(track: track) == hdr10Signal
-                    }
+                let needsToneMapping: Bool
+                let isReviewedDynamicRange: Bool
+                switch choice.dynamicRange {
+                case .sdr:
+                    needsToneMapping = MediaHDR10Signal(track: track) != nil
+                    isReviewedDynamicRange =
+                        needsToneMapping || MediaHDR10Signal.isBT709SDR(track)
+                case .hdr10:
+                    needsToneMapping = false
+                    isReviewedDynamicRange = MediaHDR10Signal(track: track) == hdr10Signal
+                }
                 guard isReviewedDynamicRange else {
                     throw JoinNormalizationCommandError.unsupportedDynamicRange(
                         laneIndex: lane.laneIndex
                     )
+                }
+                if needsToneMapping,
+                    let missing = capabilities.missingToneMappingFilters.first
+                {
+                    throw JoinNormalizationCommandError.missingFilter(missing)
                 }
                 guard let duration = sources[sourceIndex].duration,
                     duration.nanoseconds > 0
@@ -210,18 +219,28 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                     )
                 }
                 let label = "jv\(lane.laneIndex)s\(sourceIndex)"
-                graphParts.append(
+                var filters =
                     "[\(sourceIndex):\(trackID)]setpts=PTS-STARTPTS,"
-                        + "scale=w=\(choice.canvas.width):h=\(choice.canvas.height):"
-                        + "force_original_aspect_ratio=decrease:flags=lanczos,"
-                        + "pad=w=\(choice.canvas.width):h=\(choice.canvas.height):"
-                        + "x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
-                        + "format=\(videoArguments.filterPixelFormat(for: choice.preset)),"
-                        + "\(videoArguments.setParamsFilter(for: choice.dynamicRange)),setsar=1,"
-                        + "tpad=stop_mode=clone:stop_duration=\(decimalSeconds(duration)),"
-                        + "trim=duration=\(decimalSeconds(duration)),"
-                        + "setpts=PTS-STARTPTS[\(label)]"
-                )
+                    + "scale=w=\(choice.canvas.width):h=\(choice.canvas.height):"
+                    + "force_original_aspect_ratio=decrease:flags=lanczos,"
+                    + "pad=w=\(choice.canvas.width):h=\(choice.canvas.height):"
+                    + "x=(ow-iw)/2:y=(oh-ih)/2:color=black,"
+                if needsToneMapping {
+                    filters +=
+                        "setparams=range=limited:color_primaries=bt2020:"
+                        + "color_trc=smpte2084:colorspace=bt2020nc,"
+                        + "zscale=transfer=linear:npl=100,format=gbrpf32le,"
+                        + "tonemap=tonemap=mobius:param=0.3:desat=2:"
+                        + "peak=\(toneMapPeak(for: track)),"
+                        + "zscale=primaries=bt709:transfer=bt709:matrix=bt709:range=limited,"
+                }
+                filters +=
+                    "format=\(videoArguments.filterPixelFormat(for: choice.preset)),"
+                    + "\(videoArguments.setParamsFilter(for: choice.dynamicRange)),setsar=1,"
+                    + "tpad=stop_mode=clone:stop_duration=\(decimalSeconds(duration)),"
+                    + "trim=duration=\(decimalSeconds(duration)),"
+                    + "setpts=PTS-STARTPTS[\(label)]"
+                graphParts.append(filters)
                 inputLabels.append("[\(label)]")
             }
             let outputLabel = "jv\(lane.laneIndex)"
@@ -439,6 +458,22 @@ public struct JoinNormalizationCommandBuilder: Sendable {
         let whole = duration.nanoseconds / 1_000_000_000
         let fraction = duration.nanoseconds % 1_000_000_000
         return "\(whole).\(String(format: "%09lld", fraction))"
+    }
+
+    private func toneMapPeak(for track: MediaTrack) -> String {
+        let peak: Double
+        if let contentPeak = track.contentLightLevelMetadata?.maxContentLightLevel,
+            contentPeak > 0
+        {
+            peak = Double(contentPeak) / 100
+        } else if let masteringPeak = track.masteringDisplayMetadata?.maxLuminance,
+            masteringPeak > 0
+        {
+            peak = Double(masteringPeak) / 1_000_000
+        } else {
+            peak = 10
+        }
+        return String(format: "%.6f", locale: Locale(identifier: "en_US_POSIX"), max(1, peak))
     }
 
     private static let maximumArguments = 10_000

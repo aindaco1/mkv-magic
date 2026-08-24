@@ -400,7 +400,9 @@ final class AppPolicyTests: XCTestCase {
             proResEncoder: nil,
             aac: .verified,
             aacEncoder: "aac_at",
-            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters.union(
+                FFmpegEncodingCapabilities.requiredToneMappingFilters
+            )
         )
         let snapshot = LosslessJoinReviewBuilder.make(
             selections: [
@@ -442,6 +444,107 @@ final class AppPolicyTests: XCTestCase {
                 resolvedPlan: resolved
             ).contains { $0.contains("HDR10 with static metadata preserved") }
         )
+    }
+
+    @MainActor
+    func testCommonFormatJoinDefaultsMixedHDR10AndSDRToExplicitToneMappedSDR() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .verified,
+            softwareAV1Encoder: "libsvtav1",
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters.union(
+                FFmpegEncodingCapabilities.requiredToneMappingFilters
+            )
+        )
+        let selections = [
+            LosslessJoinSourceSelection(
+                option: losslessJoinVideoOption(
+                    part: 1,
+                    codec: "h264",
+                    width: 1_920,
+                    height: 1_080
+                ),
+                editionID: nil
+            ),
+            LosslessJoinSourceSelection(
+                option: losslessJoinHDR10VideoOption(
+                    part: 2,
+                    width: 1_280,
+                    height: 720
+                ),
+                editionID: nil
+            ),
+        ]
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            encodingCapabilities: capabilities
+        )
+
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        XCTAssertTrue(snapshot.isReady, "\(snapshot.blockerSummaries)")
+        let lane = try XCTUnwrap(candidate.proposal.videoLanes.first)
+        XCTAssertEqual(lane.recommendedDynamicRange, .sdr)
+        XCTAssertEqual(lane.dynamicRangeChoices, [.sdr])
+        XCTAssertEqual(
+            CommonFormatJoinChoicePolicy.availableVideoPresets(
+                for: lane,
+                capabilities: capabilities
+            ),
+            [.av1Quality, .hevcCompatibility, .h264Compatibility, .proRes]
+        )
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        XCTAssertEqual(resolved.choices.videoTargetsByLane[0]?.dynamicRange, .sdr)
+        XCTAssertTrue(
+            CommonFormatJoinChoicePolicy.summaries(
+                for: candidate,
+                resolvedPlan: resolved
+            ).contains { $0.contains("tone-map only the reviewed HDR10 Parts") }
+        )
+
+        let controller = try CommonFormatJoinWindowController(candidate: candidate)
+        let window = try XCTUnwrap(controller.window)
+        window.setContentSize(window.minSize)
+        let content = try XCTUnwrap(window.contentView)
+        content.layoutSubtreeIfNeeded()
+        let detail = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Common format video lane 1 dynamic range"
+            }
+        )
+        XCTAssertTrue(detail.stringValue.contains("HDR10 Parts are tone-mapped locally"))
+        let detailFrame = detail.convert(detail.bounds, to: content)
+        XCTAssertGreaterThanOrEqual(detailFrame.minX, content.bounds.minX - 1)
+        XCTAssertLessThanOrEqual(detailFrame.maxX, content.bounds.maxX + 1)
+        XCTAssertGreaterThanOrEqual(detailFrame.minY, content.bounds.minY - 1)
+        XCTAssertLessThanOrEqual(detailFrame.maxY, content.bounds.maxY + 1)
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_MIXED_HDR_JOIN_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureTrimWindow(window: window, content: content, at: capturePath)
+        }
+
+        let missingToneMap = FFmpegEncodingCapabilities(
+            softwareAV1: .verified,
+            softwareAV1Encoder: "libsvtav1",
+            hevc10VideoToolbox: .verified,
+            h264VideoToolbox: .verified,
+            proRes: .verified,
+            proResEncoder: "prores_ks",
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let blocked = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            encodingCapabilities: missingToneMap
+        )
+        XCTAssertFalse(blocked.isReady)
+        XCTAssertTrue(blocked.blockerSummaries.contains { $0.contains("tonemap filter") })
     }
 
     @MainActor

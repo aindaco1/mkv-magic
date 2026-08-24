@@ -129,7 +129,7 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         XCTAssertTrue(proposal.decisions.contains { $0.summary.contains("never fabricated") })
     }
 
-    func testMixedSDRAndHDRRequiresExplicitDynamicRangeChoice() throws {
+    func testMixedSDRAndHDRDefaultsToReviewedSDRToneMapping() throws {
         let sources = [
             asset(part: 1, tracks: [video(id: 0)]),
             asset(part: 2, tracks: [hdr10Video(id: 10)]),
@@ -142,10 +142,34 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         )
 
         XCTAssertTrue(proposal.blockers.isEmpty)
-        XCTAssertNil(proposal.videoLanes[0].recommendedDynamicRange)
-        XCTAssertEqual(proposal.videoLanes[0].dynamicRangeChoices, [.sdr, .hdr10])
-        XCTAssertTrue(proposal.decisions.contains { $0.kind == .mixedDynamicRange })
+        XCTAssertEqual(proposal.videoLanes[0].recommendedDynamicRange, .sdr)
+        XCTAssertEqual(proposal.videoLanes[0].dynamicRangeChoices, [.sdr])
+        XCTAssertTrue(
+            proposal.decisions.contains {
+                $0.kind == .mixedDynamicRange && $0.summary.contains("only the HDR Parts")
+            }
+        )
         XCTAssertEqual(proposal.impact.videoEncodeCount, 1)
+    }
+
+    func testMixedRangeRejectsIncompleteHDR10FactsBeforeToneMapping() throws {
+        let sources = [
+            asset(part: 1, tracks: [video(id: 0)]),
+            asset(part: 2, tracks: [hdr10Video(id: 10, includeStaticMetadata: false)]),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+            ])
+        )
+
+        XCTAssertTrue(
+            proposal.blockers.contains {
+                $0.summary.contains("unknown or unsupported dynamic-range metadata")
+            }
+        )
+        XCTAssertFalse(proposal.decisions.contains { $0.kind == .mixedDynamicRange })
     }
 
     func testUniformStaticHDR10PreservesOneIdenticalSignalAndRequiresTenBitCodec() throws {
@@ -344,7 +368,8 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         id: Int,
         width: Int = 3_840,
         height: Int = 2_160,
-        maxContentLightLevel: Int = 1_000
+        maxContentLightLevel: Int = 1_000,
+        includeStaticMetadata: Bool = true
     ) -> MediaTrack {
         MediaTrack(
             id: id,
@@ -364,11 +389,12 @@ final class JoinNormalizationPlannerTests: XCTestCase {
                 transfer: "smpte2084",
                 matrix: "bt2020nc"
             ),
-            masteringDisplayMetadata: hdrMasteringDisplay,
-            contentLightLevelMetadata: MediaContentLightLevelMetadata(
-                maxContentLightLevel: maxContentLightLevel,
-                maxFrameAverageLightLevel: 400
-            ),
+            masteringDisplayMetadata: includeStaticMetadata ? hdrMasteringDisplay : nil,
+            contentLightLevelMetadata: includeStaticMetadata
+                ? MediaContentLightLevelMetadata(
+                    maxContentLightLevel: maxContentLightLevel,
+                    maxFrameAverageLightLevel: 400
+                ) : nil,
             hdrFormats: ["HDR10 metadata"]
         )
     }

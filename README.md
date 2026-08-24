@@ -95,9 +95,10 @@ local one-frame capability probe; affected audio lanes default to compatible
 AAC and can instead use locally verified Opus, AC-3, E-AC-3, or lossless FLAC
 when that format can represent the reviewed common layout, without automatic
 downmix; uniform static HDR10 lanes retain one
-identical reviewed BT.2020/PQ and mastering/light-level signal; and mixed
-SDR/HDR, Dolby Vision, incomplete facts, and image-subtitle limitations fail
-closed or require explicit choices. Behind that read-only preview, file-specific choices are now
+identical reviewed BT.2020/PQ and mastering/light-level signal; mixed BT.709 SDR
+and static HDR10 lanes default to reviewed BT.709 output that tone-maps only the
+HDR10 Parts; and Dolby Vision, incomplete facts, and image-subtitle limitations
+fail closed. Behind that read-only preview, file-specific choices are now
 bound to every inspected source fact and compiled into one bounded FFmpeg graph:
 each affected video or audio lane is encoded exactly once, ordinary audio layouts
 can be normalized without an automatic downmix, and explicitly approved missing
@@ -136,7 +137,7 @@ generation. The app binds the approval to unchanged source and chapter
 revisions, creates the verified normalized bundle only in private temporary
 storage, assembles the final MKV, adds only the reopened final result to the
 library, and records exactly one sanitized History job. Source tags, executable
-subtitle conversion/gaps, mixed SDR/HDR conversion, HDR10+, HLG, and Dolby Vision
+subtitle conversion/gaps, SDR-to-HDR conversion, HDR10+, HLG, and Dolby Vision
 transcodes continue to fail closed before encoding.
 
 For an eligible inspected MKV, **Trim…** now opens one compact native review

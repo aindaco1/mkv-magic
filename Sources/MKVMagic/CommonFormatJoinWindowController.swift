@@ -49,6 +49,11 @@ enum CommonFormatJoinChoicePolicy {
                     let canvas = lane.recommendedCanvas,
                     let timing = lane.recommendedFrameRatePolicy
                 else { throw CommonFormatJoinChoicePolicyError.incompleteProposal }
+                if decision.kind == .mixedDynamicRange,
+                    !candidate.capabilities.toneMappingAvailable
+                {
+                    throw CommonFormatJoinChoicePolicyError.unsupportedDynamicRange(laneIndex)
+                }
                 guard lane.dynamicRangeChoices.count == 1,
                     let dynamicRange = lane.recommendedDynamicRange,
                     lane.dynamicRangeChoices == [dynamicRange]
@@ -242,10 +247,16 @@ enum CommonFormatJoinChoicePolicy {
             guard let choice = resolvedPlan.choices.videoTargetsByLane[lane.laneIndex] else {
                 continue
             }
+            let dynamicRange =
+                candidate.proposal.decisions.contains {
+                    $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+                }
+                ? "SDR; tone-map only the reviewed HDR10 Parts to BT.709"
+                : dynamicRangeName(choice.dynamicRange)
             values.append(
                 "Video lane \(lane.laneIndex + 1): \(presetName(choice.preset)), "
                     + "\(choice.canvas.width)×\(choice.canvas.height) fit-and-pad, "
-                    + "\(dynamicRangeName(choice.dynamicRange)), preserve source timing, "
+                    + "\(dynamicRange), preserve source timing, "
                     + "\(rateControlName(choice.rateControl))"
                     + encoderTuningName(choice.encoderTuning) + "."
             )
@@ -315,7 +326,9 @@ enum CommonFormatJoinChoicePolicy {
         preset.displayName
     }
 
-    private static func dynamicRangeName(_ dynamicRange: JoinVideoDynamicRangeTarget) -> String {
+    fileprivate static func dynamicRangeName(
+        _ dynamicRange: JoinVideoDynamicRangeTarget
+    ) -> String {
         switch dynamicRange {
         case .sdr: "SDR"
         case .hdr10: "HDR10 with static metadata preserved"
@@ -416,7 +429,8 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
     init(
         lane: JoinVideoLaneProposal,
         capabilities: FFmpegEncodingCapabilities,
-        initialChoice: JoinVideoTargetChoice
+        initialChoice: JoinVideoTargetChoice,
+        toneMapsHDR10Parts: Bool
     ) {
         laneIndex = lane.laneIndex
         self.lane = lane
@@ -433,6 +447,16 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
 
         let title = NSTextField(labelWithString: "Video lane \(lane.laneIndex + 1)")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
+        let dynamicRangeDetail = NSTextField(
+            wrappingLabelWithString: toneMapsHDR10Parts
+                ? "Output: BT.709 SDR • HDR10 Parts are tone-mapped locally; SDR Parts stay SDR."
+                : "Output: \(CommonFormatJoinChoicePolicy.dynamicRangeName(initialChoice.dynamicRange))"
+        )
+        dynamicRangeDetail.textColor = .secondaryLabelColor
+        dynamicRangeDetail.font = .systemFont(ofSize: 11)
+        dynamicRangeDetail.setAccessibilityLabel(
+            "Common format video lane \(lane.laneIndex + 1) dynamic range"
+        )
 
         formatPopup.addItems(withTitles: presets.map(\.displayName))
         if let index = presets.firstIndex(of: initialChoice.preset) {
@@ -490,6 +514,7 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
         advancedControls.spacing = 12
 
         view.addArrangedSubview(title)
+        view.addArrangedSubview(dynamicRangeDetail)
         view.addArrangedSubview(choiceRow)
         view.addArrangedSubview(advancedToggle)
         view.addArrangedSubview(advancedControls)
@@ -835,7 +860,10 @@ private final class CommonFormatJoinViewController: NSViewController {
             let controls = CommonFormatJoinVideoLaneControls(
                 lane: lane,
                 capabilities: candidate.capabilities,
-                initialChoice: choice
+                initialChoice: choice,
+                toneMapsHDR10Parts: candidate.proposal.decisions.contains {
+                    $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+                }
             )
             controls.onChange = { [weak self] in self?.refreshPlanFromControls() }
             videoControls.append(controls)

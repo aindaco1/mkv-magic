@@ -95,9 +95,7 @@ two-architecture runtime-build regression.
 
 - Performance/thermal tuning with representative beta files on the M1 reference
   Mac and at least one physical Intel Mac.
-- User-facing advanced AV1 quality and speed controls backed by measured beta
-  defaults; preset 8 is the explicit balanced engineering default for now.
-- HDR10 transcode preservation and verification, mixed HDR/SDR decisions, and
-  Dolby Vision fail-safe UX.
+- Measured beta defaults for the user-facing AV1 quality and speed controls.
+- SDR-to-HDR conversion and Dolby Vision fail-safe UX.
 - A public Developer ID-signed, Apple-notarized release and downloaded-artifact
   verification.

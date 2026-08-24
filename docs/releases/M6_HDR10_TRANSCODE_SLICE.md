@@ -55,8 +55,8 @@ joined metadata, non-AV1/HEVC HDR targets, unsupported HDR formats, or an output
 that loses the signal fail before commit.
 
 Pure regressions cover exact rational parsing, malformed metadata, HDR10+/Dolby
-Vision refusal, preset restrictions, exact FFmpeg arguments, mixed SDR/HDR
-refusal, planner metadata mismatch, and post-encode signal drift. Real
+Vision refusal, preset restrictions, exact FFmpeg arguments, mixed-range
+metadata refusal, planner metadata mismatch, and post-encode signal drift. Real
 bundled-tool fixtures prove both Exact Trim and common-format Join preserve the
 static signal while leaving the input hashes unchanged. The complete normal,
 exact-runtime, sanitizer, Universal packaging, signing, update, SBOM, checksum,
@@ -80,7 +80,7 @@ and mounted-DMG gates are rerun for this high-risk media slice.
 
 ## Still pending
 
-- Mixed SDR/HDR tone mapping and explicit SDR-to-HDR conversion.
+- Explicit SDR-to-HDR conversion.
 - HDR10+, HLG, and Dolby Vision transcode contracts.
 - Representative private-library Jellyfin/Plex playback acceptance.
 - Long-duration thermal and performance tuning on Apple Silicon and a physical

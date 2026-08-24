@@ -37,10 +37,13 @@ acceptance remains required before the first public release.
 Exact Trim and common-format Join can transcode a validated static HDR10 signal
 through verified 10-bit AV1 or HEVC. They preserve BT.2020/PQ limited-range color,
 matrix, mastering-display, and content-light metadata and reject output drift.
-All HDR sources in one joined video lane must carry the same static metadata.
+To preserve an HDR10 output, all sources in that joined video lane must carry
+the same static metadata.
 AV1 preserves the signal in its encoded stream and MKV; HEVC VideoToolbox is
-guaranteed only for the MKV container metadata. Mixed SDR/HDR conversion,
-HDR10+, HLG, and Dolby Vision transcoding remain unavailable.
+guaranteed only for the MKV container metadata. Common-format Join can combine
+BT.709 SDR and validated static HDR10 by tone-mapping only the HDR10 Parts to a
+verified BT.709 SDR result. SDR-to-HDR conversion, HDR10+, HLG, and Dolby Vision
+transcoding remain unavailable.
 
 Release acceptance requires native Apple Silicon verification and Rosetta
 x86_64 verification in CI. Before the first public release, the downloaded app

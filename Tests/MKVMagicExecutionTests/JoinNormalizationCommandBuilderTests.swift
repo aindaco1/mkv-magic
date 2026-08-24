@@ -144,7 +144,7 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         }
     }
 
-    func testRejectsMixedSDRAndHDRUntilToneMappingIsExecutable() throws {
+    func testToneMapsOnlyHDR10PartsOfMixedLaneInOneEncodedGeneration() throws {
         let sources = [
             asset(part: 1, tracks: [video(id: 0)]),
             asset(part: 2, tracks: [hdr10Video(id: 0)]),
@@ -169,18 +169,43 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
             aacAvailable: true
         )
 
-        XCTAssertThrowsError(
-            try JoinNormalizationCommandBuilder().build(
-                sources: sources,
-                resolvedPlan: resolved,
-                capabilities: capabilities(),
-                outputURL: URL(fileURLWithPath: "/output/hdr.mkv")
+        let command = try JoinNormalizationCommandBuilder().build(
+            sources: sources,
+            resolvedPlan: resolved,
+            capabilities: capabilities(),
+            outputURL: URL(fileURLWithPath: "/output/tone-mapped.mkv")
+        )
+        let graph = try XCTUnwrap(value(after: "-filter_complex", in: command.arguments))
+        let sourceGraphs = graph.components(separatedBy: ";")
+
+        XCTAssertEqual(command.encodedVideoLaneIndices, [0])
+        XCTAssertEqual(command.arguments.filter { $0 == "hevc_videotoolbox" }.count, 1)
+        XCTAssertFalse(sourceGraphs[0].contains("zscale="))
+        XCTAssertFalse(sourceGraphs[0].contains("tonemap="))
+        XCTAssertEqual(sourceGraphs[1].components(separatedBy: "zscale=").count - 1, 2)
+        XCTAssertEqual(sourceGraphs[1].components(separatedBy: ",tonemap=").count - 1, 1)
+        XCTAssertTrue(sourceGraphs[1].contains("peak=10.000000"))
+        XCTAssertTrue(sourceGraphs[1].contains("primaries=bt709:transfer=bt709"))
+        XCTAssertEqual(graph.components(separatedBy: "concat=n=2:v=1:a=0").count - 1, 1)
+
+        for requiredFilter in ["tonemap", "zscale"] {
+            var filters = FFmpegEncodingCapabilities.requiredJoinFilters.union(
+                FFmpegEncodingCapabilities.requiredToneMappingFilters
             )
-        ) { error in
-            XCTAssertEqual(
-                error as? JoinNormalizationCommandError,
-                .unsupportedDynamicRange(laneIndex: 0)
-            )
+            filters.remove(requiredFilter)
+            XCTAssertThrowsError(
+                try JoinNormalizationCommandBuilder().build(
+                    sources: sources,
+                    resolvedPlan: resolved,
+                    capabilities: capabilities(filters: filters),
+                    outputURL: URL(fileURLWithPath: "/output/missing-\(requiredFilter).mkv")
+                )
+            ) { error in
+                XCTAssertEqual(
+                    error as? JoinNormalizationCommandError,
+                    .missingFilter(requiredFilter)
+                )
+            }
         }
     }
 
@@ -483,7 +508,9 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
 
     private func capabilities(
         hevcStatus: FFmpegCapabilityStatus = .verified,
-        filters: Set<String> = FFmpegEncodingCapabilities.requiredJoinFilters
+        filters: Set<String> = FFmpegEncodingCapabilities.requiredJoinFilters.union(
+            FFmpegEncodingCapabilities.requiredToneMappingFilters
+        )
     ) -> FFmpegEncodingCapabilities {
         FFmpegEncodingCapabilities(
             softwareAV1: .verified,

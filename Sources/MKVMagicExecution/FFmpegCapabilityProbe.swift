@@ -51,6 +51,7 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
         "aformat", "anullsrc", "apad", "aresample", "asetpts", "atrim", "channelmap",
         "concat", "format", "pad", "scale", "setpts", "setsar", "tpad", "trim",
     ]
+    public static let requiredToneMappingFilters: Set<String> = ["tonemap", "zscale"]
 
     public let softwareAV1: FFmpegCapabilityStatus
     public let softwareAV1Encoder: String?
@@ -93,6 +94,12 @@ public struct FFmpegEncodingCapabilities: Equatable, Sendable {
     public var missingJoinFilters: [String] {
         Self.requiredJoinFilters.subtracting(availableFilters).sorted()
     }
+
+    public var missingToneMappingFilters: [String] {
+        Self.requiredToneMappingFilters.subtracting(availableFilters).sorted()
+    }
+
+    public var toneMappingAvailable: Bool { missingToneMappingFilters.isEmpty }
 
     public var availableVideoPresets: [VideoPreset] {
         var presets = [VideoPreset]()

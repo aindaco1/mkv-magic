@@ -471,13 +471,14 @@ public struct JoinNormalizationPlanner: Sendable {
             recommendedDynamicRange = .sdr
             dynamicRangeChoices = [.sdr]
         } else if Set(dynamicRanges) == [.sdr, .hdr10] {
-            dynamicRangeChoices = [.sdr, .hdr10]
+            recommendedDynamicRange = .sdr
+            dynamicRangeChoices = [.sdr]
             decisions.append(
                 JoinNormalizationDecisionRequirement(
                     kind: .mixedDynamicRange,
                     laneIndex: laneIndex,
                     summary:
-                        "Choose SDR tone mapping or an HDR10 signal for mixed SDR/HDR Part content in video lane \(laneIndex + 1)."
+                        "Confirm local HDR10-to-SDR tone mapping for only the HDR Parts in mixed-range video lane \(laneIndex + 1); SDR Parts remain BT.709."
                 )
             )
         }

@@ -62,10 +62,7 @@ The full normal and exact-runtime gates are required before this slice is landed
 
 ## Still pending
 
-- User-editable common-format Join target controls beyond its reviewed
-  recommendation.
-- Opus, AC-3, E-AC-3, and lossless advanced audio presets.
-- Mixed SDR/HDR tone mapping and SDR-to-HDR conversion.
+- SDR-to-HDR conversion.
 - Representative Jellyfin/Plex corpus tuning and physical Intel performance.
 - Public Developer ID signing, notarization, publication, and downloaded-artifact
   verification.

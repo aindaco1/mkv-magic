@@ -58,8 +58,7 @@ verification, manifest checks, and DMG verification also passed.
 
 ## Still pending
 
-- Per-lane advanced audio choices for common-format Join.
-- Mixed SDR/HDR tone mapping and SDR-to-HDR conversion.
+- SDR-to-HDR conversion.
 - Representative Jellyfin/Plex corpus tuning and physical Intel performance.
 - Public Developer ID signing, notarization, publication, and downloaded-artifact
   verification.

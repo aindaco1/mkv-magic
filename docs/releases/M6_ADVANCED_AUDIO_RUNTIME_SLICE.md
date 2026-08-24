@@ -63,9 +63,7 @@ Intel acceptance.
 
 ## Still pending
 
-- User-facing Exact Trim and common-format Join audio choices.
-- Exact layout-preserving single-generation execution and semantic output audit.
-- Mixed SDR/HDR tone mapping and SDR-to-HDR conversion.
+- SDR-to-HDR conversion.
 - Representative Jellyfin/Plex corpus tuning and physical Intel performance.
 - Public Developer ID signing, notarization, publication, and downloaded-artifact
   verification.

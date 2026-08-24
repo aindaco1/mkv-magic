@@ -27,7 +27,6 @@ archive are included in the normal release and corresponding-source checks.
 
 ## Still pending
 
-- A typed HDR10-to-SDR planning, command, and verification contract.
 - Representative Jellyfin/Plex corpus tuning and physical Intel performance.
 - Public Developer ID signing, notarization, publication, and downloaded-artifact
   verification.

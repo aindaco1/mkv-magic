@@ -321,9 +321,13 @@ enum LosslessJoinReviewBuilder {
                 lane.recommendedCanvas.map { "\($0.width)×\($0.height) fit/pad" }
                 ?? "canvas needs review"
             let range =
-                lane.recommendedDynamicRange.map {
+                proposal.decisions.contains {
+                    $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+                }
+                ? "SDR; tone-map only HDR10 Parts"
+                : lane.recommendedDynamicRange.map {
                     $0 == .hdr10 ? "HDR10" : "SDR"
-                } ?? "choose SDR or HDR10"
+                } ?? "dynamic range needs review"
             summaries.append(
                 "Video lane \(lane.laneIndex + 1): one \(preset) generation • \(canvas) • \(range) • preserve source timing."
             )
@@ -370,6 +374,16 @@ enum LosslessJoinReviewBuilder {
             needsVideoEncode, capabilities.recommendedVideoPreset == nil
         {
             let message = "No bundled video encoder passed the active local probe."
+            summaries.append("Blocked: \(message)")
+            blockers.append(message)
+        } else if let capabilities = encodingCapabilities,
+            let mixedLaneIndex = proposal.decisions.first(where: {
+                $0.kind == .mixedDynamicRange
+            })?.laneIndex,
+            let missingFilter = capabilities.missingToneMappingFilters.first
+        {
+            let message =
+                "Video lane \(mixedLaneIndex + 1) needs the bundled \(missingFilter) filter for HDR10-to-SDR tone mapping."
             summaries.append("Blocked: \(message)")
             blockers.append(message)
         } else if let capabilities = encodingCapabilities,

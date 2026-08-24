@@ -353,6 +353,117 @@ final class RealToolJoinNormalizationCommandTests: XCTestCase {
         }
     }
 
+    func testBundledToolsToneMapOnlyHDR10PartOfMixedJoinToVerifiedSDR() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("Bundled H.264 VideoToolbox did not verify on this Mac")
+        }
+        XCTAssertTrue(capabilities.toneMappingAvailable)
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-mixed-range-normalization"
+        ) { root in
+            let mkvpropeditURL = try catalog.url(for: .mkvpropedit)
+            let sourceURLs = try await [
+                makeVideoFixture(
+                    root: root,
+                    name: "sdr-part",
+                    width: 64,
+                    height: 48,
+                    fill: 16,
+                    ffmpegURL: ffmpegURL,
+                    mkvpropeditURL: mkvpropeditURL,
+                    runner: runner
+                ),
+                makeHDR10VideoFixture(
+                    root: root,
+                    name: "hdr10-part",
+                    width: 80,
+                    height: 64,
+                    ffmpegURL: ffmpegURL,
+                    mkvpropeditURL: mkvpropeditURL,
+                    runner: runner
+                ),
+            ]
+            let sourceDigests = try sourceURLs.map {
+                SHA256.hash(data: try Data(contentsOf: $0))
+            }
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            var sources = [MediaAsset]()
+            for sourceURL in sourceURLs {
+                try await sources.append(inspector.inspect(sourceURL))
+            }
+            XCTAssertTrue(MediaHDR10Signal.isBT709SDR(sources[0].tracks[0]))
+            XCTAssertNotNil(MediaHDR10Signal(track: sources[1].tracks[0]))
+            let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+            let proposal = try JoinNormalizationPlanner().propose(
+                sources: sources,
+                mapping: mapping,
+                preferredVideoPreset: .h264Compatibility
+            )
+            XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
+            let lane = try XCTUnwrap(proposal.videoLanes.first)
+            XCTAssertEqual(lane.recommendedDynamicRange, .sdr)
+            XCTAssertEqual(lane.dynamicRangeChoices, [.sdr])
+            let resolved = try JoinNormalizationChoiceResolver().resolve(
+                sources: sources,
+                proposal: proposal,
+                choices: JoinNormalizationChoices(videoTargetsByLane: [
+                    lane.laneIndex: JoinVideoTargetChoice(
+                        preset: .h264Compatibility,
+                        canvas: try XCTUnwrap(lane.recommendedCanvas),
+                        frameRatePolicy: .preserveSourceTiming,
+                        dynamicRange: .sdr,
+                        rateControl: .averageBitrate(500_000)
+                    )
+                ]),
+                availableVideoPresets: Set(capabilities.availableVideoPresets),
+                aacAvailable: capabilities.aac == .verified
+            )
+            let executor = JoinNormalizationExecutor(
+                ffmpegURL: ffmpegURL,
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            )
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: root.appendingPathComponent("verified-mixed-to-sdr.mkv")
+            )
+
+            XCTAssertEqual(output.tracks.count, 1)
+            XCTAssertEqual(output.tracks[0].codec, "h264")
+            XCTAssertEqual(output.tracks[0].dimensions, MediaDimensions(width: 80, height: 64))
+            XCTAssertTrue(MediaHDR10Signal.isBT709SDR(output.tracks[0]))
+            XCTAssertNil(output.tracks[0].masteringDisplayMetadata)
+            XCTAssertNil(output.tracks[0].contentLightLevelMetadata)
+            XCTAssertTrue(output.tracks[0].hdrFormats.isEmpty)
+            XCTAssertEqual(
+                try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+                sourceDigests
+            )
+        }
+    }
+
     func testBundledToolsJoinUniformHDR10WithExactStaticMetadata() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

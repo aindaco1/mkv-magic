@@ -411,7 +411,8 @@ changing the six-channel count, and discloses the final reviewed layout.
 - A preservation workflow fails or warns instead of silently emitting incorrect colors.
 - Exact Trim and uniform-HDR common-format Join accept only a validated static HDR10 signal. Joined sources must have identical mastering-display and content-light values because one output lane cannot truthfully carry multiple static signals.
 - AV1 carries the validated static signal in both its encoded stream and Matroska output. HEVC VideoToolbox preservation is guaranteed at the Matroska container layer; raw elementary-stream MDCV/CLL preservation is not claimed.
-- Mixed SDR/HDR conversion, tone mapping, SDR-to-HDR signaling, HDR10+, and HLG remain blocked until their pixel transforms and verification contracts are implemented.
+- Common-format Join accepts mixed validated static HDR10 and BT.709 SDR. It defaults to BT.709 SDR, applies one bounded local Mobius tone map only to each HDR10 Part, leaves SDR Parts in BT.709, and fuses the result into the lane's one encoded generation. The review discloses and requires approval of that conversion.
+- SDR-to-HDR signaling, HDR10+, and HLG remain blocked until their pixel transforms and verification contracts are implemented.
 - Dolby Vision is preserved during compatible stream-copy operations.
 - Any transcode whose Dolby Vision result cannot be guaranteed requires an explicit warning and choice.
 - No operation silently strips Dolby Vision metadata.
@@ -901,8 +902,10 @@ reorders the same verified choices when measured AV1 throughput is impractical;
 it never reads user media or removes an encoder choice.
 It fails closed for
 incomplete copy facts, missing video, unavailable encoders/filters, Dolby Vision,
-HDR10+, HLG, mixed SDR/HDR conversion, and image subtitle conversion. Uniform
-static HDR10 lanes with identical metadata can now select AV1 or HEVC. A revision-bound
+HDR10+, HLG, SDR-to-HDR conversion, and image subtitle conversion. Uniform
+static HDR10 lanes with identical metadata can select AV1 or HEVC. Mixed validated
+static HDR10 and BT.709 SDR lanes can select a verified SDR encoder and tone-map
+only their HDR10 Parts. A revision-bound
 choice resolver and pure FFmpeg compiler now turn exact SDR or static HDR10 video and AAC layout
 decisions into one filter graph and one process, with no repeated encode stage;
 explicit missing-audio approval produces exact-duration silence. Bundled-tool
@@ -994,7 +997,7 @@ Deliverables:
 Gate: multi-step video workflows use one encoded generation, and tested HDR outputs retain the required metadata or fail safely.
 
 Current implementation: the pinned Universal runtime now builds separate
-`arm64` and `x86_64` SVT-AV1 4.1.0, dav1d 1.5.4, and libopus 1.6.1 static
+`arm64` and `x86_64` SVT-AV1 4.1.0, dav1d 1.5.4, libopus 1.6.1, and zimg 3.0.6 static
 libraries, links them
 into the network-disabled FFmpeg, bundles the required notices, publishes the
 matching source archives and SBOM components, and proves real 10-bit AV1 encode
@@ -1020,6 +1023,12 @@ and permits any actively verified codec compatible with the reviewed SDR or
 static-HDR10 target. Each change invalidates approval, resolves a fresh immutable
 plan against the exact inspected sources, and still compiles one fused video
 generation rather than chaining conversions.
+Mixed BT.709 SDR and validated static HDR10 Join lanes now default to BT.709 SDR.
+The compiler preserves each SDR Part's BT.709 path, converts each HDR10 Part from
+PQ to linear light, applies bounded Mobius tone mapping with a peak derived from
+the reviewed static signal, converts to BT.709, and concatenates all Parts before
+the lane's single encode. The verified transaction requires reopened BT.709 SDR
+without residual HDR metadata and unchanged source digests.
 The runtime additionally requires FFmpeg's AC-3, E-AC-3, and FLAC encoders and
 statically links checksum-pinned stable libopus. The app capability probe smoke
 encodes AAC, Opus, AC-3, E-AC-3, and FLAC independently and fails each choice
@@ -1029,10 +1038,9 @@ source layouts/rates that the selected codec can retain without implicit
 downmix/rematrix, compiles every selected track into the same single-generation
 FFmpeg invocation, and verifies codec, layout, declared sample rate, metadata,
 timing, attachments, chapters, and source immutability before and after commit.
-Per-lane advanced audio selection for common-format Join remains open.
-Mixed SDR/HDR conversion, HDR10+, HLG, Dolby Vision transcoding,
-representative beta-corpus tuning, advanced Join audio execution, and physical Intel
-performance acceptance remain open.
+Common-format Join now exposes the same five verified per-lane audio formats.
+SDR-to-HDR conversion, HDR10+, HLG, Dolby Vision transcoding, representative
+beta-corpus tuning, and physical Intel performance acceptance remain open.
 
 ### M7 — Workflow builder and production queue
 
