@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 3
+    public static let currentSchemaVersion = 4
 
     public let id: UUID
     public var schemaVersion: Int
@@ -44,6 +44,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case removeNonEnglishSubtitles
     case removeRedundantEnglishSDH
     case removeSegmentTitle
+    case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
 
@@ -53,6 +54,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeNonEnglishSubtitles: "If present: Remove non-English subtitles"
         case .removeRedundantEnglishSDH: "If redundant: Remove English SDH subtitles"
         case .removeSegmentTitle: "If present: Remove segment title"
+        case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
         }
@@ -68,6 +70,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Remove an English SDH track only when another preferred English subtitle track remains."
         case .removeSegmentTitle:
             "Remove the Matroska segment title without encoding video or audio."
+        case .normalizeFilename:
+            "Suggest a simple Title (Year) output name for common release-style filenames. You can review or replace it before saving."
         case .addExternalSubtitle:
             "Ask for one SRT, ASS, or SSA file at preview time, confirm its track details, and add it last without encoding."
         case .cleanExternalSubtitleText:
@@ -87,8 +91,19 @@ public struct SavedWorkflowMigrator: Sendable {
         switch workflow.schemaVersion {
         case SavedWorkflow.currentSchemaVersion:
             return workflow
+        case 3:
+            guard workflow.steps.allSatisfy({ $0.action != .normalizeFilename }) else {
+                throw SavedWorkflowMigrationError.unsupportedSchema
+            }
+            var migrated = workflow
+            migrated.schemaVersion = SavedWorkflow.currentSchemaVersion
+            return migrated
         case 2:
-            guard workflow.steps.allSatisfy({ $0.action != .cleanExternalSubtitleText }) else {
+            guard
+                workflow.steps.allSatisfy({
+                    $0.action != .cleanExternalSubtitleText && $0.action != .normalizeFilename
+                })
+            else {
                 throw SavedWorkflowMigrationError.unsupportedSchema
             }
             var migrated = workflow
@@ -97,7 +112,9 @@ public struct SavedWorkflowMigrator: Sendable {
         case 1:
             guard
                 workflow.steps.allSatisfy({
-                    $0.action != .addExternalSubtitle && $0.action != .cleanExternalSubtitleText
+                    $0.action != .addExternalSubtitle
+                        && $0.action != .cleanExternalSubtitleText
+                        && $0.action != .normalizeFilename
                 })
             else {
                 throw SavedWorkflowMigrationError.unsupportedSchema

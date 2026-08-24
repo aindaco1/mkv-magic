@@ -375,6 +375,88 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testFilenameOnlyWorkflowCreatesVerifiedByteIdenticalRealMKVCopy() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-filename-workflow-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+
+        let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let source = fixtureRoot.appendingPathComponent("Movie.2025.1080p.WEB-DL.mkv")
+        let output = fixtureRoot.appendingPathComponent("Movie (2025).mkv")
+        try Data(repeating: 0, count: 96_000).write(to: rawAudio)
+        let createResult = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .ffmpeg),
+                arguments: [
+                    "-hide_banner", "-loglevel", "error",
+                    "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
+                    "-c:a", "aac", "-metadata", "title=Preserved",
+                    source.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(createResult.exitCode, 0, createResult.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: source))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let queueStore = try AppHistoryLocation.makeQueueStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(
+            historyRecorderFactory: { historyStore },
+            queueStoreFactory: { queueStore }
+        )
+        await model.addFiles([source])
+        let asset = try XCTUnwrap(model.assets.first)
+        let workflow = SavedWorkflow(
+            name: "Jellyfin filename",
+            steps: [SavedWorkflowStep(action: .normalizeFilename)]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+        XCTAssertEqual(compiled.suggestedOutputFilename, output.lastPathComponent)
+        XCTAssertTrue(compiled.createsUnchangedCopy)
+
+        let saved = try await model.runSavedWorkflow(
+            compiled,
+            recipe: workflow,
+            externalSubtitlePayload: nil,
+            in: asset,
+            destinationURL: output
+        )
+
+        XCTAssertEqual(saved.sourceURL, output)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: output)), sourceDigest)
+        XCTAssertEqual(saved.metadata["title"], "Preserved")
+        let records = try await historyStore.load()
+        XCTAssertEqual(records.count, 1)
+        XCTAssertEqual(records.first?.workflowID, workflow.id)
+        XCTAssertEqual(records.first?.outputDisplayName, output.lastPathComponent)
+        XCTAssertEqual(records.first?.events.last?.state, .succeeded)
+    }
+
+    @MainActor
     func testRealEditPersistsSanitizedVerifiedLifecycle() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

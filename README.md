@@ -44,9 +44,17 @@ text** card opens the existing cue-by-cue deterministic cleanup review, applies
 only accepted changes to the private subtitle payload, and feeds it into that
 same remux. The source sidecar remains unchanged; reviewed SRT and ASS/SSA
 payloads are extracted and audited before commit and after reopening the saved
-MKV. Workflow schema v3 still stores only portable action intent—never paths,
-subtitle text, or per-file review IDs. Original v1 and v2 workflow files migrate
+MKV. The optional **If useful: Clean up the output filename** card now derives
+a conservative Jellyfin/Plex-friendly `Title (Year)` suggestion from common
+release-style names. The exact suggestion appears in plan review and remains
+editable in the Save panel. If naming is the only applicable card, MKV Magic
+creates a clone-based byte-identical verified copy—no remux and no encode. The
+existing opt-in Trash-after-verified-success choice can make that path behave
+like a recoverable rename; otherwise the original remains beside the copy.
+Workflow schema v4 still stores only portable action intent—never paths,
+subtitle text, or per-file review IDs. Original v1-v3 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
+Older schema numbers cannot claim the newer filename action.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically
@@ -300,7 +308,9 @@ and the automatic-admission input boundary in
 followed by the coordinator foundation in
 [docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md](docs/releases/M7_QUEUE_ADMISSION_COORDINATOR_FOUNDATION_SLICE.md),
 and its app connection in
-[docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md).
+[docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_SAVED_WORKFLOW_QUEUE_SLICE.md),
+followed by portable filename cleanup in
+[docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md).
 
 ## Design promises
 

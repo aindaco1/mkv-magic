@@ -123,6 +123,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let summaries: [String]
     public let stepOutcomes: [SavedWorkflowStepOutcome]
     public let externalSubtitleCleanupChangeCount: Int?
+    public let suggestedOutputFilename: String?
 
     public init(
         workflowID: UUID,
@@ -131,7 +132,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         plan: ExecutionPlan,
         summaries: [String],
         stepOutcomes: [SavedWorkflowStepOutcome] = [],
-        externalSubtitleCleanupChangeCount: Int? = nil
+        externalSubtitleCleanupChangeCount: Int? = nil,
+        suggestedOutputFilename: String? = nil
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
@@ -140,6 +142,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         self.summaries = summaries
         self.stepOutcomes = stepOutcomes
         self.externalSubtitleCleanupChangeCount = externalSubtitleCleanupChangeCount
+        self.suggestedOutputFilename = suggestedOutputFilename
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -168,6 +171,10 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
             }
         }
         return nil
+    }
+
+    public var createsUnchangedCopy: Bool {
+        operations.isEmpty && suggestedOutputFilename != nil
     }
 }
 
@@ -232,6 +239,7 @@ public struct SavedWorkflowCompiler: Sendable {
         var stepOutcomes = [SavedWorkflowStepOutcome]()
         var removalTrackUIDs = Set<UInt64>()
         var removalInsertionIndex: Int?
+        var suggestedOutputFilename: String?
         for step in workflow.steps {
             guard step.isEnabled else {
                 stepOutcomes.append(
@@ -281,6 +289,28 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .skipped,
                             detail: "No segment title is present."
+                        )
+                    )
+                }
+            case .normalizeFilename:
+                if let suggestion = MediaFilenameNormalizationPolicy.suggestedFilename(
+                    for: asset.sourceURL
+                ) {
+                    suggestedOutputFilename = suggestion
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Suggest the output filename “\(suggestion)”"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail:
+                                "The filename is already simple; keep the normal output suggestion."
                         )
                     )
                 }
@@ -358,7 +388,7 @@ public struct SavedWorkflowCompiler: Sendable {
                 at: removalInsertionIndex ?? operations.endIndex
             )
         }
-        guard !operations.isEmpty else {
+        guard !operations.isEmpty || suggestedOutputFilename != nil else {
             return SavedWorkflowCompilationPreview(
                 workflowID: workflow.id,
                 workflowName: workflow.name,
@@ -367,21 +397,44 @@ public struct SavedWorkflowCompiler: Sendable {
             )
         }
 
-        let resolved = WorkflowDefinition(
-            id: workflow.id,
-            name: workflow.name,
-            operations: operations
-        )
+        let plan: ExecutionPlan
+        if operations.isEmpty {
+            plan = ExecutionPlan(
+                stages: [
+                    PlanStage(
+                        mechanism: .verify,
+                        summary: "Verify an unchanged output copy"
+                    ),
+                    PlanStage(
+                        mechanism: .commit,
+                        summary: "Commit the verified result"
+                    ),
+                ],
+                impact: PlanImpact(
+                    videoEncodeCount: 0,
+                    audioEncodeCount: 0,
+                    copiesVideo: true
+                )
+            )
+        } else {
+            let resolved = WorkflowDefinition(
+                id: workflow.id,
+                name: workflow.name,
+                operations: operations
+            )
+            plan = try WorkflowPlanner().plan(asset: asset, workflow: resolved)
+        }
         let compiled = CompiledSavedWorkflow(
             workflowID: workflow.id,
             workflowName: workflow.name,
             operations: operations,
-            plan: try WorkflowPlanner().plan(asset: asset, workflow: resolved),
+            plan: plan,
             summaries: stepOutcomes.filter { $0.disposition == .applied }.map(\.detail),
             stepOutcomes: stepOutcomes,
             externalSubtitleCleanupChangeCount: enabledActions.contains(
                 .cleanExternalSubtitleText
-            ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil
+            ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil,
+            suggestedOutputFilename: suggestedOutputFilename
         )
         return SavedWorkflowCompilationPreview(
             workflowID: workflow.id,
@@ -431,6 +484,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove \(count) redundant English SDH subtitle \(noun)"
         case .removeSegmentTitle:
             "Remove the segment title"
+        case .normalizeFilename:
+            "Clean up the output filename"
         case .addExternalSubtitle:
             "Add one external subtitle"
         case .cleanExternalSubtitleText:
@@ -448,6 +503,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No redundant English SDH subtitle tracks were found."
         case .removeSegmentTitle:
             "No segment title is present."
+        case .normalizeFilename:
+            "The filename is already simple."
         case .addExternalSubtitle:
             "No external subtitle was selected."
         case .cleanExternalSubtitleText:

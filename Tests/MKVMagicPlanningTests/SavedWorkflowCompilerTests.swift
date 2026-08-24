@@ -5,6 +5,72 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testFilenameOnlyWorkflowCreatesReviewedUnchangedCopyPlan() throws {
+        let workflow = SavedWorkflow(
+            name: "Jellyfin filename",
+            steps: [SavedWorkflowStep(action: .normalizeFilename)]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(
+                fileURLWithPath: "/private/media/Eddington.2025.1080p.BluRay.clean.mkv"
+            ),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1)]
+        )
+
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertTrue(compiled.createsUnchangedCopy)
+        XCTAssertTrue(compiled.operations.isEmpty)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Eddington (2025).mkv")
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.verify, .commit])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.detail),
+            ["Suggest the output filename “Eddington (2025).mkv”"]
+        )
+    }
+
+    func testFilenameSuggestionComposesWithoutAddingAnotherMediaPass() throws {
+        let workflow = SavedWorkflow(
+            name: "Clean name and title",
+            steps: [
+                SavedWorkflowStep(action: .normalizeFilename),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.2025.1080p.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1)],
+            metadata: ["title": "Movie"]
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+
+        XCTAssertFalse(compiled.createsUnchangedCopy)
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Movie (2025).mkv")
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvPropEdit, .verify, .commit])
+    }
+
+    func testAlreadySimpleFilenameOnlyWorkflowHasNoApplicableOutput() throws {
+        let workflow = SavedWorkflow(
+            name: "Already named",
+            steps: [SavedWorkflowStep(action: .normalizeFilename)]
+        )
+
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: makeAsset())
+
+        XCTAssertNil(preview.compiledWorkflow)
+        XCTAssertEqual(preview.stepOutcomes.map(\.disposition), [.skipped])
+        XCTAssertThrowsError(try SavedWorkflowCompiler().compile(workflow, for: makeAsset())) {
+            XCTAssertEqual($0 as? SavedWorkflowCompilationError, .noApplicableChanges)
+        }
+    }
+
     func testCompilesPortableIntentAgainstEachAssetsStableTrackUIDs() throws {
         let workflow = SavedWorkflow(
             id: UUID(uuidString: "B989848F-887B-4861-AF7E-ADE3E6E64883")!,

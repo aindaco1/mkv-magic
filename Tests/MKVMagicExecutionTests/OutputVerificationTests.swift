@@ -5,6 +5,25 @@ import XCTest
 @testable import MKVMagicExecution
 
 final class OutputVerificationTests: XCTestCase {
+    func testUnchangedCopyVerifierAcceptsOnlyPreservedInspectionFacts() throws {
+        let original = asset(title: "Movie")
+
+        XCTAssertNoThrow(
+            try UnchangedCopyOutputVerifier().verify(
+                original: original,
+                output: asset(title: "Movie")
+            )
+        )
+        XCTAssertThrowsError(
+            try UnchangedCopyOutputVerifier().verify(
+                original: original,
+                output: asset(title: "Changed")
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .tagsChanged)
+        }
+    }
+
     func testSegmentTitleVerificationAcceptsOnlyIntendedMetadataChange() throws {
         let original = asset(title: "Old")
         let output = asset(title: "New")

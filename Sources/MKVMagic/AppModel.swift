@@ -55,9 +55,11 @@ final class AppModel {
             case .metadata: "Zero video encodes; mkvpropedit on a verified clone."
             case .trackRemoval: "Zero video encodes; mkvmerge copies the retained streams."
             case .saved(let workflow, _):
-                workflow.plan.impact.videoEncodeCount == 0
-                    ? "Zero video encodes; all enabled steps share one verified output pipeline."
-                    : "All video-affecting steps are fused into one encode."
+                workflow.createsUnchangedCopy
+                    ? "Zero encodes; create and verify one unchanged output copy."
+                    : workflow.plan.impact.videoEncodeCount == 0
+                        ? "Zero video encodes; all enabled steps share one verified output pipeline."
+                        : "All video-affecting steps are fused into one encode."
             case .externalSubtitle(let preview, _):
                 "Zero encodes; normalize one temporary \(preview.format.displayName) and remux it as the last MKV track."
             case .embeddedSubtitle(let preview, _):
@@ -72,9 +74,11 @@ final class AppModel {
             case .metadata: "Editing a temporary clone."
             case .trackRemoval: "Remuxing retained tracks to a temporary output."
             case .saved(let workflow, _):
-                workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil
-                    ? "Editing one temporary clone."
-                    : "Applying all workflow steps to one temporary remux."
+                workflow.createsUnchangedCopy
+                    ? "Creating one unchanged temporary clone."
+                    : workflow.trackRemoval == nil && workflow.externalSubtitleInput == nil
+                        ? "Editing one temporary clone."
+                        : "Applying all workflow steps to one temporary remux."
             case .externalSubtitle:
                 "Adding one reviewed subtitle to a temporary MKV remux."
             case .embeddedSubtitle:
@@ -1593,6 +1597,7 @@ final class AppModel {
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     externalSubtitleInput: workflow.externalSubtitleInput,
                     externalSubtitlePayload: externalSubtitlePayload,
+                    createsUnchangedCopy: workflow.createsUnchangedCopy,
                     expectedSourceRevision: expectedSourceRevision,
                     destinationURL: destinationURL,
                     onStage: { stage in

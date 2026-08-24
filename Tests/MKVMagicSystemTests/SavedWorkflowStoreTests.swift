@@ -85,6 +85,40 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
     }
 
+    func testPortableFileRoundTripsFilenamePolicyWithoutAConcreteFilename() throws {
+        let workflow = SavedWorkflow(
+            name: "Jellyfin naming",
+            steps: [SavedWorkflowStep(action: .normalizeFilename)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("normalizeFilename"))
+        XCTAssertFalse(json.contains("suggestedOutputFilename"))
+        XCTAssertFalse(json.contains("Movie (2025)"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionThreeMigratesButCannotClaimVersionFourFilenameAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":3,"name":"Clean subtitle","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"cleanExternalSubtitleText"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":3,"name":"Invalid backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"normalizeFilename"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
     func testVersionTwoWorkflowMigratesButCannotClaimVersionThreeCleanupAction() throws {
         let valid = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":2,"name":"Add subtitle","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"addExternalSubtitle"}]}"#

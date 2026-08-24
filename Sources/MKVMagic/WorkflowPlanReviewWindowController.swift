@@ -157,6 +157,9 @@ enum WorkflowPlanReviewPresentation {
     }
 
     static func impactSummary(for compiled: CompiledSavedWorkflow) -> String {
+        if compiled.createsUnchangedCopy {
+            return "No transcoding • byte-identical file copy"
+        }
         let mechanisms = compiled.plan.stages.compactMap { stage -> String? in
             switch stage.mechanism {
             case .mkvMerge: "one MKV remux"

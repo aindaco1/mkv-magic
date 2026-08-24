@@ -88,7 +88,106 @@ private struct CombinedWorkflowInspector: MediaInspecting {
     }
 }
 
+private struct UnchangedWorkflowInspector: MediaInspecting {
+    let original: MediaAsset
+
+    func inspect(_ inputURL: URL) async throws -> MediaAsset {
+        MediaAsset(
+            sourceURL: inputURL,
+            container: original.container,
+            formatLongName: original.formatLongName,
+            duration: original.duration,
+            fileSize: original.fileSize,
+            bitrate: original.bitrate,
+            tracks: original.tracks,
+            chapters: original.chapters,
+            attachments: original.attachments,
+            metadata: original.metadata,
+            chapterEntryCount: original.chapterEntryCount,
+            globalTagCount: original.globalTagCount,
+            trackTagCount: original.trackTagCount,
+            segmentUID: original.segmentUID,
+            muxingApplication: original.muxingApplication,
+            writingApplication: original.writingApplication,
+            warnings: original.warnings
+        )
+    }
+}
+
 final class SavedWorkflowExecutorTests: XCTestCase {
+    func testFilenameOnlyWorkflowCommitsUnchangedCloneWithoutMediaTools() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-saved-workflow-filename-copy-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Movie.2025.1080p.mkv")
+        let destinationURL = root.appendingPathComponent("Movie (2025).mkv")
+        let sourceBytes = Data("unchanged media bytes".utf8)
+        try sourceBytes.write(to: sourceURL)
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska",
+            formatLongName: "Matroska",
+            duration: MediaTime(seconds: 10),
+            fileSize: Int64(sourceBytes.count),
+            bitrate: 128_000,
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)],
+            metadata: ["title": "Movie"],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: "source-segment",
+            muxingApplication: "mkvmerge",
+            writingApplication: "mkvmerge"
+        )
+        let runner = SavedWorkflowRecordingRunner()
+        let executor = SavedWorkflowExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: runner,
+            inspector: UnchangedWorkflowInspector(original: source)
+        )
+
+        let output = try await executor.execute(
+            source: source,
+            trackRemoval: nil,
+            removesSegmentTitle: false,
+            createsUnchangedCopy: true,
+            destinationURL: destinationURL
+        )
+        let executableNames = await runner.executableNames
+
+        XCTAssertEqual(executableNames, [])
+        XCTAssertEqual(output.sourceURL, destinationURL)
+        XCTAssertEqual(try Data(contentsOf: destinationURL), sourceBytes)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+    }
+
+    func testNoOperationWorkflowStillFailsWithoutReviewedCopyIntent() async throws {
+        let sourceURL = URL(fileURLWithPath: "/private/media/source.mkv")
+        let source = MediaAsset(sourceURL: sourceURL, container: "matroska")
+        let executor = SavedWorkflowExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: SavedWorkflowRecordingRunner(),
+            inspector: UnchangedWorkflowInspector(original: source)
+        )
+
+        do {
+            _ = try await executor.execute(
+                source: source,
+                trackRemoval: nil,
+                removesSegmentTitle: false,
+                destinationURL: URL(fileURLWithPath: "/private/media/output.mkv")
+            )
+            XCTFail("Expected no-operation refusal")
+        } catch {
+            XCTAssertEqual(error as? SavedWorkflowExecutionError, .noOperations)
+        }
+    }
+
     func testSourceMutationDuringToolRunCannotCommitOutput() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-saved-workflow-mid-run-change-\(UUID().uuidString)",

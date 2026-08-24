@@ -65,6 +65,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
+        createsUnchangedCopy: Bool = false,
         expectedSourceRevision: MediaFileRevision? = nil,
         destinationURL: URL,
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
@@ -72,7 +73,12 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         guard MatroskaEditingPolicy.supports(source) else {
             throw SavedWorkflowExecutionError.unsupportedContainer
         }
-        guard trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil else {
+        let hasMediaOperations =
+            trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
+        guard hasMediaOperations || createsUnchangedCopy else {
+            throw SavedWorkflowExecutionError.noOperations
+        }
+        guard !createsUnchangedCopy || !hasMediaOperations else {
             throw SavedWorkflowExecutionError.noOperations
         }
         guard externalSubtitlePreview == nil || externalSubtitlePayload == nil else {
@@ -153,6 +159,11 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         original: source,
                         output: output,
                         expectedTitle: nil
+                    )
+                } else if createsUnchangedCopy {
+                    try UnchangedCopyOutputVerifier().verify(
+                        original: source,
+                        output: output
                     )
                 }
             },

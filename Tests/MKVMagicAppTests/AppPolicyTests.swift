@@ -97,6 +97,35 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testSavedWorkflowFilenameSuggestionRemainsReviewableAndContainerSafe() {
+        let source = URL(fileURLWithPath: "/Media/Movie.2025.1080p.WEBM")
+
+        XCTAssertEqual(
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: source,
+                suggestedFilename: "Movie (2025).WEBM",
+                requiresMKV: false
+            ),
+            "Movie (2025).WEBM"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: source,
+                suggestedFilename: "Movie (2025).WEBM",
+                requiresMKV: true
+            ),
+            "Movie (2025).mkv"
+        )
+        XCTAssertEqual(
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: source,
+                suggestedFilename: nil,
+                requiresMKV: false
+            ),
+            "Movie.2025.1080p — Edited.WEBM"
+        )
+    }
+
     func testCleanedSubtitleOutputNameUsesSRT() {
         XCTAssertEqual(
             OutputNamingPolicy.cleanedSubtitleFilename(
@@ -1906,6 +1935,7 @@ final class AppPolicyTests: XCTestCase {
                 .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
+                .normalizeFilename,
                 .addExternalSubtitle,
             ]
         )
@@ -2036,6 +2066,33 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(text.contains("No output will be created."))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Done" && !$0.isHidden })
         XCTAssertFalse(buttons(in: content).contains { $0.title == "Use This Plan" })
+    }
+
+    @MainActor
+    func testWorkflowPlanReviewDisclosesFilenameOnlyUnchangedCopy() throws {
+        let workflow = SavedWorkflow(
+            name: "Jellyfin filename",
+            steps: [SavedWorkflowStep(action: .normalizeFilename)]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.2025.1080p.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 1)]
+        )
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let controller = WorkflowPlanReviewWindowController(
+            preview: preview,
+            sourceDisplayName: asset.sourceURL.lastPathComponent
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+
+        let text = descendants(in: content)
+            .compactMap { ($0 as? NSTextField)?.stringValue }
+            .joined(separator: "\n")
+        XCTAssertTrue(text.contains("No transcoding • byte-identical file copy"))
+        XCTAssertTrue(text.contains("Suggest the output filename “Movie (2025).mkv”"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Use This Plan" })
     }
 
     @MainActor

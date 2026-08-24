@@ -1823,7 +1823,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.title = isSubtitleCleanup ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
         panel.prompt = prompt
         panel.canCreateDirectories = true
-        if isSubtitleCleanup {
+        if case .savedWorkflow(let prepared) = pendingChange,
+            let suggestedFilename = prepared.compiled.suggestedOutputFilename
+        {
+            panel.nameFieldStringValue = OutputNamingPolicy.savedWorkflowFilename(
+                for: asset.sourceURL,
+                suggestedFilename: suggestedFilename,
+                requiresMKV: isSubtitleMux
+            )
+        } else if isSubtitleCleanup {
             panel.nameFieldStringValue = OutputNamingPolicy.cleanedSubtitleFilename(
                 for: asset.sourceURL)
         } else if isSubtitleMux {
@@ -2299,5 +2307,16 @@ enum OutputNamingPolicy {
 
     static func trimmedFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Trimmed.mkv"
+    }
+
+    static func savedWorkflowFilename(
+        for sourceURL: URL,
+        suggestedFilename reviewedSuggestion: String?,
+        requiresMKV: Bool
+    ) -> String {
+        guard let reviewedSuggestion else { return suggestedFilename(for: sourceURL) }
+        guard requiresMKV else { return reviewedSuggestion }
+        return URL(fileURLWithPath: reviewedSuggestion)
+            .deletingPathExtension().lastPathComponent + ".mkv"
     }
 }

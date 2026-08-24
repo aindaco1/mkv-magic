@@ -503,11 +503,11 @@ exist only in the active plan and feed the external subtitle's private temporary
 payload. They do not create a cleaned sidecar or another remux. SRT and ASS/SSA
 payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
-still match the reviewed revisions. Workflow schema v3 persists only the cleanup
+still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier. v1 and v2 workflows migrate without changing recipe or step
-identity, order, enablement, or action semantics; a file cannot claim an older
-schema while using a newer action.
+identifier—and current schema v4 preserves that boundary. v1-v3 workflows
+migrate without changing recipe or step identity, order, enablement, or action
+semantics; a file cannot claim an older schema while using a newer action.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1106,8 +1106,21 @@ of the portable recipe, and fuses it with granular cleanup and title removal in
 one verified output transaction. A dependent subtitle text-cleanup card now
 reuses the deterministic cue review and feeds only accepted changes into that
 same remux. The review is ephemeral and both the temporary and committed MKV
-must pass extracted SRT or ASS/SSA payload comparison. Broader conditions and
-filename cleanup remain open.
+must pass extracted SRT or ASS/SSA payload comparison.
+
+The portable filename card now recognizes common dot/underscore-separated movie
+release names and presents a simple `Title (Year)` output suggestion in the
+immutable plan review. The suggestion never renames a source and remains
+editable in the Save panel. When it accompanies media cards, it adds no media
+pass. When it is the only applicable card, the plan explicitly declares a
+clone-based unchanged file copy, reopens the temporary and committed MKV, and
+compares size, container, timing/bitrate, tracks, metadata/tags, canonical
+chapters, attachments, and segment identity. Selecting the separate
+Trash-after-verified-success option makes this a recoverable rename-shaped
+workflow; leaving it off preserves both files. Workflow schema v4 stores only
+the naming intent, never a source or generated filename, and strictly migrates
+v1-v3 without allowing an older schema to claim the new action. Broader
+conditions remain open.
 
 The production-queue persistence and scheduling foundation is implemented as a
 separate contract from sanitized History. A private versioned document stores

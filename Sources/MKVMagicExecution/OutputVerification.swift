@@ -52,6 +52,48 @@ public struct SegmentTitleOutputVerifier: Sendable {
     }
 }
 
+public struct UnchangedCopyOutputVerifier: Sendable {
+    public init() {}
+
+    public func verify(original: MediaAsset, output: MediaAsset) throws {
+        guard output.fileSize == original.fileSize, output.fileSize ?? 0 > 0 else {
+            throw OutputVerificationError.emptyOutput
+        }
+        guard output.container == original.container,
+            output.formatLongName == original.formatLongName
+        else {
+            throw OutputVerificationError.containerChanged
+        }
+        guard output.duration == original.duration,
+            output.bitrate == original.bitrate
+        else {
+            throw OutputVerificationError.durationChanged
+        }
+        guard output.tracks == original.tracks else {
+            throw OutputVerificationError.tracksChanged
+        }
+        guard output.metadata == original.metadata,
+            output.globalTagCount == original.globalTagCount,
+            output.trackTagCount == original.trackTagCount,
+            output.muxingApplication == original.muxingApplication,
+            output.writingApplication == original.writingApplication
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+        guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
+            output.chapterEntryCount == original.chapterEntryCount
+        else {
+            throw OutputVerificationError.chaptersChanged
+        }
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        guard output.segmentUID == original.segmentUID else {
+            throw OutputVerificationError.segmentIdentityChanged
+        }
+    }
+}
+
 public struct TrackMetadataOutputVerifier: Sendable {
     public init() {}
 
