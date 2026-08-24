@@ -62,6 +62,15 @@ jobs:
           git config gpg.ssh.allowedSignersFile \
             "$GITHUB_WORKSPACE/.github/allowed_signers"
           ./scripts/release/validate-tag.sh "$RELEASE_TAG"
+          if [[ "$GITHUB_REF" != "refs/tags/$RELEASE_TAG" ]]; then
+            echo "release workflow must be triggered from the exact release tag" >&2
+            exit 1
+          fi
+          release_commit="$(git rev-parse "$RELEASE_TAG^{commit}")"
+          if [[ "$GITHUB_SHA" != "$release_commit" ]]; then
+            echo "release workflow source does not match the release tag commit" >&2
+            exit 1
+          fi
 
       - name: Install source and runtime-build dependencies
         run: brew install cmake meson ninja pkgconf ripgrep shellcheck
@@ -194,28 +203,32 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          download_root="$RUNNER_TEMP/mkv-magic-downloaded-release"
+          download_root="$RUNNER_TEMP/mkv-magic-downloaded-draft"
           mkdir "$download_root"
           gh release download "$RELEASE_TAG" --dir "$download_root"
-          (cd "$download_root" && shasum -a 256 -c SHA256SUMS)
-          for artifact in \
-            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.zip" \
-            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg" \
-            "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-corresponding-source.zip" \
-            "$download_root/appcast.xml" \
-            "$download_root/SBOM.cdx.json"
-          do
-            gh attestation verify "$artifact" --repo "$GITHUB_REPOSITORY"
-          done
-          MKV_MAGIC_REQUIRE_DISTRIBUTION=1 \
-          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
-            ./scripts/release/verify-dmg.sh \
-              "$download_root/MKV-Magic-$MKV_MAGIC_VERSION-universal.dmg"
+          MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
+            ./scripts/release/verify-downloaded-release.sh \
+              "$download_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
 
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release edit "$RELEASE_TAG" --draft=false --latest
+
+      - name: Re-download and verify published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          public_root="$RUNNER_TEMP/mkv-magic-downloaded-public"
+          mkdir "$public_root"
+          release_state="$(gh release view "$RELEASE_TAG" --json isDraft,tagName)"
+          jq -e --arg tag "$RELEASE_TAG" \
+            '.isDraft == false and .tagName == $tag' \
+            <<< "$release_state" >/dev/null
+          gh release download "$RELEASE_TAG" --dir "$public_root"
+          MKV_MAGIC_EXPECTED_SOURCE_DIGEST="$GITHUB_SHA" \
+            ./scripts/release/verify-downloaded-release.sh \
+              "$public_root" "$MKV_MAGIC_VERSION" "$GITHUB_REPOSITORY"
 
       - name: Remove temporary signing material
         if: always()

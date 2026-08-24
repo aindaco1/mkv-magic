@@ -421,6 +421,12 @@ guidance, and privacy-safe support evidence, see the canonical
 [troubleshooting guide](docs/TROUBLESHOOTING.md). The same guide is embedded in
 the app and published beside every release.
 
+The protected release path now applies the same exact-asset, checksum,
+notarization-evidence, size-evidence, provenance, Gatekeeper, and bundled-tool
+verifier to both the downloaded draft candidate and a fresh download of the
+published release. See
+[docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md](docs/releases/M9_PUBLISHED_RELEASE_READBACK_SLICE.md).
+
 ## Design promises
 
 - Avoid transcoding whenever metadata editing, remuxing, appending, or stream

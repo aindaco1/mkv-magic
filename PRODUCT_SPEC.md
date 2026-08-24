@@ -1401,6 +1401,13 @@ evidence. The exact document ships inside the app and as a checksummed release
 asset; the offline Help window carries its shortest recovery path without
 creating a second competing guide.
 
+The published-release continuation uses one fail-closed downloaded-artifact
+verifier before and after publication. It requires the exact checksummed asset
+set, accepted notarization evidence, internally consistent size evidence, and
+provenance bound to the release workflow, tag, repository, hosted runner, and
+commit. The public release is downloaded into a new directory and reverified;
+successful draft readback alone is not release acceptance.
+
 Gate: downloaded artifacts pass Gatekeeper, launch, locate bundled tools, process fixtures, and verify outputs on Intel and Apple Silicon.
 
 ## 13. Initial implementation backlog
