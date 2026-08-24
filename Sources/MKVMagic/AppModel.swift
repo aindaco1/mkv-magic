@@ -995,6 +995,111 @@ final class AppModel {
         ).preview(source: source, trackUID: trackUID)
     }
 
+    func previewMatroskaAttachmentExtraction(
+        in source: MediaAsset,
+        attachmentUID: UInt64
+    ) async throws -> MatroskaAttachmentExtractionPreview {
+        let accessed = source.sourceURL.startAccessingSecurityScopedResource()
+        defer {
+            if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
+        }
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        return try await MatroskaAttachmentExtractionExecutor(
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            runner: runner,
+            inspector: inspector
+        ).preview(source: source, attachmentUID: attachmentUID)
+    }
+
+    @discardableResult
+    func executeMatroskaAttachmentExtraction(
+        preview: MatroskaAttachmentExtractionPreview,
+        destinationURL: URL
+    ) async throws -> MatroskaAttachmentExtractionResult {
+        let source = preview.source
+        let scopedURLs = [source.sourceURL, destinationURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+
+        state = .executing("Extracting and verifying one attachment…")
+        didChange?()
+        var historyExecution: HistoryExecution?
+        do {
+            let execution = try await beginHistory(
+                inputs: [Self.historyInput(source)],
+                outputDisplayName: destinationURL.lastPathComponent,
+                workflowID: BuiltInWorkflowCatalog.attachmentExtraction,
+                workflowName: "Extract Matroska attachment",
+                privacySafePlan: MediaJobPlanFacts(
+                    videoEncodeGenerations: 0,
+                    audioTracksEncoded: 0
+                ),
+                inspectionMessage: "Used the completed Matroska media inspection.",
+                planningMessage:
+                    "Zero video and audio encodes; extract one selected attachment exactly.",
+                runningMessage:
+                    "Repeating the reviewed attachment extraction with bundled mkvextract in a private workspace."
+            )
+            historyExecution = execution
+            let catalog = try makeToolCatalog()
+            let runner = FoundationCommandRunner()
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let result = try await MatroskaAttachmentExtractionExecutor(
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            ).execute(
+                preview: preview,
+                destinationURL: destinationURL,
+                onStage: { [weak self] stage in
+                    await MainActor.run {
+                        guard let self else { return }
+                        self.state = .executing(
+                            stage == .verifying
+                                ? "Verifying exact attachment bytes…"
+                                : "Saving and reopening the verified attachment…"
+                        )
+                        self.didChange?()
+                    }
+                    try await Self.record(
+                        stage,
+                        jobID: execution.jobID,
+                        using: execution.recorder
+                    )
+                }
+            )
+            await finishHistory(
+                execution,
+                destinationURL: result.outputURL,
+                successMessage:
+                    "Verified the exact extracted attachment before commit and after reopen while leaving the MKV unchanged."
+            )
+            return result
+        } catch {
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
+            throw error
+        }
+    }
+
     @discardableResult
     func executeMatroskaTextSubtitleExtraction(
         preview: MatroskaTextSubtitleExtractionPreview,
@@ -2884,6 +2989,11 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         if let executionError = error as? MatroskaTextSubtitleExtractionError,
+            case .committedOutputAuditFailed = executionError
+        {
+            return "Output committed, but its final reopen audit failed."
+        }
+        if let executionError = error as? MatroskaAttachmentExtractionError,
             case .committedOutputAuditFailed = executionError
         {
             return "Output committed, but its final reopen audit failed."

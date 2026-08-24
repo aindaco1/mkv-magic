@@ -510,7 +510,21 @@ directory. Save repeats those checks and the extraction, requires exact byte and
 parsed timing/style equality, writes a separate sidecar in the original text
 format, and audits it before commit and after reopen. The source remains
 byte-unchanged and History records zero video/audio encodes. Image subtitle
-artifacts and general attachment/track extraction remain separate work.
+artifacts and general track extraction remain separate work.
+
+**Attachments…** accepts an inspected Matroska source containing one or more
+non-empty attachments no larger than 512 MiB, with stable unique UIDs and
+unambiguous nonnegative attachment IDs. A single attachment proceeds directly;
+multiple attachments use a readable filename, MIME type, and size chooser.
+Review re-inspects the complete media snapshot, binds the source revision and
+selected attachment identity, and streams a private bundled-`mkvextract`
+result into a byte-count and SHA-256 fact. Save repeats every check and the
+extraction, requires exact size and digest equality, and audits the separate
+regular file before commit and after reopen. Suggested embedded filenames are
+path-contained, control-character-free, and byte-bounded. The source remains
+byte-unchanged and History records zero video/audio encodes. Adding, replacing,
+removing, or batch-extracting attachments and exporting tags remain separate
+work.
 
 **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable

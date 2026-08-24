@@ -217,6 +217,10 @@ final class MediaModelTests: XCTestCase {
             BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.textSubtitleExtraction),
             .textSubtitleExtraction
         )
+        XCTAssertEqual(
+            BuiltInWorkflowCatalog.kind(for: BuiltInWorkflowCatalog.attachmentExtraction),
+            .attachmentExtraction
+        )
     }
 
     func testEnglishLibraryCleanupSuggestionsPreserveAudioCommentaryAndOnlyUsefulSubtitle() {

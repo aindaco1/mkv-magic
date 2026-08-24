@@ -50,6 +50,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
     case remuxToMKV
     case timedTextSubtitleConversion
     case textSubtitleExtraction
+    case attachmentExtraction
     case savedOrUnknown
 
     init(workflowID: UUID) {
@@ -74,6 +75,7 @@ public enum SupportWorkflowKind: String, Codable, CaseIterable, Hashable, Sendab
         case .remuxToMKV: self = .remuxToMKV
         case .timedTextSubtitleConversion: self = .timedTextSubtitleConversion
         case .textSubtitleExtraction: self = .textSubtitleExtraction
+        case .attachmentExtraction: self = .attachmentExtraction
         }
     }
 }

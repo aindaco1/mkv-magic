@@ -53,6 +53,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
         case timedTextSubtitle(TimedTextSubtitleConversionPreview)
         case textSubtitleExtraction(MatroskaTextSubtitleExtractionPreview)
+        case attachmentExtraction(MatroskaAttachmentExtractionPreview)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
         case remuxToMKV(MKVRemuxPreview)
     }
@@ -126,6 +127,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         title: "Convert MP4 Subtitle…", target: nil, action: nil)
     private let addSubtitleButton = NSButton(title: "Add Subtitle…", target: nil, action: nil)
     private let chaptersButton = NSButton(title: "Chapters…", target: nil, action: nil)
+    private let attachmentsButton = NSButton(title: "Attachments…", target: nil, action: nil)
     private let trimButton = NSButton(title: "Trim…", target: nil, action: nil)
     private let remuxButton = NSButton(title: "Remux to MKV…", target: nil, action: nil)
     private let convertButton = NSButton(title: "Convert Video…", target: nil, action: nil)
@@ -148,6 +150,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
+    private var attachmentPickerWindowController: AttachmentPickerWindowController?
     private var chapterStudioWindowController: ChapterStudioWindowController?
     private var trimWindowController: TrimWindowController?
     private var trimProgressWindowController: VerifiedOutputProgressWindowController?
@@ -405,6 +408,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         chaptersButton.target = self
         chaptersButton.action = #selector(editChapters)
         chaptersButton.isEnabled = false
+        attachmentsButton.target = self
+        attachmentsButton.action = #selector(extractMatroskaAttachment)
+        attachmentsButton.isEnabled = false
+        attachmentsButton.setAccessibilityHelp(
+            "Extract one embedded Matroska attachment into a separate exact verified file without changing the MKV."
+        )
         trimButton.target = self
         trimButton.action = #selector(trimFile)
         trimButton.isEnabled = false
@@ -431,7 +440,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         ])
         subtitleConversionButtons.orientation = .horizontal
         subtitleConversionButtons.spacing = 8
-        let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
+        let chapterButtons = NSStackView(views: [chaptersButton, attachmentsButton, trimButton])
         chapterButtons.orientation = .horizontal
         chapterButtons.spacing = 8
         let videoButtons = NSStackView(views: [remuxButton, convertButton])
@@ -1765,6 +1774,80 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    @objc private func extractMatroskaAttachment() {
+        guard let asset = selectedAsset,
+            let parentWindow = view.window
+        else { return }
+        let attachments = MatroskaAttachmentExtractionPolicy.extractableAttachments(in: asset)
+        guard !attachments.isEmpty else { return }
+        clearPendingChange()
+        if attachments.count == 1, let attachmentUID = attachments[0].uid {
+            previewMatroskaAttachmentExtraction(asset: asset, attachmentUID: attachmentUID)
+            return
+        }
+        let controller = AttachmentPickerWindowController(attachments: attachments)
+        attachmentPickerWindowController = controller
+        controller.beginSheet(for: parentWindow) { [weak self] attachment in
+            guard let self else { return }
+            self.attachmentPickerWindowController = nil
+            guard let attachmentUID = attachment?.uid else {
+                self.refresh()
+                return
+            }
+            guard self.selectedAsset?.id == asset.id else {
+                self.clearPendingChange()
+                self.refresh()
+                return
+            }
+            self.previewMatroskaAttachmentExtraction(
+                asset: asset,
+                attachmentUID: attachmentUID
+            )
+        }
+    }
+
+    private func previewMatroskaAttachmentExtraction(
+        asset: MediaAsset,
+        attachmentUID: UInt64
+    ) {
+        statusLabel.stringValue = "Extracting attachment privately for review…"
+        attachmentsButton.isEnabled = false
+        Task {
+            do {
+                let preview = try await model.previewMatroskaAttachmentExtraction(
+                    in: asset,
+                    attachmentUID: attachmentUID
+                )
+                guard selectedAsset?.id == asset.id else {
+                    clearPendingChange()
+                    refresh()
+                    return
+                }
+                pendingChange = .attachmentExtraction(preview)
+                pendingAssetID = asset.id
+                impactLabel.stringValue =
+                    "0 video/audio encodes • exact attachment • \(formatBytes(preview.byteCount))"
+                statusLabel.stringValue = "Attachment extraction plan ready"
+                runButton.isEnabled = true
+                runButton.toolTip =
+                    "Repeat the extraction, require the exact reviewed bytes, then commit and reopen a new attachment file."
+            } catch {
+                attachmentsButton.isEnabled =
+                    !MatroskaAttachmentExtractionPolicy.extractableAttachments(in: asset).isEmpty
+                AccessibleStatusPresentation.present(
+                    UserFacingErrorPresentation.message(
+                        failure: "Could not prepare the attachment extraction.",
+                        recovery: "The MKV is unchanged; inspect it again and retry.",
+                        error: error
+                    ),
+                    in: statusLabel,
+                    returningFocusTo: attachmentsButton
+                )
+                clearPendingChange()
+            }
+        }
+    }
+
     private func previewTimedTextSubtitleConversion(asset: MediaAsset, trackID: Int) {
         statusLabel.stringValue = "Converting MP4 timed text privately for review…"
         convertTimedTextButton.isEnabled = false
@@ -2236,6 +2319,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         preview: preview,
                         destinationURL: destination.url
                     ).outputURL
+                case .attachmentExtraction(let preview):
+                    outputURL = try await model.executeMatroskaAttachmentExtraction(
+                        preview: preview,
+                        destinationURL: destination.url
+                    ).outputURL
                 case .chapters(let preview, let desired):
                     outputURL = try await model.editChapters(
                         preview: preview,
@@ -2335,6 +2423,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             isTextSubtitleExtraction = false
         }
+        let isAttachmentExtraction: Bool
+        if case .attachmentExtraction = pendingChange {
+            isAttachmentExtraction = true
+        } else {
+            isAttachmentExtraction = false
+        }
         let isSubtitleMux: Bool
         if case .externalSubtitle = pendingChange {
             isSubtitleMux = true
@@ -2360,8 +2454,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             requiresMKVOutput = false
         }
         panel.title =
-            isSubtitleCleanup || isTimedTextConversion || isTextSubtitleExtraction
-            ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"
+            isAttachmentExtraction
+            ? "Save Verified Attachment Copy"
+            : (isSubtitleCleanup || isTimedTextConversion || isTextSubtitleExtraction
+                ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy")
         panel.prompt = prompt
         panel.canCreateDirectories = true
         if case .savedWorkflow(let prepared) = pendingChange,
@@ -2378,6 +2474,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 track: preview.track,
                 format: preview.format,
                 trackCount: EmbeddedTextSubtitlePolicy.extractableTracks(in: asset).count
+            )
+        } else if case .attachmentExtraction(let preview) = pendingChange {
+            panel.nameFieldStringValue = OutputNamingPolicy.extractedAttachmentFilename(
+                for: preview.attachment
             )
         } else if case .timedTextSubtitle(let preview) = pendingChange {
             panel.nameFieldStringValue = OutputNamingPolicy.convertedTimedTextFilename(
@@ -2399,7 +2499,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
         let outputExtension: String
-        if case .textSubtitleExtraction(let preview) = pendingChange {
+        if case .attachmentExtraction(let preview) = pendingChange {
+            outputExtension =
+                URL(
+                    fileURLWithPath: OutputNamingPolicy.extractedAttachmentFilename(
+                        for: preview.attachment
+                    )
+                ).pathExtension
+        } else if case .textSubtitleExtraction(let preview) = pendingChange {
             outputExtension = preview.format.filenameExtension
         } else if isTimedTextConversion {
             outputExtension = "ass"
@@ -2411,7 +2518,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             outputExtension = asset.sourceURL.pathExtension
         }
         panel.allowedContentTypes = [UTType(filenameExtension: outputExtension) ?? .data]
-        panel.allowsOtherFileTypes = false
+        panel.allowsOtherFileTypes = isAttachmentExtraction
         panel.isExtensionHidden = false
         var sourceDispositionCheckbox: NSButton?
         if case .savedWorkflow(let prepared) = pendingChange {
@@ -2440,6 +2547,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         convertTimedTextButton.isEnabled = false
         addSubtitleButton.isEnabled = false
         chaptersButton.isEnabled = false
+        attachmentsButton.isEnabled = false
         trimButton.isEnabled = false
         remuxButton.isEnabled = false
         convertButton.isEnabled = false
@@ -2462,6 +2570,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             TimedTextSubtitleConversionPolicy.canOffer(for: asset)
         addSubtitleButton.isEnabled = Self.canAddExternalSubtitle(to: asset)
         chaptersButton.isEnabled = MatroskaEditingPolicy.supports(asset)
+        attachmentsButton.isEnabled =
+            !MatroskaAttachmentExtractionPolicy.extractableAttachments(in: asset).isEmpty
         trimButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
         remuxButton.isEnabled = MKVRemuxPlanner().canOffer(for: asset)
         convertButton.isEnabled = TrimPresentationPolicy.canOfferTrim(for: asset)
@@ -2561,6 +2671,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             convertTimedTextButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
+            attachmentsButton.isEnabled = false
             trimButton.isEnabled = false
             remuxButton.isEnabled = false
             convertButton.isEnabled = false
@@ -2590,6 +2701,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             convertTimedTextButton.isEnabled = false
             addSubtitleButton.isEnabled = false
             chaptersButton.isEnabled = false
+            attachmentsButton.isEnabled = false
             trimButton.isEnabled = false
             remuxButton.isEnabled = false
             convertButton.isEnabled = false
@@ -2685,6 +2797,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             chaptersButton.isEnabled
             ? "Create and edit exact nested Matroska chapters without encoding."
             : "Chapter Studio currently requires an inspected Matroska file."
+        attachmentsButton.isEnabled =
+            !MatroskaAttachmentExtractionPolicy.extractableAttachments(in: asset).isEmpty
+        attachmentsButton.toolTip =
+            attachmentsButton.isEnabled
+            ? "Choose one bounded Matroska attachment and save an exact verified file without changing the MKV."
+            : "Attachment extraction requires an inspected Matroska file with a stable, non-empty attachment up to 512 MB."
         trimButton.isEnabled =
             !isPreparingVideoProcessing && TrimPresentationPolicy.canOfferTrim(for: asset)
         trimButton.toolTip =
@@ -2947,6 +3065,24 @@ enum OutputNamingPolicy {
         return "\(base) — Subtitle\(trackSuffix).\(format.filenameExtension)"
     }
 
+    static func extractedAttachmentFilename(for attachment: MediaAttachment) -> String {
+        let invalid = CharacterSet.controlCharacters.union(
+            CharacterSet(charactersIn: "/\\:")
+        )
+        let replaced = attachment.filename.unicodeScalars.map { scalar in
+            invalid.contains(scalar) ? "-" : String(scalar)
+        }.joined()
+        let trimmed = replaced.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
+        )
+        let fallback = "Attachment \(attachment.id).bin"
+        let hasAlphanumeric = trimmed.unicodeScalars.contains {
+            CharacterSet.alphanumerics.contains($0)
+        }
+        let candidate = hasAlphanumeric ? trimmed : fallback
+        return truncateAttachmentFilename(candidate, maximumUTF8Bytes: 200)
+    }
+
     static func subtitledFilename(for sourceURL: URL) -> String {
         "\(sourceURL.deletingPathExtension().lastPathComponent) — Subtitled.mkv"
     }
@@ -2980,5 +3116,29 @@ enum OutputNamingPolicy {
         guard requiresMKV else { return reviewedSuggestion }
         return URL(fileURLWithPath: reviewedSuggestion)
             .deletingPathExtension().lastPathComponent + ".mkv"
+    }
+
+    private static func truncateAttachmentFilename(
+        _ filename: String,
+        maximumUTF8Bytes: Int
+    ) -> String {
+        guard filename.utf8.count > maximumUTF8Bytes else { return filename }
+        let fileURL = URL(fileURLWithPath: filename)
+        let rawExtension = fileURL.pathExtension
+        let suffix = rawExtension.isEmpty ? "" : ".\(rawExtension)"
+        let keptSuffix = suffix.utf8.count <= 48 ? suffix : ""
+        let rawBase =
+            keptSuffix.isEmpty
+            ? filename : fileURL.deletingPathExtension().lastPathComponent
+        let budget = maximumUTF8Bytes - keptSuffix.utf8.count
+        var base = ""
+        for character in rawBase {
+            guard base.utf8.count + String(character).utf8.count <= budget else { break }
+            base.append(character)
+        }
+        let usableBase = base.trimmingCharacters(
+            in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: "."))
+        )
+        return (usableBase.isEmpty ? "Attachment" : usableBase) + keptSuffix
     }
 }

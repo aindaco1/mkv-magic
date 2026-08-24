@@ -112,7 +112,7 @@ public struct MatroskaTextSubtitleExtractionExecutor<
         trackUID: UInt64
     ) async throws -> MatroskaTextSubtitleExtractionPreview {
         let current = try await inspector.inspect(source.sourceURL)
-        guard MatroskaSubtitleAssetSnapshot(current) == MatroskaSubtitleAssetSnapshot(source) else {
+        guard MatroskaAssetSnapshot(current) == MatroskaAssetSnapshot(source) else {
             throw MatroskaTextSubtitleExtractionError.staleSource
         }
         let track = try selectedTrack(in: current, trackUID: trackUID)
@@ -151,8 +151,7 @@ public struct MatroskaTextSubtitleExtractionExecutor<
         }
         let current = try await inspector.inspect(preview.source.sourceURL)
         guard
-            MatroskaSubtitleAssetSnapshot(current)
-                == MatroskaSubtitleAssetSnapshot(preview.source)
+            MatroskaAssetSnapshot(current) == MatroskaAssetSnapshot(preview.source)
         else {
             throw MatroskaTextSubtitleExtractionError.staleSource
         }

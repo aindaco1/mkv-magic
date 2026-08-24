@@ -380,6 +380,98 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
+    func testExtractsMatroskaAttachmentExactlyAndRecordsZeroEncodeHistory() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let fixtureRoot = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-app-attachment-extraction-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: fixtureRoot, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: fixtureRoot) }
+        let subtitleURL = fixtureRoot.appendingPathComponent("source.srt")
+        let attachmentURL = fixtureRoot.appendingPathComponent("payload.bin")
+        let sourceURL = fixtureRoot.appendingPathComponent("Feature.mkv")
+        let destinationURL = fixtureRoot.appendingPathComponent("Poster Artwork.bin")
+        let payload = Data([0, 1, 2, 3, 255, 128, 64, 0, 9, 8, 7, 6])
+        try Data("1\n00:00:00,000 --> 00:00:01,000\nFixture\n".utf8).write(
+            to: subtitleURL
+        )
+        try payload.write(to: attachmentURL)
+        let create = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvmerge),
+                arguments: [
+                    "--output", sourceURL.path,
+                    "--attachment-name", "Poster Artwork.bin",
+                    "--attachment-mime-type", "application/octet-stream",
+                    "--attachment-description", "Binary regression payload",
+                    "--attach-file", attachmentURL.path,
+                    subtitleURL.path,
+                ],
+                timeout: 120
+            )
+        )
+        XCTAssertEqual(create.exitCode, 0, create.standardError.text)
+        let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+
+        let applicationSupport = fixtureRoot.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(
+            at: applicationSupport,
+            withIntermediateDirectories: false
+        )
+        let historyStore = try AppHistoryLocation.makeStore(
+            applicationSupportURL: applicationSupport
+        )
+        let model = AppModel(historyRecorderFactory: { historyStore })
+        await model.addFiles([sourceURL])
+        let source = try XCTUnwrap(model.assets.first)
+        let attachment = try XCTUnwrap(
+            MatroskaAttachmentExtractionPolicy.extractableAttachments(in: source).first
+        )
+        XCTAssertEqual(attachment.filename, "Poster Artwork.bin")
+        XCTAssertEqual(attachment.mimeType, "application/octet-stream")
+        XCTAssertEqual(attachment.size, Int64(payload.count))
+        let attachmentUID = try XCTUnwrap(attachment.uid)
+
+        let preview = try await model.previewMatroskaAttachmentExtraction(
+            in: source,
+            attachmentUID: attachmentUID
+        )
+        XCTAssertEqual(preview.byteCount, Int64(payload.count))
+        XCTAssertEqual(preview.attachment, attachment)
+        let result = try await model.executeMatroskaAttachmentExtraction(
+            preview: preview,
+            destinationURL: destinationURL
+        )
+
+        XCTAssertEqual(result.outputURL, destinationURL)
+        XCTAssertEqual(result.byteCount, Int64(payload.count))
+        XCTAssertEqual(try Data(contentsOf: destinationURL), payload)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        let records = try await historyStore.load()
+        let record = try XCTUnwrap(records.first)
+        XCTAssertEqual(record.workflowID, BuiltInWorkflowCatalog.attachmentExtraction)
+        XCTAssertEqual(record.workflowName, "Extract Matroska attachment")
+        XCTAssertEqual(
+            record.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        XCTAssertEqual(
+            record.events.map(\.state),
+            [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
+        )
+    }
+
+    @MainActor
     func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")

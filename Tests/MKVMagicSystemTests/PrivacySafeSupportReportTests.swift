@@ -27,6 +27,10 @@ final class PrivacySafeSupportReportTests: XCTestCase {
             SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.textSubtitleExtraction),
             .textSubtitleExtraction
         )
+        XCTAssertEqual(
+            SupportWorkflowKind(workflowID: BuiltInWorkflowCatalog.attachmentExtraction),
+            .attachmentExtraction
+        )
     }
 
     override func setUpWithError() throws {

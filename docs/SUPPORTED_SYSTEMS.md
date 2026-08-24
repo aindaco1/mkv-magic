@@ -73,6 +73,14 @@ stable track UID through commit, and reopens the separate same-format sidecar.
 The MKV remains unchanged. PGS and VobSub extraction is not included in this
 single-file text-subtitle path.
 
+**Attachments…** supports non-empty embedded Matroska attachments up to 512
+MiB independently of video-encoder hardware. Bundled `mkvextract` writes one
+selected attachment privately; MKV Magic repeats the extraction, compares the
+exact byte count and streaming SHA-256 digest, binds the source revision and
+stable attachment UID through commit, and reopens the separate regular file.
+The MKV remains unchanged. Adding, replacing, removing, batch-extracting, and
+workflow-driven attachment operations are not included in this direct action.
+
 **Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
 M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg
 converts one selected track to a separate UTF-8 ASS file; MKV Magic repeats and

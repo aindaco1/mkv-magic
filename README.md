@@ -105,6 +105,16 @@ snapshot, bind the source revision and stable track UID, independently extract
 and parse the bounded text payload, and require the bytes plus timing/style
 document to agree. The final sidecar is audited before commit and after reopen,
 History records zero video/audio encodes, and the MKV is never changed.
+For inspected Matroska files, **Attachments…** copies one selected embedded
+font, image, or other regular attachment into a separate exact file. One
+eligible attachment proceeds directly; multiple attachments use a readable
+filename, type, and size chooser. Review and Save each re-inspect the complete
+media snapshot, bind the source revision plus stable attachment UID, and run
+bundled `mkvextract` in private storage. The repeated extraction must match the
+reviewed byte count and streaming SHA-256 digest; the final file is checked
+before commit and after reopen. Attachments must be non-empty and no larger
+than 512 MiB. History records zero video/audio encodes and the MKV is never
+changed.
 For inspected MP4, M4V, and MOV files, **Convert MP4 Subtitle…** exposes each
 TX3G/`mov_text` track in a readable chooser and converts one selected track into
 a separate editable UTF-8 ASS sidecar. Review runs bundled FFmpeg privately and

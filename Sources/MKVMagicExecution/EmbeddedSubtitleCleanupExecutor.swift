@@ -401,7 +401,7 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
             throw EmbeddedSubtitleCleanupError.unsupportedSource
         }
         let current = try await inspector.inspect(source.sourceURL)
-        guard MatroskaSubtitleAssetSnapshot(current) == MatroskaSubtitleAssetSnapshot(source) else {
+        guard MatroskaAssetSnapshot(current) == MatroskaAssetSnapshot(source) else {
             throw EmbeddedSubtitleCleanupError.staleSource
         }
         let track = try Self.selectedTrack(in: current, trackUID: trackUID)
@@ -443,7 +443,7 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         }
         let current = try await inspector.inspect(preview.source.sourceURL)
         guard
-            MatroskaSubtitleAssetSnapshot(current) == MatroskaSubtitleAssetSnapshot(preview.source),
+            MatroskaAssetSnapshot(current) == MatroskaAssetSnapshot(preview.source),
             try EmbeddedSubtitleSourceRevision.read(current.sourceURL)
                 == Self.sourceRevision(in: preview)
         else {

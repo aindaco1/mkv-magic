@@ -507,6 +507,37 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    func testExtractedAttachmentOutputNamePreservesUsefulNamesAndBlocksPaths() {
+        XCTAssertEqual(
+            OutputNamingPolicy.extractedAttachmentFilename(
+                for: MediaAttachment(id: 4, filename: "Poster Artwork.png")
+            ),
+            "Poster Artwork.png"
+        )
+        for unsafe in ["../../secret.ttf", "folder\\secret.otf", ".hidden\0:name.bin"] {
+            let output = OutputNamingPolicy.extractedAttachmentFilename(
+                for: MediaAttachment(id: 7, filename: unsafe)
+            )
+            XCTAssertFalse(output.contains("/"))
+            XCTAssertFalse(output.contains("\\"))
+            XCTAssertFalse(output.contains(":"))
+            XCTAssertFalse(
+                output.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) })
+            XCTAssertEqual(URL(fileURLWithPath: output).lastPathComponent, output)
+        }
+        XCTAssertEqual(
+            OutputNamingPolicy.extractedAttachmentFilename(
+                for: MediaAttachment(id: 9, filename: "...\n")
+            ),
+            "Attachment 9.bin"
+        )
+        let bounded = OutputNamingPolicy.extractedAttachmentFilename(
+            for: MediaAttachment(id: 10, filename: String(repeating: "🎞", count: 100) + ".png")
+        )
+        XCTAssertLessThanOrEqual(bounded.utf8.count, 200)
+        XCTAssertTrue(bounded.hasSuffix(".png"))
+    }
+
     func testSubtitledOutputNameAlwaysUsesMKV() {
         XCTAssertEqual(
             OutputNamingPolicy.subtitledFilename(
@@ -3255,6 +3286,49 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testAttachmentPickerUsesReadableIdentityTypeAndSize() throws {
+        let attachment = MediaAttachment(
+            id: 4,
+            filename: "Poster Artwork.png",
+            mimeType: "image/png",
+            size: 12,
+            description: "Poster",
+            uid: 42
+        )
+        let title = AttachmentPickerViewController.title(attachment)
+        XCTAssertTrue(title.contains("#4"))
+        XCTAssertTrue(title.contains("Poster Artwork.png"))
+        XCTAssertTrue(title.contains("image/png"))
+        XCTAssertTrue(title.contains("12 bytes"))
+        XCTAssertLessThan(
+            AttachmentPickerViewController.title(
+                MediaAttachment(
+                    id: 8,
+                    filename: String(repeating: "x", count: 10_000),
+                    mimeType: String(repeating: "m", count: 10_000),
+                    size: 12,
+                    uid: 43
+                )
+            ).count,
+            300
+        )
+        let controller = AttachmentPickerWindowController(attachments: [attachment])
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+
+        XCTAssertEqual(window.title, "Choose Attachment to Extract")
+        XCTAssertTrue(window.contentViewController is AttachmentPickerViewController)
+        XCTAssertEqual(content.frame.size.width, 620, accuracy: 1)
+        XCTAssertEqual(content.frame.size.height, 280, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 540)
+        XCTAssertEqual(window.minSize.height, 260)
+        XCTAssertEqual(window.initialFirstResponder?.accessibilityLabel(), "Matroska attachment")
+        let labels = descendants(in: content).compactMap { $0.accessibilityLabel() }
+        XCTAssertTrue(labels.contains("Attachment selection status"))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Review Extraction" })
+    }
+
+    @MainActor
     func testEmbeddedSRTUsesSharedReviewWindowAndTrackLanguageExplanation() throws {
         let cue = SubRipCue(
             id: 0,
@@ -3607,6 +3681,11 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertTrue(
             buttons(in: controller.view).contains { button in
+                button.title == "Attachments…" && !button.isEnabled
+            }
+        )
+        XCTAssertTrue(
+            buttons(in: controller.view).contains { button in
                 button.title == "Remux to MKV…" && !button.isEnabled
             }
         )
@@ -3623,6 +3702,15 @@ final class AppPolicyTests: XCTestCase {
                 button.title == "Verify & Run" && !button.isEnabled
             }
         )
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_MAIN_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            let window = NSWindow(contentViewController: controller)
+            window.title = "MKV Magic"
+            window.setContentSize(NSSize(width: 1_080, height: 680))
+            try captureWindow(window: window, content: controller.view, at: capturePath)
+            window.close()
+        }
     }
 
     @MainActor

@@ -2,36 +2,6 @@ import Foundation
 import MKVMagicCore
 import MKVMagicSystem
 
-struct MatroskaSubtitleAssetSnapshot: Equatable {
-    let sourceURL: URL
-    let container: String
-    let duration: MediaTime?
-    let fileSize: Int64?
-    let tracks: [MediaTrack]
-    let chapters: [ChapterNode]
-    let attachments: [MediaAttachment]
-    let metadata: [String: String]
-    let chapterEntryCount: Int?
-    let globalTagCount: Int?
-    let trackTagCount: Int?
-    let segmentUID: String?
-
-    init(_ asset: MediaAsset) {
-        sourceURL = asset.sourceURL
-        container = asset.container
-        duration = asset.duration
-        fileSize = asset.fileSize
-        tracks = asset.tracks
-        chapters = asset.chapters
-        attachments = asset.attachments
-        metadata = asset.metadata
-        chapterEntryCount = asset.chapterEntryCount
-        globalTagCount = asset.globalTagCount
-        trackTagCount = asset.trackTagCount
-        segmentUID = asset.segmentUID
-    }
-}
-
 enum MatroskaTextSubtitleExtractorError: Error, Equatable, Sendable {
     case unsafeRequest
     case unsafeExtractedSubtitle
