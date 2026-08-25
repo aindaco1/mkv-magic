@@ -2360,7 +2360,7 @@ final class AppModel {
         }
     }
 
-    private func executeTextSubtitleCleanup<Result>(
+    private func executeTextSubtitleCleanup<Result: Sendable>(
         sourceURL: URL,
         destinationURL: URL,
         workflowID: UUID,

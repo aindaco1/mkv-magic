@@ -120,7 +120,7 @@ final class VerifiedOutputPipelineTests: XCTestCase {
                 onStage: { _ in }
             )
             XCTFail("Expected the final reopen audit to observe the changed source")
-        } catch let PipelineSourceGuardTestError.committedAuditFailed(reason) {
+        } catch PipelineSourceGuardTestError.committedAuditFailed(let reason) {
             XCTAssertTrue(reason.contains("reviewed source changed"), reason)
         }
 

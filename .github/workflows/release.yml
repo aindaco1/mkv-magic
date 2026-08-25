@@ -87,7 +87,7 @@ jobs:
             "$GITHUB_REPOSITORY"
 
       - name: Install source and runtime-build dependencies
-        run: brew install actionlint cmake meson ninja pkgconf ripgrep shellcheck
+        run: brew install actionlint autoconf cmake meson ninja pkgconf ripgrep shellcheck
 
       - name: Validate source
         run: ./scripts/ci/local-gate.sh

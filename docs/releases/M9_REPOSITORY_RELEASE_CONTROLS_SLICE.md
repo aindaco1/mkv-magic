@@ -35,8 +35,8 @@ Administration-read-only environment secret named
 `RELEASE_CONTROLS_READ_TOKEN`; it must have no write permission and must not be
 a broad personal token. That secret is not provisioned in the current release
 environment, so the hosted release remains fail-closed even though the live
-repository controls now pass. GitHub billing also currently prevents hosted
-jobs from starting.
+repository controls now pass. Hosted CI jobs began running after the repository
+became public.
 
 The same preflight can be run before creating a signed tag:
 
