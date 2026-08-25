@@ -1601,6 +1601,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                 SavedWorkflowStep(action: .removeImageAttachments),
                 SavedWorkflowStep(action: .removeSegmentTitle),
                 SavedWorkflowStep(action: .markCommentaryTracks),
+                SavedWorkflowStep(action: .normalizeCommentaryNames),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
@@ -1639,9 +1640,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(outputAsset.attachments.count, 1)
         XCTAssertEqual(outputAsset.attachments.first?.mimeType, "font/ttf")
         XCTAssertEqual(outputAsset.attachments.first?.filename, font.lastPathComponent)
-        XCTAssertTrue(
-            outputAsset.tracks.first(where: { $0.kind == .audio })?.isCommentary == true
-        )
+        let commentaryTrack = outputAsset.tracks.first(where: { $0.kind == .audio })
+        XCTAssertEqual(commentaryTrack?.title, "Commentary")
+        XCTAssertTrue(commentaryTrack?.isCommentary == true)
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)

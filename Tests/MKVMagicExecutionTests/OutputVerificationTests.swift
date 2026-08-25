@@ -210,7 +210,7 @@ final class OutputVerificationTests: XCTestCase {
             codec: "aac",
             uid: 41,
             language: "en",
-            title: "Director Commentary",
+            title: "Commentary",
             isCommentary: true
         )
         let markedSubtitle = MediaTrack(
@@ -229,7 +229,16 @@ final class OutputVerificationTests: XCTestCase {
             trackTagCount: 1,
             extraMetadata: ["COMMENT": "private tag"]
         )
-        let edits = try CommentaryTrackPolicy.metadataEdits(in: original)
+        let edits = try SavedWorkflowCompiler().compile(
+            SavedWorkflow(
+                name: "Commentary metadata",
+                steps: [
+                    SavedWorkflowStep(action: .markCommentaryTracks),
+                    SavedWorkflowStep(action: .normalizeCommentaryNames),
+                ]
+            ),
+            for: original
+        ).trackMetadataEdits
 
         XCTAssertNoThrow(
             try TrackMetadataOutputVerifier().verify(

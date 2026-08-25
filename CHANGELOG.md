@@ -185,6 +185,11 @@ semantic versioning; public release tags are immutable and signed.
   Matroska commentary flag in the shared property pass, keep all names,
   languages, other flags, packets, and source bytes unchanged, and persist no
   track identity or private title in the recipe or sanitized queue history.
+- Add portable schema-v13 **If useful: Normalize commentary names** intent.
+  Number recognized audio and subtitle commentary tracks independently as
+  `Commentary`, `Commentary #2`, and so on, skip already correct names, preserve
+  every other field and packet, and merge simultaneous name/role edits by
+  stable UID into the same single verified property pass.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track

@@ -435,16 +435,38 @@ public struct SavedWorkflowCompiler: Sendable {
         } else {
             imageAttachmentRemoval = nil
         }
-        let commentaryTrackEdits: [TrackMetadataEdit]
+        let commentaryFlagEdits: [TrackMetadataEdit]
         if enabledActions.contains(.markCommentaryTracks) {
             do {
-                commentaryTrackEdits = try CommentaryTrackPolicy.metadataEdits(in: asset)
+                commentaryFlagEdits = try CommentaryTrackPolicy.metadataEdits(in: asset)
             } catch CommentaryTrackPolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
         } else {
-            commentaryTrackEdits = []
+            commentaryFlagEdits = []
         }
+        let commentaryNameEdits: [TrackMetadataEdit]
+        if enabledActions.contains(.normalizeCommentaryNames) {
+            do {
+                commentaryNameEdits = try CommentaryNamePolicy.metadataEdits(in: asset)
+            } catch CommentaryTrackPolicyError.unstableTrackIdentity {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+        } else {
+            commentaryNameEdits = []
+        }
+        let commentaryMetadataEdits = mergedCommentaryEdits(
+            asset: asset,
+            flagEdits: commentaryFlagEdits,
+            nameEdits: commentaryNameEdits
+        )
+        let commentaryOperationInsertionAction = enabledSteps.first { step in
+            switch step.action {
+            case .markCommentaryTracks: !commentaryFlagEdits.isEmpty
+            case .normalizeCommentaryNames: !commentaryNameEdits.isEmpty
+            default: false
+            }
+        }?.action
         let audioTracks = asset.tracks.filter { $0.kind == .audio }
         let audioTrackCount = audioTracks.count
         let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
@@ -598,7 +620,7 @@ public struct SavedWorkflowCompiler: Sendable {
                     )
                 }
             case .markCommentaryTracks:
-                if commentaryTrackEdits.isEmpty {
+                if commentaryFlagEdits.isEmpty {
                     stepOutcomes.append(
                         outcome(
                             for: step,
@@ -607,16 +629,48 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 } else {
-                    operations.append(
-                        contentsOf: commentaryTrackEdits.map(WorkflowOperation.editTrackMetadata)
-                    )
-                    let count = commentaryTrackEdits.count
+                    if commentaryOperationInsertionAction == step.action {
+                        operations.append(
+                            contentsOf: commentaryMetadataEdits.map(
+                                WorkflowOperation.editTrackMetadata
+                            )
+                        )
+                    }
+                    let count = commentaryFlagEdits.count
                     let noun = count == 1 ? "track" : "tracks"
                     stepOutcomes.append(
                         outcome(
                             for: step,
                             disposition: .applied,
                             detail: "Mark \(count) clearly named commentary \(noun)"
+                        )
+                    )
+                }
+            case .normalizeCommentaryNames:
+                if commentaryNameEdits.isEmpty {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail:
+                                "Recognized commentary track names already follow the simple numbering convention."
+                        )
+                    )
+                } else {
+                    if commentaryOperationInsertionAction == step.action {
+                        operations.append(
+                            contentsOf: commentaryMetadataEdits.map(
+                                WorkflowOperation.editTrackMetadata
+                            )
+                        )
+                    }
+                    let count = commentaryNameEdits.count
+                    let noun = count == 1 ? "name" : "names"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Normalize \(count) commentary track \(noun)"
                         )
                     )
                 }
@@ -914,6 +968,35 @@ public struct SavedWorkflowCompiler: Sendable {
         return videoConversionWillRun ? nil : .commonInputRequiresVideoConversion
     }
 
+    private func mergedCommentaryEdits(
+        asset: MediaAsset,
+        flagEdits: [TrackMetadataEdit],
+        nameEdits: [TrackMetadataEdit]
+    ) -> [TrackMetadataEdit] {
+        let flagsByUID = Dictionary(uniqueKeysWithValues: flagEdits.map { ($0.trackUID, $0) })
+        let namesByUID = Dictionary(uniqueKeysWithValues: nameEdits.map { ($0.trackUID, $0) })
+        return asset.tracks.compactMap { track in
+            guard let uid = track.uid,
+                let base = namesByUID[uid] ?? flagsByUID[uid]
+            else {
+                return nil
+            }
+            return TrackMetadataEdit(
+                trackUID: uid,
+                name: namesByUID[uid]?.name ?? base.name,
+                language: base.language,
+                isDefault: base.isDefault,
+                isForced: base.isForced,
+                isEnabled: base.isEnabled,
+                isCommentary: flagsByUID[uid]?.isCommentary ?? base.isCommentary,
+                isHearingImpaired: base.isHearingImpaired,
+                isVisualImpaired: base.isVisualImpaired,
+                isOriginal: base.isOriginal,
+                isTextDescription: base.isTextDescription
+            )
+        }
+    }
+
     private func cleanupSuggestions(
         for action: SavedWorkflowAction,
         asset: MediaAsset
@@ -947,6 +1030,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove image attachments"
         case .markCommentaryTracks:
             "Mark clearly named commentary tracks"
+        case .normalizeCommentaryNames:
+            "Normalize commentary track names"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -983,6 +1068,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No MIME-identified image attachments are present."
         case .markCommentaryTracks:
             "No unmarked, clearly named commentary tracks are present."
+        case .normalizeCommentaryNames:
+            "Recognized commentary track names already follow the simple numbering convention."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

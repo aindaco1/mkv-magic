@@ -86,9 +86,9 @@ transaction.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
-Workflow schema v12 still stores only portable action intent—never paths, local
+Workflow schema v13 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v11 workflow files migrate
+Original v1-v12 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Tag removal can share one mkvpropedit invocation with segment-title removal,
@@ -105,6 +105,12 @@ flags, or packets. Already marked files are skipped. The portable recipe stores
 only the policy action; current UIDs and the count shown in review are ephemeral.
 Commentary flags share the existing single property pass and can prepare one
 final video/audio conversion without introducing another encode.
+The separate opt-in **If useful: Normalize commentary names** card renames
+recognized audio and subtitle tracks independently as `Commentary`,
+`Commentary #2`, and so on. It preserves languages, flags, packet payloads, and
+all other track facts. When both commentary cards apply, MKV Magic merges their
+intent by stable UID and still performs one property pass with one edit per
+track; the portable recipe stores neither UIDs nor resolved names.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically
@@ -472,7 +478,9 @@ portable tag cleanup in
 and MIME-strict image-attachment cleanup in
 [docs/releases/M7_PORTABLE_IMAGE_ATTACHMENT_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_IMAGE_ATTACHMENT_WORKFLOW_SLICE.md),
 followed by conservative commentary-flag cleanup in
-[docs/releases/M7_PORTABLE_COMMENTARY_FLAG_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_COMMENTARY_FLAG_WORKFLOW_SLICE.md).
+[docs/releases/M7_PORTABLE_COMMENTARY_FLAG_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_COMMENTARY_FLAG_WORKFLOW_SLICE.md),
+and opt-in commentary-name normalization in
+[docs/releases/M7_PORTABLE_COMMENTARY_NAME_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_COMMENTARY_NAME_WORKFLOW_SLICE.md).
 
 The first M8 performance harness is also checked in. Its release-mode,
 synthetic-only responsiveness probe measures workflow compilation against a
@@ -578,7 +586,7 @@ fails below conservative line, function, or region floors; tests, generated
 runners, Sparkle, and other dependencies cannot inflate the gate. See
 [docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
 It also enforces the public-beta requirement of at least 80% collective non-UI
-line coverage; the current bundled-runtime result is 88.68%. See
+line coverage; the current bundled-runtime result is 88.71%. See
 [docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md](docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md).
 
 For safe recovery steps, unavailable-action prerequisites, queue/encoding

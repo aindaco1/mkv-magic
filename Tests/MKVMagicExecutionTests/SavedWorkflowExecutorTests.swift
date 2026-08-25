@@ -219,6 +219,7 @@ private struct ImageAttachmentWorkflowInspector: MediaInspecting {
 private struct CommentaryWorkflowInspector: MediaInspecting {
     let original: MediaAsset
     let markedUIDs: Set<UInt64>
+    let namesByUID: [UInt64: String]
 
     func inspect(_ inputURL: URL) async throws -> MediaAsset {
         MediaAsset(
@@ -239,7 +240,7 @@ private struct CommentaryWorkflowInspector: MediaInspecting {
                     level: track.level,
                     uid: track.uid,
                     language: track.language,
-                    title: track.title,
+                    title: track.uid.flatMap { namesByUID[$0] } ?? track.title,
                     isDefault: track.isDefault,
                     isForced: track.isForced,
                     isEnabled: track.isEnabled,
@@ -318,13 +319,26 @@ final class SavedWorkflowExecutorTests: XCTestCase {
             trackTagCount: 0,
             segmentUID: "source-segment"
         )
-        let edits = try CommentaryTrackPolicy.metadataEdits(in: source)
+        let edits = try SavedWorkflowCompiler().compile(
+            SavedWorkflow(
+                name: "Commentary metadata",
+                steps: [
+                    SavedWorkflowStep(action: .markCommentaryTracks),
+                    SavedWorkflowStep(action: .normalizeCommentaryNames),
+                ]
+            ),
+            for: source
+        ).trackMetadataEdits
         let runner = SavedWorkflowRecordingRunner()
         let executor = SavedWorkflowExecutor(
             mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
             mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
             runner: runner,
-            inspector: CommentaryWorkflowInspector(original: source, markedUIDs: [11])
+            inspector: CommentaryWorkflowInspector(
+                original: source,
+                markedUIDs: [11],
+                namesByUID: [11: "Commentary"]
+            )
         )
 
         let output = try await executor.execute(
@@ -339,8 +353,11 @@ final class SavedWorkflowExecutorTests: XCTestCase {
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].executableURL.lastPathComponent, "mkvpropedit")
         XCTAssertTrue(containsPair("--edit", "track:=11", in: requests[0].arguments))
+        XCTAssertTrue(containsPair("--set", "name=Commentary", in: requests[0].arguments))
         XCTAssertTrue(containsPair("--set", "flag-commentary=1", in: requests[0].arguments))
-        XCTAssertTrue(output.tracks.first(where: { $0.uid == 11 })?.isCommentary == true)
+        let outputTrack = output.tracks.first(where: { $0.uid == 11 })
+        XCTAssertEqual(outputTrack?.title, "Commentary")
+        XCTAssertTrue(outputTrack?.isCommentary == true)
         XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
         XCTAssertEqual(try Data(contentsOf: destinationURL), sourceBytes)
     }

@@ -104,14 +104,151 @@ final class CommentaryTrackPolicyTests: XCTestCase {
                 ),
                 MediaTrack(
                     id: 2,
-                    kind: .subtitle,
-                    codec: "subrip",
+                    kind: .video,
+                    codec: "av1",
                     uid: 42,
-                    title: "Commentary Subs"
+                    title: "Main Feature"
                 ),
             ]
         )
         XCTAssertThrowsError(try CommentaryTrackPolicy.metadataEdits(in: duplicate)) {
+            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+        }
+    }
+
+    func testNormalizesAudioAndSubtitleNamesIndependentlyAndPreservesOtherFields() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Normalize.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 10,
+                    language: "eng",
+                    title: "Director Commentary",
+                    isDefault: true
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    language: "en-US",
+                    title: "Cast Track",
+                    isCommentary: true,
+                    isOriginal: true
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 12,
+                    title: "Commentary subtitles",
+                    isHearingImpaired: true
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 13,
+                    title: "commentaryless"
+                ),
+            ]
+        )
+
+        let edits = try CommentaryNamePolicy.metadataEdits(in: asset)
+
+        XCTAssertEqual(edits.map(\.trackUID), [10, 11, 12])
+        XCTAssertEqual(edits.map(\.name), ["Commentary", "Commentary #2", "Commentary"])
+        XCTAssertEqual(edits.map(\.language), ["eng", "en-US", "und"])
+        XCTAssertTrue(edits[0].isDefault)
+        XCTAssertFalse(edits[0].isCommentary)
+        XCTAssertTrue(edits[1].isCommentary)
+        XCTAssertTrue(edits[1].isOriginal)
+        XCTAssertTrue(edits[2].isHearingImpaired)
+
+        let normalized = MediaAsset(
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 10,
+                    title: "Commentary",
+                    isCommentary: true
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    title: "Commentary #2",
+                    isCommentary: true
+                ),
+            ]
+        )
+        XCTAssertEqual(try CommentaryNamePolicy.metadataEdits(in: normalized), [])
+    }
+
+    func testNameNormalizationRequiresStableIdentityOnlyWhenANameChanges() throws {
+        let alreadyNormalizedWithoutUID = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Stable.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    title: "Commentary",
+                    isCommentary: true
+                )
+            ]
+        )
+        XCTAssertEqual(
+            try CommentaryNamePolicy.metadataEdits(in: alreadyNormalizedWithoutUID),
+            []
+        )
+
+        let needsChangeWithoutUID = MediaAsset(
+            sourceURL: alreadyNormalizedWithoutUID.sourceURL,
+            container: alreadyNormalizedWithoutUID.container,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    title: "Director Commentary"
+                )
+            ]
+        )
+        XCTAssertThrowsError(try CommentaryNamePolicy.metadataEdits(in: needsChangeWithoutUID)) {
+            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+        }
+
+        let duplicateUID = MediaAsset(
+            sourceURL: alreadyNormalizedWithoutUID.sourceURL,
+            container: alreadyNormalizedWithoutUID.container,
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 7,
+                    title: "Director Commentary"
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .video,
+                    codec: "av1",
+                    uid: 7
+                ),
+            ]
+        )
+        XCTAssertThrowsError(try CommentaryNamePolicy.metadataEdits(in: duplicateUID)) {
             XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
         }
     }

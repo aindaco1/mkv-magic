@@ -10,6 +10,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             name: "Commentary cleanup",
             steps: [
                 SavedWorkflowStep(action: .markCommentaryTracks),
+                SavedWorkflowStep(action: .normalizeCommentaryNames),
                 SavedWorkflowStep(action: .clearAllTags),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
@@ -48,6 +49,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         let compiled = try XCTUnwrap(preview.compiledWorkflow)
 
         XCTAssertEqual(compiled.trackMetadataEdits.map(\.trackUID), [11, 12])
+        XCTAssertEqual(compiled.trackMetadataEdits.map(\.name), ["Commentary", "Commentary"])
         XCTAssertTrue(compiled.trackMetadataEdits.allSatisfy(\.isCommentary))
         XCTAssertEqual(
             compiled.plan.stages.map(\.mechanism),
@@ -57,6 +59,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             preview.stepOutcomes.map(\.detail),
             [
                 "Mark 2 clearly named commentary tracks",
+                "Normalize 1 commentary track name",
                 "Remove 1 global and 1 track Matroska tags",
                 "Remove the segment title",
             ]
@@ -65,6 +68,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             String(data: JSONEncoder().encode(workflow), encoding: .utf8)
         )
         XCTAssertTrue(json.contains("markCommentaryTracks"))
+        XCTAssertTrue(json.contains("normalizeCommentaryNames"))
         XCTAssertFalse(json.contains("trackUID"))
         XCTAssertFalse(json.contains("Director Commentary"))
         XCTAssertFalse(json.contains("Private Movie"))
@@ -92,6 +96,45 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
         XCTAssertNil(skipped.compiledWorkflow)
         XCTAssertEqual(skipped.stepOutcomes.first?.disposition, .skipped)
+    }
+
+    func testCommentaryNameNormalizationSkipsAnAlreadyNormalizedRecipe() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Normalized.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    title: "Commentary",
+                    isCommentary: true
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 12,
+                    title: "Commentary #2",
+                    isCommentary: true
+                ),
+            ]
+        )
+        let preview = try SavedWorkflowCompiler().preview(
+            SavedWorkflow(
+                name: "Names",
+                steps: [SavedWorkflowStep(action: .normalizeCommentaryNames)]
+            ),
+            for: asset
+        )
+
+        XCTAssertNil(preview.compiledWorkflow)
+        XCTAssertEqual(preview.stepOutcomes.first?.disposition, .skipped)
+        XCTAssertEqual(
+            preview.stepOutcomes.first?.detail,
+            "Recognized commentary track names already follow the simple numbering convention."
+        )
     }
 
     func testCommentaryMarkingRequiresStableIdentityOnlyForCandidates() throws {
