@@ -100,8 +100,20 @@ final class AppPolicyTests: XCTestCase {
         defer { window.close() }
         let contentView = try XCTUnwrap(window.contentView)
         XCTAssertTrue(window.isVisible)
-        XCTAssertEqual(contentView.frame.size.width, 1_080, accuracy: 1)
-        XCTAssertEqual(contentView.frame.size.height, 680, accuracy: 1)
+        let requestedContentSize = NSSize(width: 1_080, height: 680)
+        let availableContentSize = window.contentRect(
+            forFrameRect: NSRect(origin: .zero, size: window.screen?.visibleFrame.size ?? .zero)
+        ).size
+        XCTAssertEqual(
+            contentView.frame.size.width,
+            min(requestedContentSize.width, availableContentSize.width),
+            accuracy: 1
+        )
+        XCTAssertEqual(
+            contentView.frame.size.height,
+            min(requestedContentSize.height, availableContentSize.height),
+            accuracy: 1
+        )
         XCTAssertEqual(window.minSize.width, 820)
         XCTAssertEqual(window.minSize.height, 520)
         XCTAssertTrue(window.contentViewController is MainViewController)
@@ -288,13 +300,7 @@ final class AppPolicyTests: XCTestCase {
         picker.selectItem(at: 3)
         picker.sendAction(picker.action, to: picker.target)
         XCTAssertEqual(text.string, "Codec body")
-        for button in buttons(in: content) where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(buttons(in: content), in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_THIRD_PARTY_CAPTURE"
         ], capturePath.hasPrefix("/") {
@@ -804,13 +810,7 @@ final class AppPolicyTests: XCTestCase {
             descendants(in: content).compactMap { $0 as? NSTextView }.first
         ).string
         XCTAssertTrue(updatedReview.contains("Opus, stereo, 48 kHz, 160 kbps"))
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_COMMON_JOIN_CAPTURE"
         ], capturePath.hasPrefix("/") {
@@ -1400,13 +1400,7 @@ final class AppPolicyTests: XCTestCase {
         secondPopup.sendAction(secondPopup.action, to: secondPopup.target)
         XCTAssertEqual(mappingTable.numberOfRows, 2)
         XCTAssertTrue(try XCTUnwrap(editorButtons.first { $0.title == "Reset Proposal" }).isEnabled)
-        for button in editorButtons where !button.isHidden {
-            let frame = button.convert(button.bounds, to: editorContent)
-            XCTAssertGreaterThanOrEqual(frame.minX, editorContent.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, editorContent.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, editorContent.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, editorContent.bounds.maxY + 1)
-        }
+        assertButtonsFit(editorButtons, in: editorContent)
 
         let join = LosslessJoinWindowController(options: [first, second])
         let joinContent = try XCTUnwrap(join.window?.contentView)
@@ -1455,13 +1449,7 @@ final class AppPolicyTests: XCTestCase {
             table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSButton
         )
         XCTAssertTrue(include.accessibilityLabel()?.hasPrefix("Include Part source") == true)
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_JOIN_CAPTURE"],
             capturePath.hasPrefix("/")
         {
@@ -1995,13 +1983,7 @@ final class AppPolicyTests: XCTestCase {
             )
         )
 
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_QUEUE_CAPTURE"],
             capturePath.hasPrefix("/")
         {
@@ -3875,13 +3857,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(results.contains("Estimated 1080p speed"))
         XCTAssertTrue(results.contains("Every verified encoder remains available"))
         XCTAssertFalse(results.contains("/private/"))
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_ENCODING_TEST_CAPTURE"
         ], capturePath.hasPrefix("/") {
@@ -4053,13 +4029,7 @@ final class AppPolicyTests: XCTestCase {
         try XCTUnwrap(controls.filter { $0.title == "Set In" }.dropFirst().first)
             .performClick(nil)
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
 
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_TRIM_CAPTURE"],
             capturePath.hasPrefix("/")
@@ -4101,13 +4071,7 @@ final class AppPolicyTests: XCTestCase {
             3
         )
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Review Trim" }).isEnabled)
-        for button in controls where !button.isHiddenOrHasHiddenAncestor {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
         for subview in descendants(in: content) where !subview.isHiddenOrHasHiddenAncestor {
             let frame = subview.convert(subview.bounds, to: content)
             XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
@@ -4381,13 +4345,7 @@ final class AppPolicyTests: XCTestCase {
         let chapterButtons = buttons(in: content)
         XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Suggest…" }).isEnabled)
         XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Thumbnails…" }).isEnabled)
-        for button in chapterButtons where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(chapterButtons, in: content)
 
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_CHAPTER_CAPTURE"],
             capturePath.hasPrefix("/")
@@ -4441,13 +4399,7 @@ final class AppPolicyTests: XCTestCase {
             XCTAssertTrue(labels.contains(expected), "Missing thumbnail label \(expected)")
         }
         XCTAssertEqual(descendants(in: content).compactMap { $0 as? NSImageView }.count, 3)
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
 
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_THUMBNAIL_CAPTURE"],
             capturePath.hasPrefix("/")
@@ -4497,13 +4449,7 @@ final class AppPolicyTests: XCTestCase {
             }
         )
         XCTAssertGreaterThan(table.enclosingScrollView?.frame.height ?? 0, 150)
-        for button in controls where !button.isHidden {
-            let frame = button.convert(button.bounds, to: content)
-            XCTAssertGreaterThanOrEqual(frame.minX, content.bounds.minX - 1)
-            XCTAssertLessThanOrEqual(frame.maxX, content.bounds.maxX + 1)
-            XCTAssertGreaterThanOrEqual(frame.minY, content.bounds.minY - 1)
-            XCTAssertLessThanOrEqual(frame.maxY, content.bounds.maxY + 1)
-        }
+        assertButtonsFit(controls, in: content)
 
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_SUGGESTION_CAPTURE"],
             capturePath.hasPrefix("/")
@@ -4791,6 +4737,49 @@ final class AppPolicyTests: XCTestCase {
     @MainActor
     private func buttons(in view: NSView) -> [NSButton] {
         descendants(in: view).compactMap { $0 as? NSButton }
+    }
+
+    @MainActor
+    private func assertButtonsFit(
+        _ buttons: [NSButton],
+        in content: NSView,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        for button in buttons where !button.isHiddenOrHasHiddenAncestor {
+            let insets = button.alignmentRectInsets
+            let alignmentBounds = NSRect(
+                x: button.bounds.minX + insets.left,
+                y: button.bounds.minY + insets.bottom,
+                width: max(0, button.bounds.width - insets.left - insets.right),
+                height: max(0, button.bounds.height - insets.top - insets.bottom)
+            )
+            let frame = button.convert(alignmentBounds, to: content)
+            XCTAssertGreaterThanOrEqual(
+                frame.minX,
+                content.bounds.minX - 1,
+                file: file,
+                line: line
+            )
+            XCTAssertLessThanOrEqual(
+                frame.maxX,
+                content.bounds.maxX + 1,
+                file: file,
+                line: line
+            )
+            XCTAssertGreaterThanOrEqual(
+                frame.minY,
+                content.bounds.minY - 1,
+                file: file,
+                line: line
+            )
+            XCTAssertLessThanOrEqual(
+                frame.maxY,
+                content.bounds.maxY + 1,
+                file: file,
+                line: line
+            )
+        }
     }
 
     @MainActor

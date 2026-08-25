@@ -165,7 +165,7 @@ attached=0
 # Universal static library, and separate prefixes also prevent cross-slice
 # contamination. The library is linked statically into FFmpeg and is not a
 # separately loaded runtime dependency.
-for required_command in autoreconf cmake meson ninja pkg-config; do
+for required_command in aclocal autoreconf glibtoolize cmake meson ninja pkg-config; do
     if ! command -v "$required_command" >/dev/null 2>&1; then
         echo "missing required runtime-build command: $required_command" >&2
         exit 1
