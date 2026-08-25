@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 11
+    public static let currentSchemaVersion = 12
 
     public let id: UUID
     public var schemaVersion: Int
@@ -46,6 +46,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case removeSegmentTitle
     case clearAllTags
     case removeImageAttachments
+    case markCommentaryTracks
     case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
@@ -142,6 +143,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .remuxToMKV: 9
         case .clearAllTags: 10
         case .removeImageAttachments: 11
+        case .markCommentaryTracks: 12
         default: 1
         }
     }
@@ -154,6 +156,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeSegmentTitle: "If present: Remove segment title"
         case .clearAllTags: "If present: Remove all Matroska tags"
         case .removeImageAttachments: "If present: Remove image attachments"
+        case .markCommentaryTracks: "If useful: Mark commentary tracks"
         case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
@@ -197,6 +200,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Remove all global and track tags without encoding; preserve everything else."
         case .removeImageAttachments:
             "Remove MIME-identified images without encoding; preserve subtitle fonts and other attachments."
+        case .markCommentaryTracks:
+            "Mark clearly named audio and subtitle tracks with Matroska's commentary flag without changing their names, languages, other flags, or media packets."
         case .normalizeFilename:
             "Suggest a simple Title (Year) output name for common release-style filenames. You can review or replace it before saving."
         case .addExternalSubtitle:

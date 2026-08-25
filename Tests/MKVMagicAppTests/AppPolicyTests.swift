@@ -2648,6 +2648,7 @@ final class AppPolicyTests: XCTestCase {
                 .removeSegmentTitle,
                 .clearAllTags,
                 .removeImageAttachments,
+                .markCommentaryTracks,
                 .normalizeFilename,
                 .addExternalSubtitle,
                 .convertVideoIfNotAV1OrHEVC,

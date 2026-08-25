@@ -102,38 +102,62 @@ public struct TrackMetadataOutputVerifier: Sendable {
         output: MediaAsset,
         expectedEdit edit: TrackMetadataEdit
     ) throws {
-        guard output.metadata == original.metadata,
-            output.globalTagCount == original.globalTagCount,
-            output.trackTagCount == original.trackTagCount
-        else {
-            throw OutputVerificationError.tagsChanged
+        try verify(
+            original: original,
+            output: output,
+            expectedEdits: [edit]
+        )
+    }
+
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        expectedEdits edits: [TrackMetadataEdit],
+        segmentTitle: SegmentTitleExpectation = .preserve,
+        tags: MatroskaTagExpectation = .preserve
+    ) throws {
+        switch tags {
+        case .preserve:
+            guard output.globalTagCount == original.globalTagCount,
+                output.trackTagCount == original.trackTagCount
+            else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyPreservedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
+        case .removeAll:
+            guard output.globalTagCount == 0, output.trackTagCount == 0 else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyRemovedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
         }
-        guard let originalTrack = original.tracks.first(where: { $0.uid == edit.trackUID }),
-            let outputTrack = output.tracks.first(where: { $0.uid == edit.trackUID }),
-            original.tracks.filter({ $0.uid == edit.trackUID }).count == 1,
-            output.tracks.filter({ $0.uid == edit.trackUID }).count == 1
+        let includeTags = tags == .preserve
+        guard
+            output.tracks.map({ TrackTechnicalSnapshot($0, includeTags: includeTags) })
+                == original.tracks.map({ TrackTechnicalSnapshot($0, includeTags: includeTags) })
         else {
             throw OutputVerificationError.tracksChanged
         }
-        let unchangedOriginal = original.tracks.filter { $0.uid != edit.trackUID }
-        let unchangedOutput = output.tracks.filter { $0.uid != edit.trackUID }
-        guard unchangedOutput == unchangedOriginal,
-            TrackTechnicalSnapshot(originalTrack) == TrackTechnicalSnapshot(outputTrack)
-        else {
-            throw OutputVerificationError.tracksChanged
-        }
-        let expectedLanguage = try TrackLanguageTag.canonical(edit.language)
-        let outputLanguage = try TrackLanguageTag.canonical(outputTrack.language ?? "und")
-        guard outputTrack.title == edit.name,
-            outputLanguage == expectedLanguage,
-            outputTrack.isDefault == edit.isDefault,
-            outputTrack.isForced == edit.isForced,
-            outputTrack.isEnabled == edit.isEnabled,
-            outputTrack.isCommentary == edit.isCommentary,
-            outputTrack.isHearingImpaired == edit.isHearingImpaired,
-            outputTrack.isVisualImpaired == edit.isVisualImpaired,
-            outputTrack.isOriginal == edit.isOriginal,
-            outputTrack.isTextDescription == edit.isTextDescription
+        let expected = try expectedTrackSnapshots(
+            original.tracks,
+            applying: edits,
+            includeTags: includeTags
+        )
+        guard
+            output.tracks.map({
+                RemuxTrackSnapshot(
+                    $0,
+                    includeTags: includeTags,
+                    ignoringEditableTagMetadata: true
+                )
+            }) == expected
         else {
             throw OutputVerificationError.trackMetadataMismatch
         }
@@ -149,6 +173,7 @@ public struct TrackRemovalOutputVerifier: Sendable {
         output: MediaAsset,
         removal: TrackRemoval,
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
+        trackMetadataEdits: [TrackMetadataEdit] = [],
         segmentTitle: SegmentTitleExpectation = .preserve,
         tags: MatroskaTagExpectation = .preserve
     ) throws {
@@ -208,11 +233,17 @@ public struct TrackRemovalOutputVerifier: Sendable {
             return !removal.trackUIDs.contains(uid)
         }
         let outputTrackSnapshots = outputTracks.map {
-            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+            RemuxTrackSnapshot(
+                $0,
+                includeTags: tags == .preserve,
+                ignoringEditableTagMetadata: !trackMetadataEdits.isEmpty
+            )
         }
-        let expectedTrackSnapshots = expectedTracks.map {
-            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
-        }
+        let expectedTrackSnapshots = try expectedTrackSnapshots(
+            expectedTracks,
+            applying: trackMetadataEdits,
+            includeTags: tags == .preserve
+        )
         guard expectedTracks.count + removal.trackUIDs.count == originalTracks.count,
             outputTracks.compactMap(\.uid) == expectedTracks.compactMap(\.uid),
             outputTrackSnapshots == expectedTrackSnapshots
@@ -229,6 +260,7 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
         original: MediaAsset,
         output: MediaAsset,
         removal: MatroskaAttachmentRemoval,
+        trackMetadataEdits: [TrackMetadataEdit] = [],
         segmentTitle: SegmentTitleExpectation = .preserve,
         tags: MatroskaTagExpectation = .preserve
     ) throws {
@@ -268,9 +300,20 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
         }
         let originalTracks = original.tracks.filter { $0.kind != .attachment }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        let expectedTrackSnapshots = try expectedTrackSnapshots(
+            originalTracks,
+            applying: trackMetadataEdits,
+            includeTags: tags == .preserve
+        )
         guard
-            outputTracks.map({ RemuxTrackSnapshot($0, includeTags: tags == .preserve) })
-                == originalTracks.map({ RemuxTrackSnapshot($0, includeTags: tags == .preserve) })
+            outputTracks.map({
+                RemuxTrackSnapshot(
+                    $0,
+                    includeTags: tags == .preserve,
+                    ignoringEditableTagMetadata: !trackMetadataEdits.isEmpty
+                )
+            })
+                == expectedTrackSnapshots
         else {
             throw OutputVerificationError.tracksChanged
         }
@@ -345,6 +388,7 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         subtitleEnd: SubRipTimestamp,
         trackRemoval: TrackRemoval? = nil,
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
+        trackMetadataEdits: [TrackMetadataEdit] = [],
         segmentTitle: SegmentTitleExpectation = .preserve,
         tags: MatroskaTagExpectation = .preserve
     ) throws {
@@ -409,11 +453,17 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
         let retainedOutputSnapshots = outputTracks.dropLast().map {
-            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+            RemuxTrackSnapshot(
+                $0,
+                includeTags: tags == .preserve,
+                ignoringEditableTagMetadata: !trackMetadataEdits.isEmpty
+            )
         }
-        let expectedOriginalSnapshots = expectedOriginalTracks.map {
-            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
-        }
+        let expectedOriginalSnapshots = try expectedTrackSnapshots(
+            expectedOriginalTracks,
+            applying: trackMetadataEdits,
+            includeTags: tags == .preserve
+        )
         guard
             expectedOriginalTracks.count + (trackRemoval?.trackUIDs.count ?? 0)
                 == originalTracks.count,
@@ -1446,6 +1496,29 @@ private func verifyAttachments(
     }
 }
 
+private func expectedTrackSnapshots(
+    _ tracks: [MediaTrack],
+    applying edits: [TrackMetadataEdit],
+    includeTags: Bool
+) throws -> [RemuxTrackSnapshot] {
+    guard Set(edits.map(\.trackUID)).count == edits.count else {
+        throw OutputVerificationError.trackMetadataMismatch
+    }
+    let editsByUID = Dictionary(uniqueKeysWithValues: edits.map { ($0.trackUID, $0) })
+    let sourceUIDs = tracks.compactMap(\.uid)
+    guard edits.allSatisfy({ edit in sourceUIDs.filter({ $0 == edit.trackUID }).count == 1 }) else {
+        throw OutputVerificationError.tracksChanged
+    }
+    return tracks.map { track in
+        RemuxTrackSnapshot(
+            track,
+            applying: track.uid.flatMap { editsByUID[$0] },
+            includeTags: includeTags,
+            ignoringEditableTagMetadata: !edits.isEmpty
+        )
+    }
+}
+
 private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) throws {
     guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
     guard output.container == original.container else {
@@ -1522,7 +1595,7 @@ private struct TrackTechnicalSnapshot: Equatable {
     let hdrFormats: [String]
     let tags: [String: String]
 
-    init(_ track: MediaTrack) {
+    init(_ track: MediaTrack, includeTags: Bool = true) {
         id = track.id
         kind = track.kind
         codec = track.codec
@@ -1544,7 +1617,7 @@ private struct TrackTechnicalSnapshot: Equatable {
         masteringDisplayMetadata = track.masteringDisplayMetadata
         contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
-        tags = track.tags.removingEditableTrackMetadata
+        tags = includeTags ? track.tags.removingEditableTrackMetadata : [:]
     }
 }
 
@@ -1626,7 +1699,25 @@ private struct RemuxTrackSnapshot: Equatable {
         self.init(track, includeTags: true)
     }
 
-    init(_ track: MediaTrack, includeTags: Bool) {
+    init(
+        _ track: MediaTrack,
+        includeTags: Bool,
+        ignoringEditableTagMetadata: Bool = false
+    ) {
+        self.init(
+            track,
+            applying: nil,
+            includeTags: includeTags,
+            ignoringEditableTagMetadata: ignoringEditableTagMetadata
+        )
+    }
+
+    init(
+        _ track: MediaTrack,
+        applying edit: TrackMetadataEdit?,
+        includeTags: Bool,
+        ignoringEditableTagMetadata: Bool = false
+    ) {
         kind = track.kind
         codec = track.codec
         codecLongName = track.codecLongName
@@ -1634,16 +1725,29 @@ private struct RemuxTrackSnapshot: Equatable {
         profile = track.profile
         level = track.level
         uid = track.uid
-        language = (try? TrackLanguageTag.canonical(track.language ?? "und")) ?? track.language
-        title = track.title
-        isDefault = track.isDefault
-        isForced = track.isForced
-        isEnabled = track.isEnabled
-        isCommentary = track.isCommentary
-        isHearingImpaired = track.isHearingImpaired
-        isVisualImpaired = track.isVisualImpaired
-        isOriginal = track.isOriginal
-        isTextDescription = track.isTextDescription
+        let desiredLanguage = edit?.language ?? track.language ?? "und"
+        language = (try? TrackLanguageTag.canonical(desiredLanguage)) ?? desiredLanguage
+        if let edit {
+            title = edit.name
+            isDefault = edit.isDefault
+            isForced = edit.isForced
+            isEnabled = edit.isEnabled
+            isCommentary = edit.isCommentary
+            isHearingImpaired = edit.isHearingImpaired
+            isVisualImpaired = edit.isVisualImpaired
+            isOriginal = edit.isOriginal
+            isTextDescription = edit.isTextDescription
+        } else {
+            title = track.title
+            isDefault = track.isDefault
+            isForced = track.isForced
+            isEnabled = track.isEnabled
+            isCommentary = track.isCommentary
+            isHearingImpaired = track.isHearingImpaired
+            isVisualImpaired = track.isVisualImpaired
+            isOriginal = track.isOriginal
+            isTextDescription = track.isTextDescription
+        }
         channels = track.channels
         channelLayout = track.channelLayout
         sampleRate = track.sampleRate
@@ -1656,7 +1760,9 @@ private struct RemuxTrackSnapshot: Equatable {
         masteringDisplayMetadata = track.masteringDisplayMetadata
         contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
-        tags = includeTags ? track.tags.removingTrackRemuxProvenance : [:]
+        let semanticTags =
+            ignoringEditableTagMetadata ? track.tags.removingEditableTrackMetadata : track.tags
+        tags = includeTags ? semanticTags.removingTrackRemuxProvenance : [:]
     }
 }
 

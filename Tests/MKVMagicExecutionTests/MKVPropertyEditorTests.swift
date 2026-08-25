@@ -203,6 +203,63 @@ final class MKVPropertyEditorTests: XCTestCase {
         )
     }
 
+    func testWorkflowPropertiesFuseMultipleTrackFlagsTitleAndTagsWithoutShell() async throws {
+        let recorder = PropertyEditRequestRecorder()
+        let editor = MKVPropertyEditor(
+            executableURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: PropertyEditStubRunner(result: result(exitCode: 0), recorder: recorder)
+        )
+        let file = URL(fileURLWithPath: "/media/Movie; touch nope.mkv")
+        let tracks = [
+            MediaTrack(
+                id: 1,
+                kind: .audio,
+                codec: "aac",
+                uid: 11,
+                language: "en",
+                title: "Director Commentary"
+            ),
+            MediaTrack(
+                id: 2,
+                kind: .subtitle,
+                codec: "subrip",
+                uid: 12,
+                language: "en",
+                title: "Commentary"
+            ),
+        ]
+        let edits = try CommentaryTrackPolicy.metadataEdits(
+            in: MediaAsset(
+                sourceURL: file,
+                container: "matroska",
+                tracks: tracks
+            )
+        )
+
+        try await editor.editWorkflowProperties(
+            at: file,
+            originalTracks: tracks,
+            edits: edits,
+            removesSegmentTitle: true,
+            clearAllTags: true
+        )
+
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(
+            requests[0].arguments,
+            [
+                file.path,
+                "--normalize-language-ietf", "canonical",
+                "--abort-on-warnings",
+                "--edit", "info", "--delete", "title",
+                "--tags", "all:",
+                "--edit", "track:=11", "--set", "flag-commentary=1",
+                "--edit", "track:=12", "--set", "flag-commentary=1",
+            ]
+        )
+    }
+
     func testTrackEditRejectsNoopBeforeToolExecution() async throws {
         let recorder = PropertyEditRequestRecorder()
         let editor = MKVPropertyEditor(

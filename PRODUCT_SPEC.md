@@ -650,7 +650,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v11 preserves that boundary. v1-v10 workflows
+identifier—and current schema v12 preserves that boundary. v1-v11 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 When the user explicitly adds this reviewed run to the production queue, its
@@ -711,6 +711,23 @@ feeds exactly one final conversion. Output verification allows normal
 attachment-ID renumbering but requires the exact retained UID, filename, MIME,
 description, size, and order along with unchanged unrelated media structure and
 source bytes. Queue admission re-inspects and recompiles before execution.
+
+Schema v12 adds **If useful: Mark commentary tracks**. The portable card stores
+only policy intent—not track UIDs, names, flags, counts, paths, or inspected
+media identity. Compilation considers audio and subtitle tracks only, requires
+`commentary` as a distinct case-insensitive word in the current track name,
+skips tracks whose commentary flag is already set, and refuses a matching track
+without a unique stable Matroska UID. The ephemeral edits preserve the original
+name, canonical language meaning, every other role/default/enabled flag, and all
+technical media facts while setting only `flag-commentary=1`. Multiple matches,
+segment-title removal, and tag clearing share one fail-closed `mkvpropedit`
+invocation after any existing remux. A video/audio conversion still receives
+one verified preparation file and performs exactly one final encode. Verification
+requires every reviewed flag plus unchanged unrelated tracks, attachments,
+nested chapters, tags according to the reviewed tag policy, segment identity
+according to the edit mechanism, and source bytes. Automatic queue execution
+re-inspects and recompiles the policy; count-only review and sanitized History
+never disclose matching track names.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1383,8 +1400,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v11
-retains that boundary and strictly migrates v1-v10 without allowing an older
+only the naming intent, never a source or generated filename; current schema v12
+retains that boundary and strictly migrates v1-v11 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 

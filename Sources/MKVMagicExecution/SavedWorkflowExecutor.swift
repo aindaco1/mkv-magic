@@ -64,6 +64,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         source: MediaAsset,
         trackRemoval: TrackRemoval?,
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
+        trackMetadataEdits: [TrackMetadataEdit] = [],
         removesSegmentTitle: Bool,
         clearsAllTags: Bool = false,
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
@@ -78,8 +79,8 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             throw SavedWorkflowExecutionError.unsupportedContainer
         }
         let hasMediaOperations =
-            trackRemoval != nil || attachmentRemoval != nil || removesSegmentTitle || clearsAllTags
-            || externalSubtitleInput != nil
+            trackRemoval != nil || attachmentRemoval != nil || !trackMetadataEdits.isEmpty
+            || removesSegmentTitle || clearsAllTags || externalSubtitleInput != nil
         guard hasMediaOperations || createsUnchangedCopy else {
             throw SavedWorkflowExecutionError.noOperations
         }
@@ -111,6 +112,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                 metadata: externalSubtitleInput.metadata,
                 trackRemoval: trackRemoval,
                 attachmentRemoval: attachmentRemoval,
+                trackMetadataEdits: trackMetadataEdits,
                 removesSegmentTitle: removesSegmentTitle,
                 clearsAllTags: clearsAllTags,
                 destinationURL: destinationURL,
@@ -146,7 +148,15 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         outputURL: outputURL
                     )
                 }
-                if removesSegmentTitle {
+                if !trackMetadataEdits.isEmpty {
+                    try await editor.editWorkflowProperties(
+                        at: outputURL,
+                        originalTracks: source.tracks,
+                        edits: trackMetadataEdits,
+                        removesSegmentTitle: removesSegmentTitle,
+                        clearAllTags: clearsAllTags
+                    )
+                } else if removesSegmentTitle {
                     try await editor.editSegmentTitle(
                         at: outputURL,
                         title: nil,
@@ -163,6 +173,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         output: output,
                         removal: trackRemoval,
                         attachmentRemoval: attachmentRemoval,
+                        trackMetadataEdits: trackMetadataEdits,
                         segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
                         tags: clearsAllTags ? .removeAll : .preserve
                     )
@@ -171,6 +182,15 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         original: source,
                         output: output,
                         removal: attachmentRemoval,
+                        trackMetadataEdits: trackMetadataEdits,
+                        segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
+                        tags: clearsAllTags ? .removeAll : .preserve
+                    )
+                } else if !trackMetadataEdits.isEmpty {
+                    try TrackMetadataOutputVerifier().verify(
+                        original: source,
+                        output: output,
+                        expectedEdits: trackMetadataEdits,
                         segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
                         tags: clearsAllTags ? .removeAll : .preserve
                     )

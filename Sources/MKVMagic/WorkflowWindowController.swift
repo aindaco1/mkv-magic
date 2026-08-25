@@ -678,6 +678,7 @@ enum WorkflowEditorPolicy {
         .removeSegmentTitle,
         .clearAllTags,
         .removeImageAttachments,
+        .markCommentaryTracks,
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,

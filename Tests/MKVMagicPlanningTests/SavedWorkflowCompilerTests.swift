@@ -5,6 +5,132 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testCommentaryMarkingIsConditionalPortableAndOnePropertyStage() throws {
+        let workflow = SavedWorkflow(
+            name: "Commentary cleanup",
+            steps: [
+                SavedWorkflowStep(action: .markCommentaryTracks),
+                SavedWorkflowStep(action: .clearAllTags),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Private Movie.mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(seconds: 10),
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    language: "en",
+                    title: "Director Commentary",
+                    isDefault: true
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 12,
+                    language: "en",
+                    title: "Commentary",
+                    isHearingImpaired: true
+                ),
+            ],
+            metadata: ["title": "Private Movie"],
+            globalTagCount: 1,
+            trackTagCount: 1
+        )
+
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: asset)
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertEqual(compiled.trackMetadataEdits.map(\.trackUID), [11, 12])
+        XCTAssertTrue(compiled.trackMetadataEdits.allSatisfy(\.isCommentary))
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvPropEdit, .verify, .commit]
+        )
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.detail),
+            [
+                "Mark 2 clearly named commentary tracks",
+                "Remove 1 global and 1 track Matroska tags",
+                "Remove the segment title",
+            ]
+        )
+        let json = try XCTUnwrap(
+            String(data: JSONEncoder().encode(workflow), encoding: .utf8)
+        )
+        XCTAssertTrue(json.contains("markCommentaryTracks"))
+        XCTAssertFalse(json.contains("trackUID"))
+        XCTAssertFalse(json.contains("Director Commentary"))
+        XCTAssertFalse(json.contains("Private Movie"))
+
+        let alreadyMarked = MediaAsset(
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            tracks: [
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    title: "Director Commentary",
+                    isCommentary: true
+                )
+            ]
+        )
+        let skipped = try SavedWorkflowCompiler().preview(
+            SavedWorkflow(
+                name: "Commentary only",
+                steps: [SavedWorkflowStep(action: .markCommentaryTracks)]
+            ),
+            for: alreadyMarked
+        )
+        XCTAssertNil(skipped.compiledWorkflow)
+        XCTAssertEqual(skipped.stepOutcomes.first?.disposition, .skipped)
+    }
+
+    func testCommentaryMarkingRequiresStableIdentityOnlyForCandidates() throws {
+        let workflow = SavedWorkflow(
+            name: "Commentary cleanup",
+            steps: [SavedWorkflowStep(action: .markCommentaryTracks)]
+        )
+        let safe = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Safe.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1"),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    title: "Commentary"
+                ),
+            ]
+        )
+        XCTAssertEqual(
+            try SavedWorkflowCompiler().compile(workflow, for: safe)
+                .trackMetadataEdits.map(\.trackUID),
+            [11]
+        )
+
+        let unstable = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Unstable.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 1, kind: .audio, codec: "aac", title: "Commentary")
+            ]
+        )
+        XCTAssertThrowsError(try SavedWorkflowCompiler().compile(workflow, for: unstable)) {
+            XCTAssertEqual($0 as? SavedWorkflowCompilationError, .unstableTrackIdentity)
+        }
+    }
+
     func testImageAttachmentCleanupIsConditionalPortableAndFused() throws {
         let poster = MediaAttachment(
             id: 2,

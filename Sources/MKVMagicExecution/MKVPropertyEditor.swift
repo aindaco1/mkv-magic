@@ -74,6 +74,60 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
         originalTrack: MediaTrack,
         edit: TrackMetadataEdit
     ) async throws {
+        var arguments = [
+            fileURL.path,
+            "--normalize-language-ietf", "canonical",
+            "--abort-on-warnings",
+        ]
+        arguments.append(contentsOf: try trackEditArguments(original: originalTrack, edit: edit))
+        try await run(arguments: arguments)
+    }
+
+    /// Applies every reviewed property change in one mkvpropedit process.
+    /// The caller supplies inspected source tracks because portable workflows
+    /// deliberately retain no file-specific track identity.
+    public func editWorkflowProperties(
+        at fileURL: URL,
+        originalTracks: [MediaTrack],
+        edits: [TrackMetadataEdit],
+        removesSegmentTitle: Bool,
+        clearAllTags: Bool
+    ) async throws {
+        guard !edits.isEmpty || removesSegmentTitle || clearAllTags else {
+            throw MKVPropertyEditError.noChanges
+        }
+        guard Set(edits.map(\.trackUID)).count == edits.count else {
+            throw MKVPropertyEditError.missingTrack
+        }
+        var arguments = [
+            fileURL.path,
+            "--normalize-language-ietf", "canonical",
+            "--abort-on-warnings",
+        ]
+        if removesSegmentTitle {
+            arguments.append(contentsOf: ["--edit", "info", "--delete", "title"])
+        }
+        if clearAllTags {
+            arguments.append(contentsOf: ["--tags", "all:"])
+        }
+        for edit in edits {
+            guard
+                let originalTrack = originalTracks.first(where: { $0.uid == edit.trackUID }),
+                originalTracks.filter({ $0.uid == edit.trackUID }).count == 1
+            else {
+                throw MKVPropertyEditError.missingTrack
+            }
+            arguments.append(
+                contentsOf: try trackEditArguments(original: originalTrack, edit: edit)
+            )
+        }
+        try await run(arguments: arguments)
+    }
+
+    private func trackEditArguments(
+        original originalTrack: MediaTrack,
+        edit: TrackMetadataEdit
+    ) throws -> [String] {
         guard originalTrack.uid == edit.trackUID else { throw MKVPropertyEditError.missingTrack }
         if let name = edit.name {
             guard !name.contains("\0"), name.utf8.count <= 4_096 else {
@@ -81,13 +135,7 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
             }
         }
         let language = try TrackLanguageTag.canonical(edit.language)
-        var arguments = [
-            fileURL.path,
-            "--normalize-language-ietf", "canonical",
-            "--abort-on-warnings",
-            "--edit", "track:=\(edit.trackUID)",
-        ]
-
+        var arguments = ["--edit", "track:=\(edit.trackUID)"]
         if edit.name != originalTrack.title {
             if let name = edit.name {
                 arguments.append(contentsOf: ["--set", "name=\(name)"])
@@ -100,14 +148,14 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
             arguments.append(contentsOf: ["--set", "language=\(language)"])
         }
         appendFlagChange(
-            name: "flag-default", original: originalTrack.isDefault, desired: edit.isDefault,
-            to: &arguments)
+            name: "flag-default", original: originalTrack.isDefault,
+            desired: edit.isDefault, to: &arguments)
         appendFlagChange(
-            name: "flag-forced", original: originalTrack.isForced, desired: edit.isForced,
-            to: &arguments)
+            name: "flag-forced", original: originalTrack.isForced,
+            desired: edit.isForced, to: &arguments)
         appendFlagChange(
-            name: "flag-enabled", original: originalTrack.isEnabled, desired: edit.isEnabled,
-            to: &arguments)
+            name: "flag-enabled", original: originalTrack.isEnabled,
+            desired: edit.isEnabled, to: &arguments)
         appendFlagChange(
             name: "flag-commentary", original: originalTrack.isCommentary,
             desired: edit.isCommentary, to: &arguments)
@@ -123,9 +171,8 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
         appendFlagChange(
             name: "flag-text-descriptions", original: originalTrack.isTextDescription,
             desired: edit.isTextDescription, to: &arguments)
-
-        guard arguments.count > 6 else { throw MKVPropertyEditError.noChanges }
-        try await run(arguments: arguments)
+        guard arguments.count > 2 else { throw MKVPropertyEditError.noChanges }
+        return arguments
     }
 
     private func appendFlagChange(

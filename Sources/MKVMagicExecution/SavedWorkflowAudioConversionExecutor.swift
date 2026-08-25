@@ -90,6 +90,7 @@ public struct SavedWorkflowAudioConversionExecutor<
                     source: source,
                     trackRemoval: workflow.trackRemoval,
                     attachmentRemoval: workflow.attachmentRemoval,
+                    trackMetadataEdits: workflow.trackMetadataEdits,
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     clearsAllTags: workflow.clearsAllTags,
                     externalSubtitleInput: workflow.externalSubtitleInput,

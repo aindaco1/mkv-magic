@@ -1539,7 +1539,9 @@ final class RealToolAppHistoryTests: XCTestCase {
                 arguments: [
                     "-hide_banner", "-loglevel", "error",
                     "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
-                    "-c:a", "aac", "-metadata", "title=Remove Automatically",
+                    "-c:a", "aac",
+                    "-metadata:s:a:0", "title=Director Commentary",
+                    "-metadata", "title=Remove Automatically",
                     base.path,
                 ],
                 timeout: 60
@@ -1593,16 +1595,18 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         XCTAssertEqual(imageRemoval.attachmentUIDs.count, 1)
         let workflow = SavedWorkflow(
-            name: "Remove reviewed title, tags, and images",
+            name: "Remove reviewed title, tags, and images; mark commentary",
             steps: [
                 SavedWorkflowStep(action: .clearAllTags),
                 SavedWorkflowStep(action: .removeImageAttachments),
                 SavedWorkflowStep(action: .removeSegmentTitle),
+                SavedWorkflowStep(action: .markCommentaryTracks),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
         XCTAssertTrue(compiled.clearsAllTags)
         XCTAssertEqual(compiled.attachmentRemoval, imageRemoval)
+        XCTAssertEqual(compiled.trackMetadataEdits.count, 1)
         let createdAt = Date()
         try await queueStore.save(
             MediaQueueSnapshot(isPaused: true, updatedAt: createdAt)
@@ -1635,6 +1639,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(outputAsset.attachments.count, 1)
         XCTAssertEqual(outputAsset.attachments.first?.mimeType, "font/ttf")
         XCTAssertEqual(outputAsset.attachments.first?.filename, font.lastPathComponent)
+        XCTAssertTrue(
+            outputAsset.tracks.first(where: { $0.kind == .audio })?.isCommentary == true
+        )
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)
@@ -1648,6 +1655,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let serializedMessages = records.first?.events.compactMap(\.message).joined(separator: " ")
         XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
         XCTAssertFalse(serializedMessages?.contains(poster.lastPathComponent) == true)
+        XCTAssertFalse(serializedMessages?.contains("Director Commentary") == true)
         XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
 

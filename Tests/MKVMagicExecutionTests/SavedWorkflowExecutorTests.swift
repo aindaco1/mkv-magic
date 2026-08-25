@@ -216,7 +216,135 @@ private struct ImageAttachmentWorkflowInspector: MediaInspecting {
     }
 }
 
+private struct CommentaryWorkflowInspector: MediaInspecting {
+    let original: MediaAsset
+    let markedUIDs: Set<UInt64>
+
+    func inspect(_ inputURL: URL) async throws -> MediaAsset {
+        MediaAsset(
+            sourceURL: inputURL,
+            container: original.container,
+            formatLongName: original.formatLongName,
+            duration: original.duration,
+            fileSize: original.fileSize,
+            bitrate: original.bitrate,
+            tracks: original.tracks.map { track in
+                MediaTrack(
+                    id: track.id,
+                    kind: track.kind,
+                    codec: track.codec,
+                    codecLongName: track.codecLongName,
+                    codecID: track.codecID,
+                    profile: track.profile,
+                    level: track.level,
+                    uid: track.uid,
+                    language: track.language,
+                    title: track.title,
+                    isDefault: track.isDefault,
+                    isForced: track.isForced,
+                    isEnabled: track.isEnabled,
+                    isCommentary: track.uid.map(markedUIDs.contains) == true
+                        ? true : track.isCommentary,
+                    isHearingImpaired: track.isHearingImpaired,
+                    isVisualImpaired: track.isVisualImpaired,
+                    isOriginal: track.isOriginal,
+                    isTextDescription: track.isTextDescription,
+                    bitrate: track.bitrate,
+                    channels: track.channels,
+                    channelLayout: track.channelLayout,
+                    sampleRate: track.sampleRate,
+                    dimensions: track.dimensions,
+                    displayDimensions: track.displayDimensions,
+                    pixelFormat: track.pixelFormat,
+                    bitDepth: track.bitDepth,
+                    frameRate: track.frameRate,
+                    colorInfo: track.colorInfo,
+                    masteringDisplayMetadata: track.masteringDisplayMetadata,
+                    contentLightLevelMetadata: track.contentLightLevelMetadata,
+                    hdrFormats: track.hdrFormats,
+                    tags: track.tags
+                )
+            },
+            chapters: original.chapters,
+            attachments: original.attachments,
+            metadata: original.metadata,
+            chapterEntryCount: original.chapterEntryCount,
+            globalTagCount: original.globalTagCount,
+            trackTagCount: original.trackTagCount,
+            segmentUID: original.segmentUID,
+            muxingApplication: original.muxingApplication,
+            writingApplication: original.writingApplication,
+            warnings: original.warnings
+        )
+    }
+}
+
 final class SavedWorkflowExecutorTests: XCTestCase {
+    func testCommentaryFlagsUseOneVerifiedPropertyEditAndPreserveSource() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-saved-workflow-commentary-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("source.mkv")
+        let destinationURL = root.appendingPathComponent("output.mkv")
+        let sourceBytes = Data("reviewed commentary source".utf8)
+        try sourceBytes.write(to: sourceURL)
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska",
+            formatLongName: "Matroska",
+            duration: MediaTime(seconds: 10),
+            fileSize: Int64(sourceBytes.count),
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 11,
+                    language: "en",
+                    title: "Director Commentary",
+                    isDefault: true,
+                    channels: 2,
+                    channelLayout: "stereo",
+                    sampleRate: 48_000
+                ),
+            ],
+            metadata: ["title": "Movie"],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: "source-segment"
+        )
+        let edits = try CommentaryTrackPolicy.metadataEdits(in: source)
+        let runner = SavedWorkflowRecordingRunner()
+        let executor = SavedWorkflowExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: runner,
+            inspector: CommentaryWorkflowInspector(original: source, markedUIDs: [11])
+        )
+
+        let output = try await executor.execute(
+            source: source,
+            trackRemoval: nil,
+            trackMetadataEdits: edits,
+            removesSegmentTitle: false,
+            destinationURL: destinationURL
+        )
+        let requests = await runner.requests
+
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].executableURL.lastPathComponent, "mkvpropedit")
+        XCTAssertTrue(containsPair("--edit", "track:=11", in: requests[0].arguments))
+        XCTAssertTrue(containsPair("--set", "flag-commentary=1", in: requests[0].arguments))
+        XCTAssertTrue(output.tracks.first(where: { $0.uid == 11 })?.isCommentary == true)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertEqual(try Data(contentsOf: destinationURL), sourceBytes)
+    }
+
     func testImageAttachmentCleanupUsesOneVerifiedRemuxAndPreservesFont() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-saved-workflow-images-\(UUID().uuidString)",

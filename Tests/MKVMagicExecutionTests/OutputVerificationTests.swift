@@ -187,6 +187,72 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTrackMetadataVerifierAcceptsMultipleFlagsWithReviewedTitleAndTagRemoval() throws {
+        let commentaryAudio = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 41,
+            language: "en",
+            title: "Director Commentary"
+        )
+        let commentarySubtitle = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            uid: 42,
+            language: "en",
+            title: "Commentary"
+        )
+        let markedAudio = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 41,
+            language: "en",
+            title: "Director Commentary",
+            isCommentary: true
+        )
+        let markedSubtitle = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            uid: 42,
+            language: "en",
+            title: "Commentary",
+            isCommentary: true
+        )
+        let original = asset(
+            title: "Remove Me",
+            tracks: [commentaryAudio, commentarySubtitle],
+            globalTagCount: 1,
+            trackTagCount: 1,
+            extraMetadata: ["COMMENT": "private tag"]
+        )
+        let edits = try CommentaryTrackPolicy.metadataEdits(in: original)
+
+        XCTAssertNoThrow(
+            try TrackMetadataOutputVerifier().verify(
+                original: original,
+                output: asset(title: nil, tracks: [markedAudio, markedSubtitle]),
+                expectedEdits: edits,
+                segmentTitle: .set(nil),
+                tags: .removeAll
+            )
+        )
+        XCTAssertThrowsError(
+            try TrackMetadataOutputVerifier().verify(
+                original: original,
+                output: asset(title: nil, tracks: [markedAudio, commentarySubtitle]),
+                expectedEdits: edits,
+                segmentTitle: .set(nil),
+                tags: .removeAll
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .trackMetadataMismatch)
+        }
+    }
+
     func testTrackRemovalVerifierAcceptsOnlySelectedUIDRemovalAndRenumbering() throws {
         let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10, language: "und")
         let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20, language: "en")
@@ -481,6 +547,51 @@ final class OutputVerificationTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? OutputVerificationError, .tracksChanged)
         }
+    }
+
+    func testExternalSubtitleVerifierAcceptsReviewedCommentaryFlagOnRetainedTrack() throws {
+        let commentary = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 20,
+            language: "en",
+            title: "Director Commentary"
+        )
+        let markedCommentary = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 20,
+            language: "en",
+            title: "Director Commentary",
+            isCommentary: true
+        )
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+        let original = asset(title: "Movie", tracks: [commentary])
+        let edits = try CommentaryTrackPolicy.metadataEdits(in: original)
+
+        XCTAssertNoThrow(
+            try ExternalSubtitleMuxOutputVerifier().verify(
+                original: original,
+                output: asset(
+                    title: "Movie",
+                    tracks: [markedCommentary, added],
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500),
+                trackMetadataEdits: edits
+            )
+        )
     }
 
     func testExternalSubtitleVerifierRejectsRetainedTrackMutation() throws {

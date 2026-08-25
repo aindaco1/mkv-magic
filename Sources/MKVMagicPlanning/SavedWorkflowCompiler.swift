@@ -225,6 +225,13 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         return nil
     }
 
+    public var trackMetadataEdits: [TrackMetadataEdit] {
+        operations.compactMap { operation in
+            if case .editTrackMetadata(let edit) = operation { return edit }
+            return nil
+        }
+    }
+
     public var externalSubtitleInput: SavedWorkflowExternalSubtitleInput? {
         for operation in operations {
             if case .addExternalSubtitle(let url, let metadata, let format) = operation {
@@ -244,8 +251,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     }
 
     public var hasDeterministicMediaOperations: Bool {
-        trackRemoval != nil || attachmentRemoval != nil || removesSegmentTitle || clearsAllTags
-            || externalSubtitleInput != nil
+        trackRemoval != nil || attachmentRemoval != nil || !trackMetadataEdits.isEmpty
+            || removesSegmentTitle || clearsAllTags || externalSubtitleInput != nil
             || mkvRemuxPlan != nil
     }
 
@@ -428,6 +435,16 @@ public struct SavedWorkflowCompiler: Sendable {
         } else {
             imageAttachmentRemoval = nil
         }
+        let commentaryTrackEdits: [TrackMetadataEdit]
+        if enabledActions.contains(.markCommentaryTracks) {
+            do {
+                commentaryTrackEdits = try CommentaryTrackPolicy.metadataEdits(in: asset)
+            } catch CommentaryTrackPolicyError.unstableTrackIdentity {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+        } else {
+            commentaryTrackEdits = []
+        }
         let audioTracks = asset.tracks.filter { $0.kind == .audio }
         let audioTrackCount = audioTracks.count
         let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
@@ -577,6 +594,29 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .skipped,
                             detail: "No MIME-identified image attachments are present."
+                        )
+                    )
+                }
+            case .markCommentaryTracks:
+                if commentaryTrackEdits.isEmpty {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No unmarked, clearly named commentary tracks are present."
+                        )
+                    )
+                } else {
+                    operations.append(
+                        contentsOf: commentaryTrackEdits.map(WorkflowOperation.editTrackMetadata)
+                    )
+                    let count = commentaryTrackEdits.count
+                    let noun = count == 1 ? "track" : "tracks"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Mark \(count) clearly named commentary \(noun)"
                         )
                     )
                 }
@@ -905,6 +945,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove all Matroska tags"
         case .removeImageAttachments:
             "Remove image attachments"
+        case .markCommentaryTracks:
+            "Mark clearly named commentary tracks"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -939,6 +981,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No global or track Matroska tags are present."
         case .removeImageAttachments:
             "No MIME-identified image attachments are present."
+        case .markCommentaryTracks:
+            "No unmarked, clearly named commentary tracks are present."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

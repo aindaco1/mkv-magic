@@ -180,6 +180,11 @@ semantic versioning; public release tags are immutable and signed.
   `attached_pic` cover-art projections from playable tracks, verify the exact
   retained attachment set before and after commit, preserve source bytes, and
   re-inspect/recompile the same conditional action in the automatic queue.
+- Add portable schema-v12 **If useful: Mark commentary tracks** intent. Resolve
+  clearly named audio/subtitle tracks to per-run stable UIDs, set only their
+  Matroska commentary flag in the shared property pass, keep all names,
+  languages, other flags, packets, and source bytes unchanged, and persist no
+  track identity or private title in the recipe or sanitized queue history.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track
