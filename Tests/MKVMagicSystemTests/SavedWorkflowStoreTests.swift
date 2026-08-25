@@ -138,6 +138,42 @@ final class SavedWorkflowStoreTests: XCTestCase {
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
     }
 
+    func testPortableFileRoundTripsClearAllTagsIntentWithoutMediaFacts() throws {
+        let workflow = SavedWorkflow(
+            name: "Privacy cleanup",
+            steps: [SavedWorkflowStep(action: .clearAllTags)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 10"))
+        XCTAssertTrue(json.contains("clearAllTags"))
+        XCTAssertFalse(json.contains("globalTagCount"))
+        XCTAssertFalse(json.contains("trackTagCount"))
+        XCTAssertFalse(json.contains("sourceURL"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionNineMigratesButCannotClaimVersionTenTagRemovalAction() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":9,"name":"Remux","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"remuxToMKV"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":9,"name":"Invalid tag backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"clearAllTags"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
+    }
+
     func testVersionEightMigratesButCannotClaimVersionNineRemuxAction() throws {
         let valid = Data(
             #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":8,"name":"Audio conversion","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"transcodeAllAudioFLAC"}]}"#

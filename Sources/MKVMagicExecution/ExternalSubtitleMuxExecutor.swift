@@ -361,6 +361,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
         removesSegmentTitle: Bool = false,
+        clearsAllTags: Bool = false,
         destinationURL: URL,
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
@@ -372,6 +373,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             metadata: metadata,
             trackRemoval: trackRemoval,
             removesSegmentTitle: removesSegmentTitle,
+            clearsAllTags: clearsAllTags,
             destinationURL: destinationURL,
             onStage: onStage
         )
@@ -383,6 +385,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
         removesSegmentTitle: Bool = false,
+        clearsAllTags: Bool = false,
         destinationURL: URL,
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
@@ -401,7 +404,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             throw ExternalSubtitleMuxError.sourceAndSubtitleAreSame
         }
         try subtitlePayload.validateCurrent()
-        if removesSegmentTitle, propertyEditor == nil {
+        if removesSegmentTitle || clearsAllTags, propertyEditor == nil {
             throw ExternalSubtitleMuxError.missingPropertyEditor
         }
         let output = try await VerifiedOutputPipeline(inspector: inspector).execute(
@@ -424,11 +427,19 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     trackRemoval: trackRemoval,
                     outputURL: outputURL
                 )
-                if removesSegmentTitle {
+                if removesSegmentTitle || clearsAllTags {
                     guard let propertyEditor else {
                         throw ExternalSubtitleMuxError.missingPropertyEditor
                     }
-                    try await propertyEditor.editSegmentTitle(at: outputURL, title: nil)
+                    if removesSegmentTitle {
+                        try await propertyEditor.editSegmentTitle(
+                            at: outputURL,
+                            title: nil,
+                            clearAllTags: clearsAllTags
+                        )
+                    } else {
+                        try await propertyEditor.clearAllTags(at: outputURL)
+                    }
                 }
                 try await verifySubtitlePayload(outputURL: outputURL, payload: subtitlePayload)
             },
@@ -440,7 +451,8 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     expectedFormat: subtitlePayload.format,
                     subtitleEnd: subtitlePayload.subtitleEnd,
                     trackRemoval: trackRemoval,
-                    segmentTitle: removesSegmentTitle ? .set(nil) : .preserve
+                    segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
+                    tags: clearsAllTags ? .removeAll : .preserve
                 )
             },
             committedAuditError: { outputURL, reason in

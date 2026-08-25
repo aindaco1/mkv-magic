@@ -26,6 +26,7 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case unsupportedMediaConversion(ExactTrimPlanningError)
     case unstableTrackIdentity
     case wouldRemoveAllTracks
+    case unavailableMatroskaTagCounts
     case noApplicableChanges
 }
 
@@ -72,6 +73,8 @@ extension SavedWorkflowCompilationError: LocalizedError {
         case .unstableTrackIdentity:
             "This file does not expose stable Matroska identifiers for every track."
         case .wouldRemoveAllTracks: "This workflow would remove every playable track."
+        case .unavailableMatroskaTagCounts:
+            "Inspect the file again before removing its Matroska tags."
         case .noApplicableChanges: "This file already satisfies the enabled workflow steps."
         }
     }
@@ -208,6 +211,10 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         }
     }
 
+    public var clearsAllTags: Bool {
+        operations.contains(.clearAllTags)
+    }
+
     public var externalSubtitleInput: SavedWorkflowExternalSubtitleInput? {
         for operation in operations {
             if case .addExternalSubtitle(let url, let metadata, let format) = operation {
@@ -227,7 +234,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     }
 
     public var hasDeterministicMediaOperations: Bool {
-        trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
+        trackRemoval != nil || removesSegmentTitle || clearsAllTags
+            || externalSubtitleInput != nil
             || mkvRemuxPlan != nil
     }
 
@@ -380,6 +388,23 @@ public struct SavedWorkflowCompiler: Sendable {
                 throw SavedWorkflowCompilationError.remuxCannotCombineWithOtherActions
             }
         }
+        let clearsAllTagsWillRun: Bool
+        if enabledActions.contains(.clearAllTags) {
+            do {
+                _ = try MatroskaTagPolicy.counts(in: asset)
+                clearsAllTagsWillRun = true
+            } catch MatroskaTagPolicyError.noTags {
+                clearsAllTagsWillRun = false
+            } catch MatroskaTagPolicyError.unavailableCounts {
+                throw SavedWorkflowCompilationError.unavailableMatroskaTagCounts
+            } catch {
+                throw SavedWorkflowCompilationError.unsupportedContainer
+            }
+        } else {
+            clearsAllTagsWillRun = false
+        }
+        let conversionPlanningAsset =
+            clearsAllTagsWillRun ? assetWithClearedTagFacts(asset) : asset
         let audioTracks = asset.tracks.filter { $0.kind == .audio }
         let audioTrackCount = audioTracks.count
         let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
@@ -489,6 +514,28 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 }
+            case .clearAllTags:
+                if clearsAllTagsWillRun {
+                    operations.append(.clearAllTags)
+                    let globalCount = asset.globalTagCount ?? 0
+                    let trackCount = asset.trackTagCount ?? 0
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail:
+                                "Remove \(globalCount) global and \(trackCount) track Matroska tags"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No global or track Matroska tags are present."
+                        )
+                    )
+                }
             case .normalizeFilename:
                 if let suggestion = MediaFilenameNormalizationPolicy.suggestedFilename(
                     for: asset.sourceURL
@@ -578,7 +625,7 @@ public struct SavedWorkflowCompiler: Sendable {
                 }
                 let choice = try resolveVideoConversionChoice(
                     for: step.action,
-                    asset: asset,
+                    asset: conversionPlanningAsset,
                     audioPolicy: audioPolicy,
                     availableVideoPresets: inputs.availableVideoPresets,
                     availableAudioPresets: inputs.availableAudioPresets
@@ -810,6 +857,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove \(count) redundant English SDH subtitle \(noun)"
         case .removeSegmentTitle:
             "Remove the segment title"
+        case .clearAllTags:
+            "Remove all Matroska tags"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -840,6 +889,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No redundant English SDH subtitle tracks were found."
         case .removeSegmentTitle:
             "No segment title is present."
+        case .clearAllTags:
+            "No global or track Matroska tags are present."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:
@@ -932,6 +983,29 @@ public struct SavedWorkflowCompiler: Sendable {
             throw SavedWorkflowCompilationError.unsupportedMediaConversion(error)
         }
         return choice
+    }
+
+    private func assetWithClearedTagFacts(_ asset: MediaAsset) -> MediaAsset {
+        MediaAsset(
+            id: asset.id,
+            sourceURL: asset.sourceURL,
+            container: asset.container,
+            formatLongName: asset.formatLongName,
+            duration: asset.duration,
+            fileSize: asset.fileSize,
+            bitrate: asset.bitrate,
+            tracks: asset.tracks,
+            chapters: asset.chapters,
+            attachments: asset.attachments,
+            metadata: asset.metadata,
+            chapterEntryCount: asset.chapterEntryCount,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: asset.segmentUID,
+            muxingApplication: asset.muxingApplication,
+            writingApplication: asset.writingApplication,
+            warnings: asset.warnings
+        )
     }
 
     private func reviewedPlan(

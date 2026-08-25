@@ -676,6 +676,7 @@ enum WorkflowEditorPolicy {
         .removeNonEnglishSubtitles,
         .removeRedundantEnglishSDH,
         .removeSegmentTitle,
+        .clearAllTags,
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,
@@ -699,6 +700,7 @@ enum WorkflowEditorPolicy {
                 SavedWorkflowStep(action: .removeNonEnglishSubtitles),
                 SavedWorkflowStep(action: .removeRedundantEnglishSDH),
                 SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
+                SavedWorkflowStep(isEnabled: false, action: .clearAllTags),
             ]
         )
     }

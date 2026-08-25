@@ -62,6 +62,77 @@ final class MKVPropertyEditorTests: XCTestCase {
         )
     }
 
+    func testTitleRemovalAndTagClearingShareOneFailClosedInvocation() async throws {
+        let recorder = PropertyEditRequestRecorder()
+        let editor = MKVPropertyEditor(
+            executableURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: PropertyEditStubRunner(result: result(exitCode: 0), recorder: recorder)
+        )
+        let file = URL(fileURLWithPath: "/media/Movie.mkv")
+
+        try await editor.editSegmentTitle(
+            at: file,
+            title: nil,
+            clearAllTags: true
+        )
+
+        let requests = await recorder.requests
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(
+            requests[0].arguments,
+            [
+                "--abort-on-warnings", file.path,
+                "--edit", "info", "--delete", "title",
+                "--tags", "all:",
+            ]
+        )
+    }
+
+    func testClearAllTagsUsesNoShellAndRejectsTruncatedDiagnostics() async throws {
+        let file = URL(fileURLWithPath: "/media/Movie; touch nope.mkv")
+        let successRecorder = PropertyEditRequestRecorder()
+        let success = MKVPropertyEditor(
+            executableURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: PropertyEditStubRunner(
+                result: result(exitCode: 0),
+                recorder: successRecorder
+            )
+        )
+
+        try await success.clearAllTags(at: file)
+
+        let successRequests = await successRecorder.requests
+        XCTAssertEqual(
+            successRequests.first?.arguments,
+            ["--abort-on-warnings", file.path, "--tags", "all:"]
+        )
+
+        let truncatedRecorder = PropertyEditRequestRecorder()
+        let truncated = MKVPropertyEditor(
+            executableURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: PropertyEditStubRunner(
+                result: CommandResult(
+                    exitCode: 0,
+                    standardOutput: CommandOutput(
+                        data: Data("incomplete".utf8),
+                        wasTruncated: true
+                    ),
+                    standardError: CommandOutput(data: Data(), wasTruncated: false)
+                ),
+                recorder: truncatedRecorder
+            )
+        )
+        do {
+            try await truncated.clearAllTags(at: file)
+            XCTFail("Expected truncated diagnostics to fail closed")
+        } catch {
+            XCTAssertEqual(
+                error as? MKVPropertyEditError,
+                .toolFailed(exitCode: 0, message: "incomplete")
+            )
+        }
+    }
+
     func testOversizedTitleFailsBeforeToolExecution() async throws {
         let recorder = PropertyEditRequestRecorder()
         let editor = MKVPropertyEditor(

@@ -114,7 +114,138 @@ private struct UnchangedWorkflowInspector: MediaInspecting {
     }
 }
 
+private struct ClearedTagsWorkflowInspector: MediaInspecting {
+    let original: MediaAsset
+    let removesSegmentTitle: Bool
+
+    func inspect(_ inputURL: URL) async throws -> MediaAsset {
+        MediaAsset(
+            sourceURL: inputURL,
+            container: original.container,
+            formatLongName: original.formatLongName,
+            duration: original.duration,
+            fileSize: original.fileSize,
+            bitrate: original.bitrate,
+            tracks: original.tracks.map {
+                MediaTrack(
+                    id: $0.id,
+                    kind: $0.kind,
+                    codec: $0.codec,
+                    codecLongName: $0.codecLongName,
+                    codecID: $0.codecID,
+                    profile: $0.profile,
+                    level: $0.level,
+                    uid: $0.uid,
+                    language: $0.language,
+                    title: $0.title,
+                    isDefault: $0.isDefault,
+                    isForced: $0.isForced,
+                    isEnabled: $0.isEnabled,
+                    isCommentary: $0.isCommentary,
+                    isHearingImpaired: $0.isHearingImpaired,
+                    isVisualImpaired: $0.isVisualImpaired,
+                    isOriginal: $0.isOriginal,
+                    isTextDescription: $0.isTextDescription,
+                    bitrate: $0.bitrate,
+                    channels: $0.channels,
+                    channelLayout: $0.channelLayout,
+                    sampleRate: $0.sampleRate,
+                    dimensions: $0.dimensions,
+                    displayDimensions: $0.displayDimensions,
+                    pixelFormat: $0.pixelFormat,
+                    bitDepth: $0.bitDepth,
+                    frameRate: $0.frameRate,
+                    colorInfo: $0.colorInfo,
+                    masteringDisplayMetadata: $0.masteringDisplayMetadata,
+                    contentLightLevelMetadata: $0.contentLightLevelMetadata,
+                    hdrFormats: $0.hdrFormats
+                )
+            },
+            chapters: original.chapters,
+            attachments: original.attachments,
+            metadata: removesSegmentTitle
+                ? original.metadata.filter {
+                    $0.key.caseInsensitiveCompare("title") != .orderedSame
+                        && $0.key != "COMMENT"
+                } : original.metadata.filter { $0.key != "COMMENT" },
+            chapterEntryCount: original.chapterEntryCount,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: original.segmentUID,
+            muxingApplication: original.muxingApplication,
+            writingApplication: original.writingApplication,
+            warnings: original.warnings
+        )
+    }
+}
+
 final class SavedWorkflowExecutorTests: XCTestCase {
+    func testTitleAndAllTagsClearInOneVerifiedPropertyEdit() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-saved-workflow-tags-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("source.mkv")
+        let destinationURL = root.appendingPathComponent("output.mkv")
+        let sourceBytes = Data("reviewed tagged source".utf8)
+        try sourceBytes.write(to: sourceURL)
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska",
+            formatLongName: "Matroska",
+            duration: MediaTime(seconds: 10),
+            fileSize: Int64(sourceBytes.count),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "av1",
+                    uid: 10,
+                    tags: ["ARTIST": "Fixture"]
+                )
+            ],
+            metadata: ["title": "Remove Me", "COMMENT": "Remove this tag"],
+            chapterEntryCount: 0,
+            globalTagCount: 1,
+            trackTagCount: 1,
+            segmentUID: "source-segment"
+        )
+        let runner = SavedWorkflowRecordingRunner()
+        let executor = SavedWorkflowExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: runner,
+            inspector: ClearedTagsWorkflowInspector(
+                original: source,
+                removesSegmentTitle: true
+            )
+        )
+
+        let output = try await executor.execute(
+            source: source,
+            trackRemoval: nil,
+            removesSegmentTitle: true,
+            clearsAllTags: true,
+            destinationURL: destinationURL
+        )
+        let requests = await runner.requests
+
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].executableURL.lastPathComponent, "mkvpropedit")
+        XCTAssertEqual(requests[0].arguments.first, "--abort-on-warnings")
+        XCTAssertEqual(
+            Array(requests[0].arguments.dropFirst(2)),
+            ["--edit", "info", "--delete", "title", "--tags", "all:"]
+        )
+        XCTAssertEqual(output.globalTagCount, 0)
+        XCTAssertEqual(output.trackTagCount, 0)
+        XCTAssertNil(output.metadata["title"])
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertEqual(try Data(contentsOf: destinationURL), sourceBytes)
+    }
+
     func testFilenameOnlyWorkflowCommitsUnchangedCloneWithoutMediaTools() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-saved-workflow-filename-copy-\(UUID().uuidString)",

@@ -2580,6 +2580,7 @@ final class AppModel {
                         source: asset,
                         trackRemoval: workflow.trackRemoval,
                         removesSegmentTitle: workflow.removesSegmentTitle,
+                        clearsAllTags: workflow.clearsAllTags,
                         externalSubtitleInput: workflow.externalSubtitleInput,
                         externalSubtitlePayload: externalSubtitlePayload,
                         createsUnchangedCopy: workflow.createsUnchangedCopy,

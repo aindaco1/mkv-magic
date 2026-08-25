@@ -83,6 +83,7 @@ public struct SavedWorkflowVideoConversionExecutor<
                     source: source,
                     trackRemoval: workflow.trackRemoval,
                     removesSegmentTitle: workflow.removesSegmentTitle,
+                    clearsAllTags: workflow.clearsAllTags,
                     externalSubtitleInput: workflow.externalSubtitleInput,
                     externalSubtitlePayload: externalSubtitlePayload,
                     createsUnchangedCopy: false,

@@ -24,7 +24,10 @@ save, import, and export portable recipe cards. Add Step disables cards already
 present and does not expose the legacy combined compatibility action. New
 workflows begin with separate plain-language conditions for removing explicitly
 non-English subtitles and removing redundant English SDH subtitles, plus
-optional segment-title removal. Applicable subtitle
+optional segment-title and all-tag removal. The tag card is conditional,
+reports reviewed global/track counts, and clears every Matroska tag without
+encoding while preserving tracks, chapters, attachments, and unrelated
+metadata. Applicable subtitle
 removals are fused into one remux. Workflows store intent rather than media paths
 or track identifiers, compile against the selected inspection, show a zero-encode
 impact preview, and share one verified output pipeline. Imported workflows using
@@ -81,11 +84,14 @@ transaction.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
-Workflow schema v9 still stores only portable action intent—never paths, local
+Workflow schema v10 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v8 workflow files migrate
+Original v1-v9 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
+Tag removal can share one mkvpropedit invocation with segment-title removal,
+run after an existing zero-encode remux, or prepare a tagged MKV for one final
+video/audio conversion. The conversion itself still occurs at most once.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically

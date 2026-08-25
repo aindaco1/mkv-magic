@@ -148,7 +148,8 @@ public struct TrackRemovalOutputVerifier: Sendable {
         original: MediaAsset,
         output: MediaAsset,
         removal: TrackRemoval,
-        segmentTitle: SegmentTitleExpectation = .preserve
+        segmentTitle: SegmentTitleExpectation = .preserve,
+        tags: MatroskaTagExpectation = .preserve
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container == original.container else {
@@ -157,33 +158,31 @@ public struct TrackRemovalOutputVerifier: Sendable {
         guard remuxDurationsMatch(original.duration, output.duration) else {
             throw OutputVerificationError.durationChanged
         }
-        guard output.globalTagCount == original.globalTagCount else {
-            throw OutputVerificationError.tagsChanged
-        }
-        switch segmentTitle {
+        switch tags {
         case .preserve:
-            guard
-                output.metadata.removingRemuxProvenance
-                    == original.metadata.removingRemuxProvenance
-            else {
+            guard output.globalTagCount == original.globalTagCount else {
                 throw OutputVerificationError.tagsChanged
             }
-        case .set(let expectedTitle):
-            guard output.metadata.titleValue == expectedTitle else {
-                throw OutputVerificationError.titleMismatch
-            }
-            guard
-                output.metadata.removingTitle.removingRemuxProvenance
-                    == original.metadata.removingTitle.removingRemuxProvenance
-            else {
+            try verifyPreservedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
+            if let originalTrackTags = original.trackTagCount,
+                let outputTrackTags = output.trackTagCount,
+                outputTrackTags > originalTrackTags
+            {
                 throw OutputVerificationError.tagsChanged
             }
-        }
-        if let originalTrackTags = original.trackTagCount,
-            let outputTrackTags = output.trackTagCount,
-            outputTrackTags > originalTrackTags
-        {
-            throw OutputVerificationError.tagsChanged
+        case .removeAll:
+            guard output.globalTagCount == 0, output.trackTagCount == 0 else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyRemovedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
         }
         guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
             output.chapterEntryCount == original.chapterEntryCount
@@ -205,9 +204,15 @@ public struct TrackRemovalOutputVerifier: Sendable {
             guard let uid = track.uid else { return true }
             return !removal.trackUIDs.contains(uid)
         }
+        let outputTrackSnapshots = outputTracks.map {
+            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+        }
+        let expectedTrackSnapshots = expectedTracks.map {
+            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+        }
         guard expectedTracks.count + removal.trackUIDs.count == originalTracks.count,
             outputTracks.compactMap(\.uid) == expectedTracks.compactMap(\.uid),
-            outputTracks.map(RemuxTrackSnapshot.init) == expectedTracks.map(RemuxTrackSnapshot.init)
+            outputTrackSnapshots == expectedTrackSnapshots
         else {
             throw OutputVerificationError.tracksChanged
         }
@@ -273,7 +278,11 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
 public struct MatroskaTagRemovalOutputVerifier: Sendable {
     public init() {}
 
-    public func verify(original: MediaAsset, output: MediaAsset) throws {
+    public func verify(
+        original: MediaAsset,
+        output: MediaAsset,
+        segmentTitle: SegmentTitleExpectation = .preserve
+    ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container == original.container,
             output.formatLongName == original.formatLongName
@@ -283,17 +292,15 @@ public struct MatroskaTagRemovalOutputVerifier: Sendable {
         guard durationsMatch(original.duration, output.duration) else {
             throw OutputVerificationError.durationChanged
         }
-        guard output.globalTagCount == 0,
-            output.trackTagCount == 0,
-            output.metadata.titleValue == original.metadata.titleValue
-        else {
+        guard output.globalTagCount == 0, output.trackTagCount == 0 else {
             throw OutputVerificationError.tagsChanged
         }
-        let unexpectedOutputMetadata = output.metadata.removingRemuxProvenance.filter {
-            key, value in
-            original.metadata[key] != value
-        }
-        guard unexpectedOutputMetadata.isEmpty,
+        try verifyRemovedTagMetadata(
+            original: original,
+            output: output,
+            segmentTitle: segmentTitle
+        )
+        guard
             output.muxingApplication == original.muxingApplication,
             output.writingApplication == original.writingApplication
         else {
@@ -329,7 +336,8 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         expectedFormat: ExternalTextSubtitleFormat = .subRip,
         subtitleEnd: SubRipTimestamp,
         trackRemoval: TrackRemoval? = nil,
-        segmentTitle: SegmentTitleExpectation = .preserve
+        segmentTitle: SegmentTitleExpectation = .preserve,
+        tags: MatroskaTagExpectation = .preserve
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container.localizedCaseInsensitiveContains("matroska") else {
@@ -339,33 +347,35 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         else {
             throw OutputVerificationError.durationChanged
         }
-        guard output.globalTagCount == original.globalTagCount else {
-            throw OutputVerificationError.tagsChanged
-        }
-        switch segmentTitle {
+        switch tags {
         case .preserve:
-            guard
-                output.metadata.removingRemuxProvenance
-                    == original.metadata.removingRemuxProvenance
-            else { throw OutputVerificationError.tagsChanged }
-        case .set(let expectedTitle):
-            guard output.metadata.titleValue == expectedTitle else {
-                throw OutputVerificationError.titleMismatch
-            }
-            guard
-                output.metadata.removingTitle.removingRemuxProvenance
-                    == original.metadata.removingTitle.removingRemuxProvenance
-            else { throw OutputVerificationError.tagsChanged }
-        }
-        if trackRemoval == nil {
-            guard output.trackTagCount == original.trackTagCount else {
+            guard output.globalTagCount == original.globalTagCount else {
                 throw OutputVerificationError.tagsChanged
             }
-        } else if let originalTrackTags = original.trackTagCount,
-            let outputTrackTags = output.trackTagCount,
-            outputTrackTags > originalTrackTags
-        {
-            throw OutputVerificationError.tagsChanged
+            try verifyPreservedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
+            if trackRemoval == nil {
+                guard output.trackTagCount == original.trackTagCount else {
+                    throw OutputVerificationError.tagsChanged
+                }
+            } else if let originalTrackTags = original.trackTagCount,
+                let outputTrackTags = output.trackTagCount,
+                outputTrackTags > originalTrackTags
+            {
+                throw OutputVerificationError.tagsChanged
+            }
+        case .removeAll:
+            guard output.globalTagCount == 0, output.trackTagCount == 0 else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyRemovedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
         }
         guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
             output.chapterEntryCount == original.chapterEntryCount
@@ -387,12 +397,17 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
             return !trackRemoval.trackUIDs.contains(uid)
         }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
+        let retainedOutputSnapshots = outputTracks.dropLast().map {
+            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+        }
+        let expectedOriginalSnapshots = expectedOriginalTracks.map {
+            RemuxTrackSnapshot($0, includeTags: tags == .preserve)
+        }
         guard
             expectedOriginalTracks.count + (trackRemoval?.trackUIDs.count ?? 0)
                 == originalTracks.count,
             outputTracks.count == expectedOriginalTracks.count + 1,
-            outputTracks.dropLast().map(RemuxTrackSnapshot.init)
-                == expectedOriginalTracks.map(RemuxTrackSnapshot.init),
+            retainedOutputSnapshots == expectedOriginalSnapshots,
             let added = outputTracks.last,
             added.kind == .subtitle,
             Self.matches(added, expectedFormat: expectedFormat)
@@ -1335,6 +1350,67 @@ public enum SegmentTitleExpectation: Equatable, Sendable {
     case set(String?)
 }
 
+public enum MatroskaTagExpectation: Equatable, Sendable {
+    case preserve
+    case removeAll
+}
+
+private func verifyPreservedTagMetadata(
+    original: MediaAsset,
+    output: MediaAsset,
+    segmentTitle: SegmentTitleExpectation
+) throws {
+    switch segmentTitle {
+    case .preserve:
+        guard
+            output.metadata.removingRemuxProvenance
+                == original.metadata.removingRemuxProvenance
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+    case .set(let expectedTitle):
+        guard output.metadata.titleValue == expectedTitle else {
+            throw OutputVerificationError.titleMismatch
+        }
+        guard
+            output.metadata.removingTitle.removingRemuxProvenance
+                == original.metadata.removingTitle.removingRemuxProvenance
+        else {
+            throw OutputVerificationError.tagsChanged
+        }
+    }
+}
+
+private func verifyRemovedTagMetadata(
+    original: MediaAsset,
+    output: MediaAsset,
+    segmentTitle: SegmentTitleExpectation
+) throws {
+    let originalMetadata: [String: String]
+    let outputMetadata: [String: String]
+    switch segmentTitle {
+    case .preserve:
+        guard output.metadata.titleValue == original.metadata.titleValue else {
+            throw OutputVerificationError.tagsChanged
+        }
+        originalMetadata = original.metadata
+        outputMetadata = output.metadata
+    case .set(let expectedTitle):
+        guard output.metadata.titleValue == expectedTitle else {
+            throw OutputVerificationError.titleMismatch
+        }
+        originalMetadata = original.metadata.removingTitle
+        outputMetadata = output.metadata.removingTitle
+    }
+    let unexpectedOutputMetadata = outputMetadata.removingRemuxProvenance.filter {
+        key, value in
+        originalMetadata[key] != value
+    }
+    guard unexpectedOutputMetadata.isEmpty else {
+        throw OutputVerificationError.tagsChanged
+    }
+}
+
 private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) throws {
     guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
     guard output.container == original.container else {
@@ -1512,6 +1588,10 @@ private struct RemuxTrackSnapshot: Equatable {
     let tags: [String: String]
 
     init(_ track: MediaTrack) {
+        self.init(track, includeTags: true)
+    }
+
+    init(_ track: MediaTrack, includeTags: Bool) {
         kind = track.kind
         codec = track.codec
         codecLongName = track.codecLongName
@@ -1541,7 +1621,7 @@ private struct RemuxTrackSnapshot: Equatable {
         masteringDisplayMetadata = track.masteringDisplayMetadata
         contentLightLevelMetadata = track.contentLightLevelMetadata
         hdrFormats = track.hdrFormats
-        tags = track.tags.removingTrackRemuxProvenance
+        tags = includeTags ? track.tags.removingTrackRemuxProvenance : [:]
     }
 }
 

@@ -80,6 +80,15 @@ final class JobQueueTests: XCTestCase {
         XCTAssertTrue(
             MediaQueueAutomaticWorkflowPolicy.supports(
                 SavedWorkflow(
+                    name: "Clear Matroska tags",
+                    steps: [SavedWorkflowStep(action: .clearAllTags)]
+                ),
+                inputCount: 1
+            )
+        )
+        XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                SavedWorkflow(
                     name: "Convert once",
                     steps: [
                         SavedWorkflowStep(action: .convertVideoRecommended),

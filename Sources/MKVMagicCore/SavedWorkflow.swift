@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 9
+    public static let currentSchemaVersion = 10
 
     public let id: UUID
     public var schemaVersion: Int
@@ -44,6 +44,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case removeNonEnglishSubtitles
     case removeRedundantEnglishSDH
     case removeSegmentTitle
+    case clearAllTags
     case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
@@ -138,6 +139,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             .transcodeAllAudioEAC3, .transcodeAllAudioFLAC:
             8
         case .remuxToMKV: 9
+        case .clearAllTags: 10
         default: 1
         }
     }
@@ -148,6 +150,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeNonEnglishSubtitles: "If present: Remove non-English subtitles"
         case .removeRedundantEnglishSDH: "If redundant: Remove English SDH subtitles"
         case .removeSegmentTitle: "If present: Remove segment title"
+        case .clearAllTags: "If present: Remove all Matroska tags"
         case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
@@ -187,6 +190,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Remove an English SDH track only when another preferred English subtitle track remains."
         case .removeSegmentTitle:
             "Remove the Matroska segment title without encoding video or audio."
+        case .clearAllTags:
+            "Remove all global and track tags without encoding; preserve everything else."
         case .normalizeFilename:
             "Suggest a simple Title (Year) output name for common release-style filenames. You can review or replace it before saving."
         case .addExternalSubtitle:

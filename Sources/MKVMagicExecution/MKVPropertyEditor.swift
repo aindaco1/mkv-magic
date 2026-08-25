@@ -39,19 +39,34 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
         self.runner = runner
     }
 
-    public func editSegmentTitle(at fileURL: URL, title: String?) async throws {
+    public func editSegmentTitle(
+        at fileURL: URL,
+        title: String?,
+        clearAllTags: Bool = false
+    ) async throws {
         if let title {
             guard !title.contains("\0"), title.utf8.count <= 4_096 else {
                 throw MKVPropertyEditError.invalidTitle
             }
         }
-        var arguments = [fileURL.path, "--edit", "info"]
+        var arguments =
+            clearAllTags ? ["--abort-on-warnings", fileURL.path] : [fileURL.path]
+        arguments.append(contentsOf: ["--edit", "info"])
         if let title {
             arguments.append(contentsOf: ["--set", "title=\(title)"])
         } else {
             arguments.append(contentsOf: ["--delete", "title"])
         }
+        if clearAllTags {
+            arguments.append(contentsOf: ["--tags", "all:"])
+        }
         try await run(arguments: arguments)
+    }
+
+    public func clearAllTags(at fileURL: URL) async throws {
+        try await run(
+            arguments: ["--abort-on-warnings", fileURL.path, "--tags", "all:"]
+        )
     }
 
     public func editTrackMetadata(
@@ -132,7 +147,10 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
                 outputLimit: 1_048_576
             )
         )
-        guard result.exitCode == 0 else {
+        guard result.exitCode == 0,
+            !result.standardOutput.wasTruncated,
+            !result.standardError.wasTruncated
+        else {
             let combined =
                 [result.standardError.text, result.standardOutput.text]
                 .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }

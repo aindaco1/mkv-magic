@@ -2492,13 +2492,14 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(preview.keyEquivalent, "\r")
         XCTAssertTrue(save.accessibilityHelp()?.contains("privately on this Mac") == true)
         XCTAssertTrue(preview.accessibilityHelp()?.contains("selected file") == true)
-        XCTAssertEqual(steps.numberOfRows, 3)
+        XCTAssertEqual(steps.numberOfRows, 4)
         XCTAssertEqual(
             WorkflowEditorPolicy.newWorkflow().steps.map(\.action),
             [
                 .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
+                .clearAllTags,
             ]
         )
         if let capturePath = ProcessInfo.processInfo.environment[
@@ -2645,6 +2646,7 @@ final class AppPolicyTests: XCTestCase {
                 .removeNonEnglishSubtitles,
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
+                .clearAllTags,
                 .normalizeFilename,
                 .addExternalSubtitle,
                 .convertVideoIfNotAV1OrHEVC,

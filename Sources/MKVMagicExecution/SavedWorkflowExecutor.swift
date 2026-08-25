@@ -62,6 +62,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         source: MediaAsset,
         trackRemoval: TrackRemoval?,
         removesSegmentTitle: Bool,
+        clearsAllTags: Bool = false,
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
@@ -74,7 +75,8 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             throw SavedWorkflowExecutionError.unsupportedContainer
         }
         let hasMediaOperations =
-            trackRemoval != nil || removesSegmentTitle || externalSubtitleInput != nil
+            trackRemoval != nil || removesSegmentTitle || clearsAllTags
+            || externalSubtitleInput != nil
         guard hasMediaOperations || createsUnchangedCopy else {
             throw SavedWorkflowExecutionError.noOperations
         }
@@ -106,6 +108,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                 metadata: externalSubtitleInput.metadata,
                 trackRemoval: trackRemoval,
                 removesSegmentTitle: removesSegmentTitle,
+                clearsAllTags: clearsAllTags,
                 destinationURL: destinationURL,
                 onStage: onStage
             )
@@ -133,7 +136,13 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                     )
                 }
                 if removesSegmentTitle {
-                    try await editor.editSegmentTitle(at: outputURL, title: nil)
+                    try await editor.editSegmentTitle(
+                        at: outputURL,
+                        title: nil,
+                        clearAllTags: clearsAllTags
+                    )
+                } else if clearsAllTags {
+                    try await editor.clearAllTags(at: outputURL)
                 }
             },
             verify: { output in
@@ -142,6 +151,13 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         original: source,
                         output: output,
                         removal: trackRemoval,
+                        segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
+                        tags: clearsAllTags ? .removeAll : .preserve
+                    )
+                } else if clearsAllTags {
+                    try MatroskaTagRemovalOutputVerifier().verify(
+                        original: source,
+                        output: output,
                         segmentTitle: removesSegmentTitle ? .set(nil) : .preserve
                     )
                 } else if removesSegmentTitle {

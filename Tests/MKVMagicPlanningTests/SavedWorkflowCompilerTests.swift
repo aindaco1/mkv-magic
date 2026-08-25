@@ -5,6 +5,100 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testClearAllTagsCompilesConditionallyAndFusesWithTitleRemoval() throws {
+        let workflow = SavedWorkflow(
+            name: "Privacy cleanup",
+            steps: [
+                SavedWorkflowStep(action: .clearAllTags),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+        let tagged = makeConvertibleAsset(
+            title: "Feature",
+            globalTagCount: 2,
+            trackTagCount: 3
+        )
+
+        let preview = try SavedWorkflowCompiler().preview(workflow, for: tagged)
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertTrue(compiled.clearsAllTags)
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertEqual(compiled.operations, [.clearAllTags, .editSegmentTitle(nil)])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvPropEdit, .verify, .commit])
+        XCTAssertEqual(
+            preview.stepOutcomes.map(\.detail),
+            ["Remove 2 global and 3 track Matroska tags", "Remove the segment title"]
+        )
+
+        let alreadyClean = try SavedWorkflowCompiler().preview(
+            SavedWorkflow(
+                name: "Tags only",
+                steps: [SavedWorkflowStep(action: .clearAllTags)]
+            ),
+            for: makeConvertibleAsset()
+        )
+        XCTAssertNil(alreadyClean.compiledWorkflow)
+        XCTAssertEqual(alreadyClean.stepOutcomes.first?.disposition, .skipped)
+    }
+
+    func testExplicitTagRemovalUnlocksOneVideoConversionForTaggedMKV() throws {
+        let tagged = makeConvertibleAsset(globalTagCount: 1, trackTagCount: 2)
+        let conversionOnly = SavedWorkflow(
+            name: "Convert tagged file",
+            steps: [SavedWorkflowStep(action: .convertVideoHEVC)]
+        )
+        let inputs = SavedWorkflowResolvedInputs(
+            availableVideoPresets: [.hevcCompatibility]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(conversionOnly, for: tagged, inputs: inputs)
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unsupportedMediaConversion(.unsupportedTags)
+            )
+        }
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            SavedWorkflow(
+                name: "Clear then convert",
+                steps: [
+                    SavedWorkflowStep(action: .convertVideoHEVC),
+                    SavedWorkflowStep(action: .clearAllTags),
+                ]
+            ),
+            for: tagged,
+            inputs: inputs
+        )
+
+        XCTAssertTrue(compiled.clearsAllTags)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvPropEdit, .ffmpegEncode, .verify, .commit]
+        )
+    }
+
+    func testClearAllTagsRequiresReviewedTagCounts() {
+        let workflow = SavedWorkflow(
+            name: "Tags",
+            steps: [SavedWorkflowStep(action: .clearAllTags)]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(workflow, for: makeAsset())
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unavailableMatroskaTagCounts
+            )
+        }
+    }
+
     func testRecommendedConversionBindsLocalPresetAndRunsAfterDeterministicEdits() throws {
         let workflow = SavedWorkflow(
             name: "Clean and convert",
@@ -1163,7 +1257,9 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         audioCodec: String = "aac",
         additionalAudioCodec: String? = nil,
         audioChannels: Int = 2,
-        audioLayout: String = "stereo"
+        audioLayout: String = "stereo",
+        globalTagCount: Int = 0,
+        trackTagCount: Int = 0
     ) -> MediaAsset {
         var tracks = [
             MediaTrack(
@@ -1224,8 +1320,8 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             tracks: tracks,
             metadata: title.map { ["title": $0] } ?? [:],
             chapterEntryCount: 0,
-            globalTagCount: 0,
-            trackTagCount: 0,
+            globalTagCount: globalTagCount,
+            trackTagCount: trackTagCount,
             segmentUID: "SOURCE"
         )
     }

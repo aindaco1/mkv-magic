@@ -97,6 +97,24 @@ final class OutputVerificationTests: XCTestCase {
         }
     }
 
+    func testTagRemovalCanAlsoApplyReviewedSegmentTitleDeletion() throws {
+        let original = asset(
+            title: "Remove Me",
+            globalTagCount: 1,
+            trackTagCount: 0,
+            extraMetadata: ["COMMENT": "Remove this tag"]
+        )
+        let output = asset(title: nil)
+
+        XCTAssertNoThrow(
+            try MatroskaTagRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                segmentTitle: .set(nil)
+            )
+        )
+    }
+
     func testTrackMetadataVerifierAcceptsOnlyTheSelectedSemanticChanges() throws {
         let originalTrack = MediaTrack(
             id: 0,
@@ -258,6 +276,47 @@ final class OutputVerificationTests: XCTestCase {
         ) { error in
             XCTAssertEqual(error as? OutputVerificationError, .titleMismatch)
         }
+    }
+
+    func testTrackRemovalVerifierCanIntentionallyClearAllTagsInSameRemux() throws {
+        let taggedVideo = MediaTrack(
+            id: 0,
+            kind: .video,
+            codec: "av1",
+            uid: 10,
+            tags: ["ARTIST": "Fixture"]
+        )
+        let audio = MediaTrack(
+            id: 1,
+            kind: .audio,
+            codec: "aac",
+            uid: 20,
+            tags: ["COMMENT": "Remove"]
+        )
+        let clearedVideo = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let original = asset(
+            title: "Remove Me",
+            tracks: [taggedVideo, audio],
+            globalTagCount: 1,
+            trackTagCount: 2,
+            extraMetadata: ["COMMENT": "Remove"]
+        )
+        let output = asset(
+            title: nil,
+            tracks: [clearedVideo],
+            segmentUID: "2233",
+            encoder: "mkvmerge"
+        )
+
+        XCTAssertNoThrow(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                removal: TrackRemoval(trackUIDs: [20]),
+                segmentTitle: .set(nil),
+                tags: .removeAll
+            )
+        )
     }
 
     func testTrackRemovalVerifierRejectsMaterialDurationChange() throws {

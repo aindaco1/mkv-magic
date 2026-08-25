@@ -634,7 +634,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v9 preserves that boundary. v1-v8 workflows
+identifier—and current schema v10 preserves that boundary. v1-v9 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 When the user explicitly adds this reviewed run to the production queue, its
@@ -665,9 +665,24 @@ input, only filename cleanup may accompany it: track, metadata, subtitle, and
 transcode cards fail closed until the compiler can map their semantics across
 container identities without guessing. The editor prevents those active
 combinations but retains disabled cards. The automatic queue re-inspects and
-recompiles schema-v9 intent, requires the same reviewed semantic plan and exact
+recompiles current intent, requires the same reviewed semantic plan and exact
 source revision, classifies it as lightweight work, and executes through the
 same packet and chapter verifier as the standalone action.
+
+Schema v10 adds **If present: Remove all Matroska tags**. The portable card
+stores only conditional intent, not tag XML, counts, values, a media path, or
+track identity. Compilation requires reviewed nonnegative global and track tag
+counts, skips a tag-free MKV, and reports the exact counts that will be removed.
+Execution clears global and track tags on a verified output with
+mkvpropedit --tags all:. When segment-title removal also applies, both edits
+share one fail-closed property-editor invocation. Track cleanup or external
+subtitle muxing performs at most one remux followed by that one property pass.
+An explicit tag-removal card also permits a tagged MKV to enter the existing
+complete-file conversion path: a verified private tag-free intermediate is
+created first, followed by exactly one final video/audio conversion. Output
+verification requires zero tag counts and unchanged unrelated tracks, nested
+chapters, attachments, metadata, and source bytes. Immediate and automatic
+queue execution use the same compiler and verified transaction.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1283,7 +1298,7 @@ subtitle, title, or chapter edits. Filename review is forced to `.mkv`, and
 automatic queue reinspection must reproduce the same codec-bearing plan before
 the direct one-process executor can run.
 Portable saved workflows now share the complete-file conversion path. Their
-schema-v9 cards choose the local recommendation, one explicit video preset, or
+schema-v10 cards choose the local recommendation, one explicit video preset, or
 the lossless-first AV1/HEVC condition, plus an optional AAC, Opus, AC-3, E-AC-3,
 or FLAC audio policy that may also run without video conversion. Plan
 review binds both locally verified choices and composes deterministic cleanup
@@ -1340,8 +1355,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v9
-retains that boundary and strictly migrates v1-v8 without allowing an older
+only the naming intent, never a source or generated filename; current schema v10
+retains that boundary and strictly migrates v1-v9 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 
@@ -1425,7 +1440,7 @@ continues across the private intermediate, final generation, pre-commit check,
 and committed reopen audit.
 
 Portable common-media remux uses that automatic boundary as lightweight work.
-The queued recipe persists only schema-v9 intent; each admission resolves fresh
+The queued recipe persists only current portable intent; each admission resolves fresh
 stream and chapter facts, requires the same reviewed zero-encode plan, binds the
 exact original revision, and invokes the verified MKV remux executor directly.
 

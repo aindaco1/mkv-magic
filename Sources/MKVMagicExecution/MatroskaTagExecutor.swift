@@ -174,8 +174,7 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
 }
 
 public struct MatroskaTagExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
-    private let mkvpropeditURL: URL
-    private let runner: Runner
+    private let propertyEditor: MKVPropertyEditor<Runner>
     private let inspector: Inspector
     private let extractor: MatroskaTagDocumentExtractor<Runner>
     private let removalVerifier = MatroskaTagRemovalOutputVerifier()
@@ -186,8 +185,7 @@ public struct MatroskaTagExecutor<Runner: CommandRunning, Inspector: MediaInspec
         runner: Runner,
         inspector: Inspector
     ) {
-        self.mkvpropeditURL = mkvpropeditURL
-        self.runner = runner
+        propertyEditor = MKVPropertyEditor(executableURL: mkvpropeditURL, runner: runner)
         self.inspector = inspector
         extractor = MatroskaTagDocumentExtractor(mkvextractURL: mkvextractURL, runner: runner)
     }
@@ -345,26 +343,13 @@ public struct MatroskaTagExecutor<Runner: CommandRunning, Inspector: MediaInspec
     }
 
     private func clearTags(in outputURL: URL) async throws {
-        let result = try await runner.run(
-            CommandRequest(
-                executableURL: mkvpropeditURL,
-                arguments: ["--abort-on-warnings", outputURL.path, "--tags", "all:"],
-                timeout: 120,
-                outputLimit: 1_048_576
-            )
-        )
-        guard result.exitCode == 0,
-            !result.standardOutput.wasTruncated,
-            !result.standardError.wasTruncated
-        else {
-            let message =
-                [result.standardError.text, result.standardOutput.text]
-                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                ?? "Unknown tool error"
+        do {
+            try await propertyEditor.clearAllTags(at: outputURL)
+        } catch MKVPropertyEditError.toolFailed(let exitCode, let message) {
             throw MatroskaTagExecutionError.toolFailed(
                 tool: "mkvpropedit",
-                exitCode: result.exitCode,
-                message: String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+                exitCode: exitCode,
+                message: message
             )
         }
     }

@@ -1509,9 +1509,26 @@ final class RealToolAppHistoryTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: fixtureRoot) }
 
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
+        let base = fixtureRoot.appendingPathComponent("base.mkv")
         let source = fixtureRoot.appendingPathComponent("Queued Movie.mkv")
         let output = fixtureRoot.appendingPathComponent("Queued Movie — Prepared.mkv")
+        let globalTags = fixtureRoot.appendingPathComponent("global.xml")
+        let trackTags = fixtureRoot.appendingPathComponent("track.xml")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
+        try Data(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE Tags SYSTEM "matroskatags.dtd">
+            <Tags><Tag><Targets /><Simple><Name>COMMENT</Name><String>Queue private value</String></Simple></Tag></Tags>
+            """.utf8
+        ).write(to: globalTags)
+        try Data(
+            """
+            <?xml version="1.0" encoding="UTF-8"?>
+            <!DOCTYPE Tags SYSTEM "matroskatags.dtd">
+            <Tags><Tag><Targets /><Simple><Name>ARTIST</Name><String>Queue private artist</String></Simple></Tag></Tags>
+            """.utf8
+        ).write(to: trackTags)
         let createResult = try await runner.run(
             CommandRequest(
                 executableURL: try catalog.url(for: .ffmpeg),
@@ -1519,12 +1536,25 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "-hide_banner", "-loglevel", "error",
                     "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
                     "-c:a", "aac", "-metadata", "title=Remove Automatically",
-                    source.path,
+                    base.path,
                 ],
                 timeout: 60
             )
         )
         XCTAssertEqual(createResult.exitCode, 0, createResult.standardError.text)
+        let tagResult = try await runner.run(
+            CommandRequest(
+                executableURL: try catalog.url(for: .mkvmerge),
+                arguments: [
+                    "--output", source.path,
+                    "--global-tags", globalTags.path,
+                    "--tags", "0:\(trackTags.path)",
+                    base.path,
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(tagResult.exitCode, 0, tagResult.standardError.text)
         let sourceDigest = SHA256.hash(data: try Data(contentsOf: source))
 
         let applicationSupport = fixtureRoot.appendingPathComponent(
@@ -1551,10 +1581,14 @@ final class RealToolAppHistoryTests: XCTestCase {
         await model.addFiles([source])
         let asset = try XCTUnwrap(model.assets.first)
         let workflow = SavedWorkflow(
-            name: "Remove reviewed title",
-            steps: [SavedWorkflowStep(action: .removeSegmentTitle)]
+            name: "Remove reviewed title and tags",
+            steps: [
+                SavedWorkflowStep(action: .clearAllTags),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
+        XCTAssertTrue(compiled.clearsAllTags)
         let createdAt = Date()
         try await queueStore.save(
             MediaQueueSnapshot(isPaused: true, updatedAt: createdAt)
@@ -1578,12 +1612,21 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
         let outputAsset = try XCTUnwrap(model.assets.first { $0.sourceURL == output })
         XCTAssertNil(outputAsset.metadata["title"])
+        XCTAssertEqual(outputAsset.globalTagCount, 0)
+        XCTAssertEqual(outputAsset.trackTagCount, 0)
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)
         XCTAssertEqual(records.first?.inputDisplayNames, [source.lastPathComponent])
         XCTAssertEqual(records.first?.outputDisplayName, output.lastPathComponent)
         XCTAssertEqual(records.first?.events.last?.state, .succeeded)
+        XCTAssertEqual(
+            records.first?.privacySafePlan,
+            MediaJobPlanFacts(videoEncodeGenerations: 0, audioTracksEncoded: 0)
+        )
+        let serializedMessages = records.first?.events.compactMap(\.message).joined(separator: " ")
+        XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
+        XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
 
     @MainActor
