@@ -9,6 +9,8 @@ cleanup() {
 trap cleanup EXIT
 release_root="$gate_root/artifacts"
 export MKV_MAGIC_BUNDLE_IDENTIFIER=com.dustwave.mkvmagic.package-gate
+export MKV_MAGIC_TOOL_SOURCE_ROOT=''
+export MKV_MAGIC_REQUIRE_TOOLS=0
 private_rehearsal_build=20260825
 fixture_release_build=1787702400
 

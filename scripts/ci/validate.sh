@@ -17,6 +17,7 @@ actionlint -color
 ./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-release-build-number.sh
 ./scripts/ci/test-release-notes.sh
+./scripts/ci/test-release-source-isolation.sh
 ./scripts/ci/test-release-tag-containment.sh
 ./scripts/ci/test-repository-release-controls.sh
 ./scripts/ci/test-runtime-build-dependencies.sh

@@ -12,6 +12,7 @@ validator="$repo_root/scripts/release/validate-release-notes.sh"
 notes="$repo_root/docs/releases/0.1.0.md"
 
 "$validator" 0.1.0 >/dev/null
+"$validator" 0.1.2 >/dev/null
 
 expect_rejection() {
     local description="$1"

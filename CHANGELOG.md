@@ -5,6 +5,11 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.2 - 2026-08-25
+
+- Isolate the source/package rehearsal from release-only runtime paths so the
+  production tool tree is required only after it has been built and verified.
+
 ## 0.1.1 - 2026-08-25
 
 - Verify signed release-tag ancestry against freshly fetched `origin/main` so

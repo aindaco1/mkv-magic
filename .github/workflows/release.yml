@@ -94,6 +94,9 @@ jobs:
           pkgconf ripgrep shellcheck
 
       - name: Validate source
+        env:
+          MKV_MAGIC_TOOL_SOURCE_ROOT: ""
+          MKV_MAGIC_REQUIRE_TOOLS: "0"
         run: ./scripts/ci/local-gate.sh
 
       - name: Build verified Universal media runtime
