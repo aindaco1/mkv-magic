@@ -226,7 +226,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                 codec: "subrip",
                 uid: 12,
                 language: "en",
-                title: "Forced Commentary"
+                title: "Forced SDH Commentary"
             ),
         ]
         let edits = try SavedWorkflowCompiler().compile(
@@ -236,6 +236,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                     SavedWorkflowStep(action: .markCommentaryTracks),
                     SavedWorkflowStep(action: .normalizeCommentaryNames),
                     SavedWorkflowStep(action: .markForcedSubtitles),
+                    SavedWorkflowStep(action: .markSDHSubtitles),
                 ]
             ),
             for: MediaAsset(sourceURL: file, container: "matroska", tracks: tracks)
@@ -263,6 +264,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                 "--set", "flag-commentary=1",
                 "--edit", "track:=12", "--set", "name=Commentary",
                 "--set", "flag-forced=1", "--set", "flag-commentary=1",
+                "--set", "flag-hearing-impaired=1",
             ]
         )
     }

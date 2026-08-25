@@ -12,6 +12,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 SavedWorkflowStep(action: .markCommentaryTracks),
                 SavedWorkflowStep(action: .normalizeCommentaryNames),
                 SavedWorkflowStep(action: .markForcedSubtitles),
+                SavedWorkflowStep(action: .markSDHSubtitles),
                 SavedWorkflowStep(action: .clearAllTags),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
@@ -37,8 +38,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                     codec: "subrip",
                     uid: 12,
                     language: "en",
-                    title: "Forced Commentary",
-                    isHearingImpaired: true
+                    title: "Forced SDH Commentary"
                 ),
             ],
             metadata: ["title": "Private Movie"],
@@ -54,6 +54,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertTrue(compiled.trackMetadataEdits.allSatisfy(\.isCommentary))
         XCTAssertFalse(compiled.trackMetadataEdits[0].isForced)
         XCTAssertTrue(compiled.trackMetadataEdits[1].isForced)
+        XCTAssertTrue(compiled.trackMetadataEdits[1].isHearingImpaired)
         XCTAssertEqual(
             compiled.plan.stages.map(\.mechanism),
             [.mkvPropEdit, .verify, .commit]
@@ -64,6 +65,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 "Mark 2 clearly named commentary tracks",
                 "Normalize 2 commentary track names",
                 "Mark 1 clearly named forced subtitle",
+                "Mark 1 clearly named SDH subtitle",
                 "Remove 1 global and 1 track Matroska tags",
                 "Remove the segment title",
             ]
@@ -74,6 +76,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertTrue(json.contains("markCommentaryTracks"))
         XCTAssertTrue(json.contains("normalizeCommentaryNames"))
         XCTAssertTrue(json.contains("markForcedSubtitles"))
+        XCTAssertTrue(json.contains("markSDHSubtitles"))
         XCTAssertFalse(json.contains("trackUID"))
         XCTAssertFalse(json.contains("Director Commentary"))
         XCTAssertFalse(json.contains("Private Movie"))

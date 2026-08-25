@@ -195,6 +195,11 @@ semantic versioning; public release tags are immutable and signed.
   only Matroska's forced flag, preserve defaults/enabled state and every other
   field and packet, and merge overlapping role/name intent into one edit per
   stable UID without persisting private track facts.
+- Add portable schema-v15 **If useful: Mark SDH subtitles** intent. Match only
+  distinct `SDH`, `CC`, or `hearing impaired` subtitle-name signals, set only
+  Matroska's hearing-impaired flag, preserve every other field and packet, and
+  merge overlapping commentary/name/forced/SDH intent into the existing single
+  verified property pass without persisting private track facts.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track

@@ -650,7 +650,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v14 preserves that boundary. v1-v13 workflows
+identifier—and current schema v15 preserves that boundary. v1-v14 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 When the user explicitly adds this reviewed run to the production queue, its
@@ -753,6 +753,19 @@ attachments, and tag policy. Overlapping commentary-role, commentary-name, and
 forced-role intent is merged by stable UID into one edit per track and the same
 single fail-closed property pass. The portable recipe and sanitized History
 retain only the action and count-level outcome, never resolved UIDs or names.
+
+Schema v15 adds **If useful: Mark SDH subtitles**. Compilation considers only
+subtitle tracks whose hearing-impaired role is currently unset and whose
+inspected name contains the distinct case-insensitive token `sdh`, `cc`,
+`hearingimpaired`, or the adjacent words `hearing impaired`. Audio/video tracks,
+already marked subtitles, and substring lookalikes are unchanged. Every match
+must have a UID unique across the complete track table. The ephemeral edit sets
+only `flag-hearing-impaired=1`, preserving the name, canonical language meaning,
+default, forced, enabled and every other role, technical facts, packets,
+chapters, attachments, and tag policy. All commentary, name, forced, and SDH
+role intent targeting one UID becomes one edit in the same fail-closed property
+pass. The portable recipe and sanitized History retain only the action and
+count-level outcome, never resolved UIDs or private names.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1425,8 +1438,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v14
-retains that boundary and strictly migrates v1-v13 without allowing an older
+only the naming intent, never a source or generated filename; current schema v15
+retains that boundary and strictly migrates v1-v14 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 
@@ -1698,7 +1711,7 @@ percentage alone establishes correctness or UX acceptance.
 
 The public-beta continuation separately aggregates every production target
 other than the AppKit executable and enforces at least 80% non-UI line coverage.
-The current instrumented result is 88.68% (22,398 of 25,257 lines). The AppKit
+The current instrumented result is 88.65% (22,484 of 25,362 lines). The AppKit
 target remains in the all-source floors and retains focused policy,
 accessibility, launch, and manual UX acceptance rather than being excluded from
 coverage reporting.

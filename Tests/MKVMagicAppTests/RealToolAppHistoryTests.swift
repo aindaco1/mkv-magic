@@ -1565,7 +1565,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "--attach-file", font.path,
                     base.path,
                     "--language", "0:en",
-                    "--track-name", "0:English Forced",
+                    "--track-name", "0:English Forced SDH",
                     forcedSubtitle.path,
                 ],
                 timeout: 60
@@ -1610,6 +1610,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                 SavedWorkflowStep(action: .markCommentaryTracks),
                 SavedWorkflowStep(action: .normalizeCommentaryNames),
                 SavedWorkflowStep(action: .markForcedSubtitles),
+                SavedWorkflowStep(action: .markSDHSubtitles),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
@@ -1652,8 +1653,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertEqual(commentaryTrack?.title, "Commentary")
         XCTAssertTrue(commentaryTrack?.isCommentary == true)
         let forcedTrack = outputAsset.tracks.first(where: { $0.kind == .subtitle })
-        XCTAssertEqual(forcedTrack?.title, "English Forced")
+        XCTAssertEqual(forcedTrack?.title, "English Forced SDH")
         XCTAssertTrue(forcedTrack?.isForced == true)
+        XCTAssertTrue(forcedTrack?.isHearingImpaired == true)
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)
@@ -1668,7 +1670,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
         XCTAssertFalse(serializedMessages?.contains(poster.lastPathComponent) == true)
         XCTAssertFalse(serializedMessages?.contains("Director Commentary") == true)
-        XCTAssertFalse(serializedMessages?.contains("English Forced") == true)
+        XCTAssertFalse(serializedMessages?.contains("English Forced SDH") == true)
         XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
 

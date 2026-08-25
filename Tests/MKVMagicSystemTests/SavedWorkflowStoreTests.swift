@@ -147,7 +147,7 @@ final class SavedWorkflowStoreTests: XCTestCase {
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 14"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
         XCTAssertTrue(json.contains("clearAllTags"))
         XCTAssertFalse(json.contains("globalTagCount"))
         XCTAssertFalse(json.contains("trackTagCount"))
@@ -164,7 +164,7 @@ final class SavedWorkflowStoreTests: XCTestCase {
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 14"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
         XCTAssertTrue(json.contains("removeImageAttachments"))
         XCTAssertFalse(json.contains("attachmentUID"))
         XCTAssertFalse(json.contains("filename"))
@@ -182,7 +182,7 @@ final class SavedWorkflowStoreTests: XCTestCase {
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 14"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
         XCTAssertTrue(json.contains("markCommentaryTracks"))
         XCTAssertFalse(json.contains("trackUID"))
         XCTAssertFalse(json.contains("trackName"))
@@ -200,7 +200,7 @@ final class SavedWorkflowStoreTests: XCTestCase {
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 14"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
         XCTAssertTrue(json.contains("normalizeCommentaryNames"))
         XCTAssertFalse(json.contains("trackUID"))
         XCTAssertFalse(json.contains("Director Commentary"))
@@ -218,13 +218,50 @@ final class SavedWorkflowStoreTests: XCTestCase {
         let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
         let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
 
-        XCTAssertTrue(json.contains("\"schemaVersion\" : 14"))
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
         XCTAssertTrue(json.contains("markForcedSubtitles"))
         XCTAssertFalse(json.contains("trackUID"))
         XCTAssertFalse(json.contains("forcedCount"))
         XCTAssertFalse(json.contains("trackName"))
         XCTAssertFalse(json.contains("sourceURL"))
         XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testPortableSDHSubtitleMarkingStoresNoResolvedTrackFacts() throws {
+        let workflow = SavedWorkflow(
+            name: "SDH roles",
+            steps: [SavedWorkflowStep(action: .markSDHSubtitles)]
+        )
+
+        let encoded = try JSONSavedWorkflowStore.encodePortableFile(workflow)
+        let json = try XCTUnwrap(String(data: encoded, encoding: .utf8))
+
+        XCTAssertTrue(json.contains("\"schemaVersion\" : 15"))
+        XCTAssertTrue(json.contains("markSDHSubtitles"))
+        XCTAssertFalse(json.contains("trackUID"))
+        XCTAssertFalse(json.contains("hearingImpairedCount"))
+        XCTAssertFalse(json.contains("trackName"))
+        XCTAssertFalse(json.contains("sourceURL"))
+        XCTAssertEqual(try JSONSavedWorkflowStore.decodePortableFile(encoded), workflow)
+    }
+
+    func testVersionFourteenMigratesButCannotClaimVersionFifteenSDHMarking() throws {
+        let valid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":14,"name":"Forced","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"markForcedSubtitles"}]}"#
+                .utf8
+        )
+        XCTAssertEqual(
+            try JSONSavedWorkflowStore.decodePortableFile(valid).schemaVersion,
+            SavedWorkflow.currentSchemaVersion
+        )
+
+        let invalid = Data(
+            #"{"id":"B989848F-887B-4861-AF7E-ADE3E6E64883","schemaVersion":14,"name":"Invalid SDH backport","steps":[{"id":"22D43583-1382-4778-A4EC-D8618D3A6A4B","isEnabled":true,"action":"markSDHSubtitles"}]}"#
+                .utf8
+        )
+        XCTAssertThrowsError(try JSONSavedWorkflowStore.decodePortableFile(invalid)) {
+            XCTAssertEqual($0 as? SavedWorkflowStoreError, .unsupportedSchema)
+        }
     }
 
     func testVersionThirteenMigratesButCannotClaimVersionFourteenForcedMarking() throws {

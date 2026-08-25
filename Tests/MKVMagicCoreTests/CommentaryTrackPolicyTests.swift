@@ -326,4 +326,95 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
     }
+
+    func testMarksOnlyClearlyNamedUnmarkedHearingImpairedSubtitles() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/SDH.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 10,
+                    language: "en",
+                    title: "English SDH",
+                    isDefault: true
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 11,
+                    title: "English CC",
+                    isForced: true
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 12,
+                    title: "Hearing-Impaired"
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 13,
+                    title: "SDH"
+                ),
+                MediaTrack(
+                    id: 4,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 14,
+                    title: "SDHless"
+                ),
+                MediaTrack(
+                    id: 5,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 15,
+                    title: "English SDH",
+                    isHearingImpaired: true
+                ),
+                MediaTrack(
+                    id: 6,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 16,
+                    title: "English HearingImpaired"
+                ),
+            ]
+        )
+
+        let edits = try HearingImpairedSubtitlePolicy.metadataEdits(in: asset)
+
+        XCTAssertEqual(edits.map(\.trackUID), [10, 11, 12, 16])
+        XCTAssertTrue(edits.allSatisfy(\.isHearingImpaired))
+        XCTAssertTrue(edits[0].isDefault)
+        XCTAssertTrue(edits[1].isForced)
+        XCTAssertEqual(edits[2].name, "Hearing-Impaired")
+    }
+
+    func testHearingImpairedSubtitleMarkingRequiresUniqueStableIdentity() {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Unstable SDH.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 8,
+                    title: "English SDH"
+                ),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 8),
+            ]
+        )
+
+        XCTAssertThrowsError(try HearingImpairedSubtitlePolicy.metadataEdits(in: asset)) {
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
+        }
+    }
 }

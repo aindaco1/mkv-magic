@@ -88,6 +88,34 @@ public enum ForcedSubtitlePolicy {
     }
 }
 
+/// Produces per-run edits only for clearly named, currently unmarked SDH tracks.
+public enum HearingImpairedSubtitlePolicy {
+    public static func metadataEdits(in asset: MediaAsset) throws -> [TrackMetadataEdit] {
+        let stableTrackUIDs = uniqueTrackUIDs(in: asset.tracks)
+        let candidates = asset.tracks.filter { track in
+            track.kind == .subtitle
+                && !track.isHearingImpaired
+                && titleIdentifiesHearingImpairedSubtitles(track.title)
+        }
+        guard candidates.allSatisfy({ $0.uid.map(stableTrackUIDs.contains) == true }) else {
+            throw TrackRolePolicyError.unstableTrackIdentity
+        }
+        return try candidates.map { track in
+            try roleMetadataEdit(for: track, isHearingImpaired: true)
+        }
+    }
+
+    private static func titleIdentifiesHearingImpairedSubtitles(_ title: String?) -> Bool {
+        let tokens = normalizedTitleTokens(title)
+        if tokens.contains("sdh") || tokens.contains("cc") || tokens.contains("hearingimpaired") {
+            return true
+        }
+        return tokens.enumerated().contains { index, token in
+            token == "hearing" && index + 1 < tokens.count && tokens[index + 1] == "impaired"
+        }
+    }
+}
+
 private func uniqueTrackUIDs(in tracks: [MediaTrack]) -> Set<UInt64> {
     let counts = tracks.compactMap(\.uid).reduce(into: [UInt64: Int]()) { counts, uid in
         counts[uid, default: 0] += 1
@@ -96,16 +124,20 @@ private func uniqueTrackUIDs(in tracks: [MediaTrack]) -> Set<UInt64> {
 }
 
 private func titleContainsDistinctToken(_ token: String, in title: String?) -> Bool {
-    guard let title else { return false }
+    normalizedTitleTokens(title).contains(Substring(token))
+}
+
+private func normalizedTitleTokens(_ title: String?) -> [Substring] {
+    guard let title else { return [] }
     return title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-        .contains(Substring(token))
 }
 
 private func roleMetadataEdit(
     for track: MediaTrack,
     name: String? = nil,
     isForced: Bool? = nil,
-    isCommentary: Bool? = nil
+    isCommentary: Bool? = nil,
+    isHearingImpaired: Bool? = nil
 ) throws -> TrackMetadataEdit {
     let original = try TrackMetadataEdit(track: track)
     return TrackMetadataEdit(
@@ -116,7 +148,7 @@ private func roleMetadataEdit(
         isForced: isForced ?? original.isForced,
         isEnabled: original.isEnabled,
         isCommentary: isCommentary ?? original.isCommentary,
-        isHearingImpaired: original.isHearingImpaired,
+        isHearingImpaired: isHearingImpaired ?? original.isHearingImpaired,
         isVisualImpaired: original.isVisualImpaired,
         isOriginal: original.isOriginal,
         isTextDescription: original.isTextDescription

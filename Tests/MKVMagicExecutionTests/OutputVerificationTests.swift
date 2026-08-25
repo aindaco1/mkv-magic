@@ -202,7 +202,7 @@ final class OutputVerificationTests: XCTestCase {
             codec: "subrip",
             uid: 42,
             language: "en",
-            title: "Forced Commentary"
+            title: "Forced SDH Commentary"
         )
         let markedAudio = MediaTrack(
             id: 0,
@@ -214,6 +214,17 @@ final class OutputVerificationTests: XCTestCase {
             isCommentary: true
         )
         let markedSubtitle = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            uid: 42,
+            language: "en",
+            title: "Commentary",
+            isForced: true,
+            isCommentary: true,
+            isHearingImpaired: true
+        )
+        let missingSDHRole = MediaTrack(
             id: 1,
             kind: .subtitle,
             codec: "subrip",
@@ -237,6 +248,7 @@ final class OutputVerificationTests: XCTestCase {
                     SavedWorkflowStep(action: .markCommentaryTracks),
                     SavedWorkflowStep(action: .normalizeCommentaryNames),
                     SavedWorkflowStep(action: .markForcedSubtitles),
+                    SavedWorkflowStep(action: .markSDHSubtitles),
                 ]
             ),
             for: original
@@ -255,6 +267,17 @@ final class OutputVerificationTests: XCTestCase {
             try TrackMetadataOutputVerifier().verify(
                 original: original,
                 output: asset(title: nil, tracks: [markedAudio, commentarySubtitle]),
+                expectedEdits: edits,
+                segmentTitle: .set(nil),
+                tags: .removeAll
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .trackMetadataMismatch)
+        }
+        XCTAssertThrowsError(
+            try TrackMetadataOutputVerifier().verify(
+                original: original,
+                output: asset(title: nil, tracks: [markedAudio, missingSDHRole]),
                 expectedEdits: edits,
                 segmentTitle: .set(nil),
                 tags: .removeAll

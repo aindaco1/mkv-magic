@@ -465,17 +465,31 @@ public struct SavedWorkflowCompiler: Sendable {
         } else {
             forcedSubtitleEdits = []
         }
+        let hearingImpairedSubtitleEdits: [TrackMetadataEdit]
+        if enabledActions.contains(.markSDHSubtitles) {
+            do {
+                hearingImpairedSubtitleEdits = try HearingImpairedSubtitlePolicy.metadataEdits(
+                    in: asset
+                )
+            } catch TrackRolePolicyError.unstableTrackIdentity {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+        } else {
+            hearingImpairedSubtitleEdits = []
+        }
         let roleMetadataEdits = mergedTrackRoleEdits(
             asset: asset,
             commentaryFlagEdits: commentaryFlagEdits,
             commentaryNameEdits: commentaryNameEdits,
-            forcedSubtitleEdits: forcedSubtitleEdits
+            forcedSubtitleEdits: forcedSubtitleEdits,
+            hearingImpairedSubtitleEdits: hearingImpairedSubtitleEdits
         )
         let roleOperationInsertionAction = enabledSteps.first { step in
             switch step.action {
             case .markCommentaryTracks: !commentaryFlagEdits.isEmpty
             case .normalizeCommentaryNames: !commentaryNameEdits.isEmpty
             case .markForcedSubtitles: !forcedSubtitleEdits.isEmpty
+            case .markSDHSubtitles: !hearingImpairedSubtitleEdits.isEmpty
             default: false
             }
         }?.action
@@ -710,6 +724,34 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .applied,
                             detail: "Mark \(count) clearly named forced \(noun)"
+                        )
+                    )
+                }
+            case .markSDHSubtitles:
+                if hearingImpairedSubtitleEdits.isEmpty {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail:
+                                "No unmarked subtitle track is clearly named SDH or hearing impaired."
+                        )
+                    )
+                } else {
+                    if roleOperationInsertionAction == step.action {
+                        operations.append(
+                            contentsOf: roleMetadataEdits.map(
+                                WorkflowOperation.editTrackMetadata
+                            )
+                        )
+                    }
+                    let count = hearingImpairedSubtitleEdits.count
+                    let noun = count == 1 ? "subtitle" : "subtitles"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Mark \(count) clearly named SDH \(noun)"
                         )
                     )
                 }
@@ -1011,7 +1053,8 @@ public struct SavedWorkflowCompiler: Sendable {
         asset: MediaAsset,
         commentaryFlagEdits: [TrackMetadataEdit],
         commentaryNameEdits: [TrackMetadataEdit],
-        forcedSubtitleEdits: [TrackMetadataEdit]
+        forcedSubtitleEdits: [TrackMetadataEdit],
+        hearingImpairedSubtitleEdits: [TrackMetadataEdit]
     ) -> [TrackMetadataEdit] {
         let commentaryFlagsByUID = Dictionary(
             uniqueKeysWithValues: commentaryFlagEdits.map { ($0.trackUID, $0) }
@@ -1022,10 +1065,13 @@ public struct SavedWorkflowCompiler: Sendable {
         let forcedSubtitlesByUID = Dictionary(
             uniqueKeysWithValues: forcedSubtitleEdits.map { ($0.trackUID, $0) }
         )
+        let hearingImpairedSubtitlesByUID = Dictionary(
+            uniqueKeysWithValues: hearingImpairedSubtitleEdits.map { ($0.trackUID, $0) }
+        )
         return asset.tracks.compactMap { track in
             guard let uid = track.uid,
                 let base = commentaryNamesByUID[uid] ?? commentaryFlagsByUID[uid]
-                    ?? forcedSubtitlesByUID[uid]
+                    ?? forcedSubtitlesByUID[uid] ?? hearingImpairedSubtitlesByUID[uid]
             else {
                 return nil
             }
@@ -1037,7 +1083,8 @@ public struct SavedWorkflowCompiler: Sendable {
                 isForced: forcedSubtitlesByUID[uid]?.isForced ?? base.isForced,
                 isEnabled: base.isEnabled,
                 isCommentary: commentaryFlagsByUID[uid]?.isCommentary ?? base.isCommentary,
-                isHearingImpaired: base.isHearingImpaired,
+                isHearingImpaired: hearingImpairedSubtitlesByUID[uid]?.isHearingImpaired
+                    ?? base.isHearingImpaired,
                 isVisualImpaired: base.isVisualImpaired,
                 isOriginal: base.isOriginal,
                 isTextDescription: base.isTextDescription
@@ -1082,6 +1129,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Normalize commentary track names"
         case .markForcedSubtitles:
             "Mark clearly named forced subtitles"
+        case .markSDHSubtitles:
+            "Mark clearly named SDH subtitles"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -1122,6 +1171,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Recognized commentary track names already follow the simple numbering convention."
         case .markForcedSubtitles:
             "No unmarked subtitle track contains the distinct word forced."
+        case .markSDHSubtitles:
+            "No unmarked subtitle track is clearly named SDH or hearing impaired."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

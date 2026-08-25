@@ -681,6 +681,7 @@ enum WorkflowEditorPolicy {
         .markCommentaryTracks,
         .normalizeCommentaryNames,
         .markForcedSubtitles,
+        .markSDHSubtitles,
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,

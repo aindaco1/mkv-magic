@@ -2651,6 +2651,7 @@ final class AppPolicyTests: XCTestCase {
                 .markCommentaryTracks,
                 .normalizeCommentaryNames,
                 .markForcedSubtitles,
+                .markSDHSubtitles,
                 .normalizeFilename,
                 .addExternalSubtitle,
                 .convertVideoIfNotAV1OrHEVC,
