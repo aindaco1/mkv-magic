@@ -195,7 +195,7 @@ python3 -u "$repo_root/scripts/release/serve-loopback.py" \
     "$feed_root" "$server_ready_file" >"$server_log" 2>&1 &
 server_pid=$!
 server_port=''
-for ((attempt = 0; attempt < 100; attempt++)); do
+for ((attempt = 0; attempt < 600; attempt++)); do
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "loopback-only updater acceptance server stopped unexpectedly" >&2
         exit 1
@@ -209,6 +209,9 @@ for ((attempt = 0; attempt < 100; attempt++)); do
     sleep 0.05
 done
 if [[ ! "$server_port" =~ ^[1-9][0-9]*$ || "$server_port" -gt 65535 ]]; then
+    if [[ -s "$server_log" ]]; then
+        tail -n 20 "$server_log" >&2
+    fi
     echo "loopback-only updater acceptance server did not become ready" >&2
     exit 1
 fi

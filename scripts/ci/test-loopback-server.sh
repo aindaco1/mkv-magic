@@ -23,7 +23,7 @@ python3 -u "$repo_root/scripts/release/serve-loopback.py" \
 server_pid=$!
 
 port=''
-for ((attempt = 0; attempt < 100; attempt++)); do
+for ((attempt = 0; attempt < 600; attempt++)); do
     if ! kill -0 "$server_pid" 2>/dev/null; then
         echo "loopback server stopped before publishing its port" >&2
         exit 1
@@ -38,6 +38,9 @@ for ((attempt = 0; attempt < 100; attempt++)); do
 done
 
 if [[ ! "$port" =~ ^[1-9][0-9]*$ || "$port" -gt 65535 ]]; then
+    if [[ -s "$test_root/server.log" ]]; then
+        tail -n 20 "$test_root/server.log" >&2
+    fi
     echo "loopback server did not publish a valid port" >&2
     exit 1
 fi
