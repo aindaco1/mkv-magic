@@ -35,7 +35,7 @@ validate_mkv_magic_tool_source_manifest() {
         ] | sort) and
         .dav1d.linkedStatically == true and
         .dav1d.license == "BSD-2-Clause" and
-        (.dav1d.url | startswith("https://code.videolan.org/videolan/dav1d/")) and
+        (.dav1d.url | startswith("https://download.videolan.org/pub/videolan/dav1d/")) and
         (.dav1d.sha256 | test("^[a-f0-9]{64}$")) and
         (.dav1d.build | sort) == ([
           "b_lto=false", "default_library=static", "enable_docs=false",

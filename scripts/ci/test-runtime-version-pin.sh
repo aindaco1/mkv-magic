@@ -22,12 +22,18 @@ assert_assignment \
 assert_assignment \
     mkvtoolnix_source_sha256 \
     f638b299e49cdd4efc4ab3c68dbb593ed6a61bd01bf8862da74ef7fb4d181ce8
+assert_assignment \
+    dav1d_sha256 \
+    686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
 
 grep -Fq \
     "MKVToolNix-\$mkvtoolnix_version-1-universal.dmg" \
     "$runtime_script"
 grep -Fq \
     "mkvtoolnix-\$mkvtoolnix_version.tar.xz" \
+    "$runtime_script"
+grep -Fq \
+    "dav1d_url=\"https://download.videolan.org/pub/videolan/dav1d/\$dav1d_version/dav1d-\$dav1d_version.tar.xz\"" \
     "$runtime_script"
 
 echo "runtime version pin tests passed"

@@ -14,8 +14,8 @@ svtav1_version=4.1.0
 svtav1_sha256=6c4c0c44ff0ba3d136d6f57f3a707f9de8e9c866f50f809c1d22a43f0d8c9583
 svtav1_url="https://gitlab.com/AOMediaCodec/SVT-AV1/-/archive/v$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz"
 dav1d_version=1.5.4
-dav1d_sha256=2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011
-dav1d_url="https://code.videolan.org/videolan/dav1d/-/archive/$dav1d_version/dav1d-$dav1d_version.tar.bz2"
+dav1d_sha256=686616b7c69eb88d44459391ab25cac13b6647a3b288835c5784e71c1514a5c5
+dav1d_url="https://download.videolan.org/pub/videolan/dav1d/$dav1d_version/dav1d-$dav1d_version.tar.xz"
 opus_version=1.6.1
 opus_sha256=6ffcb593207be92584df15b32466ed64bbec99109f007c82205f0194572411a1
 opus_url="https://downloads.xiph.org/releases/opus/opus-$opus_version.tar.gz"
@@ -71,7 +71,7 @@ download_verified() {
 ffmpeg_archive="$cache_root/ffmpeg-$ffmpeg_version/ffmpeg-$ffmpeg_version.tar.xz"
 nasm_archive="$cache_root/nasm-$nasm_version/nasm-$nasm_version.tar.xz"
 svtav1_archive="$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz"
-dav1d_archive="$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.bz2"
+dav1d_archive="$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.xz"
 opus_archive="$cache_root/opus-$opus_version/opus-$opus_version.tar.gz"
 zimg_archive="$cache_root/zimg-$zimg_version/zimg-release-$zimg_version.tar.gz"
 mkvtoolnix_dmg="$cache_root/mkvtoolnix-$mkvtoolnix_version/MKVToolNix-$mkvtoolnix_version-1-universal.dmg"
@@ -229,7 +229,7 @@ for architecture in arm64 x86_64; do
     dav1d_prefix="$build_root/dav1d-install-$architecture"
     dav1d_cross="$build_root/dav1d-$architecture.ini"
     mkdir "$dav1d_source"
-    tar -xjf "$dav1d_archive" -C "$dav1d_source" --strip-components 1
+    tar -xJf "$dav1d_archive" -C "$dav1d_source" --strip-components 1
     if [[ "$architecture" == arm64 ]]; then
         cpu_family=aarch64
         cpu=arm64
@@ -456,7 +456,7 @@ tar -xOf "$svtav1_archive" "SVT-AV1-v$svtav1_version/LICENSE.md" \
 tar -xOf "$svtav1_archive" "SVT-AV1-v$svtav1_version/PATENTS.md" \
     > "$output_root/Licenses/SVT-AV1/PATENTS.md"
 mkdir "$output_root/Licenses/dav1d"
-tar -xOjf "$dav1d_archive" "dav1d-$dav1d_version/COPYING" \
+tar -xOJf "$dav1d_archive" "dav1d-$dav1d_version/COPYING" \
     > "$output_root/Licenses/dav1d/COPYING"
 mkdir "$output_root/Licenses/Opus"
 tar -xOf "$opus_archive" "opus-$opus_version/COPYING" \

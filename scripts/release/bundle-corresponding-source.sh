@@ -82,7 +82,7 @@ copy_verified_source \
     "$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz" \
     "$(jq -r '.svtav1.sha256' "$sources")"
 copy_verified_source \
-    "$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.bz2" \
+    "$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.xz" \
     "$(jq -r '.dav1d.sha256' "$sources")"
 copy_verified_source \
     "$cache_root/opus-$opus_version/opus-$opus_version.tar.gz" \

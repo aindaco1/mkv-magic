@@ -26,6 +26,10 @@ corresponding source archive. Both SHA-256 values match the upstream checksum
 files. Qt Core remains at 6.11.1, matching the library embedded in the official
 101.0 DMG.
 
+The dav1d decoder source now uses VideoLAN's versioned release tarball and its
+published SHA-256 instead of GitLab's regenerated tag archive, keeping clean
+hosted builds reproducible.
+
 The rebuilt `arm64` and `x86_64` tool trees each report MKVToolNix 101.0 and pass
 the exact file hash, architecture, code-signature, deployment-target, packaged
 dependency, license, and source-manifest checks.

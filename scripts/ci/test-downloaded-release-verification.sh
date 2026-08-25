@@ -28,7 +28,7 @@ make_source_material() {
     local ffmpeg="$dependency_root/ffmpeg-9.0.1.tar.xz"
     local nasm="$dependency_root/nasm-3.02.tar.xz"
     local svt="$dependency_root/SVT-AV1-v4.1.0.tar.gz"
-    local dav1d="$dependency_root/dav1d-1.5.4.tar.bz2"
+    local dav1d="$dependency_root/dav1d-1.5.4.tar.xz"
     local opus="$dependency_root/opus-1.6.1.tar.gz"
     local zimg="$dependency_root/zimg-release-3.0.6.tar.gz"
     local mkv="$dependency_root/mkvtoolnix-100.0.tar.xz"
@@ -88,7 +88,7 @@ make_source_material() {
             patentLicense: "Alliance for Open Media Patent License 1.0"
           },
           dav1d: {
-            version: "1.5.4", url: "https://code.videolan.org/videolan/dav1d/fixture",
+            version: "1.5.4", url: "https://download.videolan.org/pub/videolan/dav1d/fixture",
             sha256: $dav1d, linkedStatically: true,
             build: ["b_lto=false", "default_library=static", "enable_docs=false",
               "enable_examples=false", "enable_tests=false", "enable_tools=false"],

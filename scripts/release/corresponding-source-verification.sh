@@ -127,7 +127,7 @@ validate_mkv_magic_corresponding_source() (
         "ffmpeg-$(jq -r '.ffmpeg.version' "$sources").tar.xz"
         "nasm-$(jq -r '.nasm.version' "$sources").tar.xz"
         "SVT-AV1-v$(jq -r '.svtav1.version' "$sources").tar.gz"
-        "dav1d-$(jq -r '.dav1d.version' "$sources").tar.bz2"
+        "dav1d-$(jq -r '.dav1d.version' "$sources").tar.xz"
         "opus-$(jq -r '.opus.version' "$sources").tar.gz"
         "zimg-release-$(jq -r '.zimg.version' "$sources").tar.gz"
         "mkvtoolnix-$(jq -r '.mkvtoolnix.version' "$sources").tar.xz"
