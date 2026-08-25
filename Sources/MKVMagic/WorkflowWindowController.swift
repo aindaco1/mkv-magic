@@ -677,6 +677,7 @@ enum WorkflowEditorPolicy {
         .removeRedundantEnglishSDH,
         .removeSegmentTitle,
         .clearAllTags,
+        .removeImageAttachments,
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,

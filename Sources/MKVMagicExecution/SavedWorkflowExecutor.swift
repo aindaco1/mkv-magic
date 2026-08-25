@@ -35,6 +35,7 @@ extension SavedWorkflowExecutionError: LocalizedError {
 
 public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInspecting>: Sendable {
     private let remover: MKVTrackRemover<Runner>
+    private let attachmentRemover: MKVAttachmentRemover<Runner>
     private let editor: MKVPropertyEditor<Runner>
     private let externalSubtitleExecutor: ExternalSubtitleMuxExecutor<Runner, Inspector>
     private let inspector: Inspector
@@ -47,6 +48,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         inspector: Inspector
     ) {
         remover = MKVTrackRemover(executableURL: mkvmergeURL, runner: runner)
+        attachmentRemover = MKVAttachmentRemover(executableURL: mkvmergeURL, runner: runner)
         editor = MKVPropertyEditor(executableURL: mkvpropeditURL, runner: runner)
         externalSubtitleExecutor = ExternalSubtitleMuxExecutor(
             mkvmergeURL: mkvmergeURL,
@@ -61,6 +63,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
     public func execute(
         source: MediaAsset,
         trackRemoval: TrackRemoval?,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         removesSegmentTitle: Bool,
         clearsAllTags: Bool = false,
         externalSubtitleInput: SavedWorkflowExternalSubtitleInput? = nil,
@@ -75,7 +78,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             throw SavedWorkflowExecutionError.unsupportedContainer
         }
         let hasMediaOperations =
-            trackRemoval != nil || removesSegmentTitle || clearsAllTags
+            trackRemoval != nil || attachmentRemoval != nil || removesSegmentTitle || clearsAllTags
             || externalSubtitleInput != nil
         guard hasMediaOperations || createsUnchangedCopy else {
             throw SavedWorkflowExecutionError.noOperations
@@ -107,6 +110,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                 subtitlePayload: resolvedPayload,
                 metadata: externalSubtitleInput.metadata,
                 trackRemoval: trackRemoval,
+                attachmentRemoval: attachmentRemoval,
                 removesSegmentTitle: removesSegmentTitle,
                 clearsAllTags: clearsAllTags,
                 destinationURL: destinationURL,
@@ -126,12 +130,19 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         return try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: source,
             destinationURL: destinationURL,
-            preparation: trackRemoval == nil ? .clone : .empty,
+            preparation: trackRemoval == nil && attachmentRemoval == nil ? .clone : .empty,
             produce: { outputURL in
                 if let trackRemoval {
                     try await remover.removeTracks(
                         from: source,
                         removal: trackRemoval,
+                        attachmentRemoval: attachmentRemoval,
+                        outputURL: outputURL
+                    )
+                } else if let attachmentRemoval {
+                    try await attachmentRemover.removeAttachments(
+                        from: source,
+                        removal: attachmentRemoval,
                         outputURL: outputURL
                     )
                 }
@@ -151,6 +162,15 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         original: source,
                         output: output,
                         removal: trackRemoval,
+                        attachmentRemoval: attachmentRemoval,
+                        segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
+                        tags: clearsAllTags ? .removeAll : .preserve
+                    )
+                } else if let attachmentRemoval {
+                    try MatroskaAttachmentRemovalOutputVerifier().verify(
+                        original: source,
+                        output: output,
+                        removal: attachmentRemoval,
                         segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
                         tags: clearsAllTags ? .removeAll : .preserve
                     )

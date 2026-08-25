@@ -1514,7 +1514,11 @@ final class RealToolAppHistoryTests: XCTestCase {
         let output = fixtureRoot.appendingPathComponent("Queued Movie — Prepared.mkv")
         let globalTags = fixtureRoot.appendingPathComponent("global.xml")
         let trackTags = fixtureRoot.appendingPathComponent("track.xml")
+        let poster = fixtureRoot.appendingPathComponent("Queue private poster.jpg")
+        let font = fixtureRoot.appendingPathComponent("Queue private subtitle.ttf")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
+        try Data("private image payload".utf8).write(to: poster)
+        try Data("private font payload".utf8).write(to: font)
         try Data(
             """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -1549,6 +1553,10 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "--output", source.path,
                     "--global-tags", globalTags.path,
                     "--tags", "0:\(trackTags.path)",
+                    "--attachment-mime-type", "image/jpeg",
+                    "--attach-file", poster.path,
+                    "--attachment-mime-type", "font/ttf",
+                    "--attach-file", font.path,
                     base.path,
                 ],
                 timeout: 60
@@ -1580,15 +1588,21 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         await model.addFiles([source])
         let asset = try XCTUnwrap(model.assets.first)
+        let imageRemoval = try XCTUnwrap(
+            MatroskaAttachmentRemovalPolicy.imageAttachmentRemoval(in: asset)
+        )
+        XCTAssertEqual(imageRemoval.attachmentUIDs.count, 1)
         let workflow = SavedWorkflow(
-            name: "Remove reviewed title and tags",
+            name: "Remove reviewed title, tags, and images",
             steps: [
                 SavedWorkflowStep(action: .clearAllTags),
+                SavedWorkflowStep(action: .removeImageAttachments),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
         XCTAssertTrue(compiled.clearsAllTags)
+        XCTAssertEqual(compiled.attachmentRemoval, imageRemoval)
         let createdAt = Date()
         try await queueStore.save(
             MediaQueueSnapshot(isPaused: true, updatedAt: createdAt)
@@ -1606,7 +1620,11 @@ final class RealToolAppHistoryTests: XCTestCase {
 
         let snapshot = try await model.runAutomaticQueueCycle()
 
-        XCTAssertEqual(snapshot.jobs.first?.events.map(\.state), [.waiting, .running, .succeeded])
+        XCTAssertEqual(
+            snapshot.jobs.first?.events.map(\.state),
+            [.waiting, .running, .succeeded],
+            "Unexpected app state: \(model.state)"
+        )
         XCTAssertEqual(snapshot.jobs.first?.attemptCount, 1)
         XCTAssertTrue(FileManager.default.fileExists(atPath: output.path))
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: source)), sourceDigest)
@@ -1614,6 +1632,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertNil(outputAsset.metadata["title"])
         XCTAssertEqual(outputAsset.globalTagCount, 0)
         XCTAssertEqual(outputAsset.trackTagCount, 0)
+        XCTAssertEqual(outputAsset.attachments.count, 1)
+        XCTAssertEqual(outputAsset.attachments.first?.mimeType, "font/ttf")
+        XCTAssertEqual(outputAsset.attachments.first?.filename, font.lastPathComponent)
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)
@@ -1626,6 +1647,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         let serializedMessages = records.first?.events.compactMap(\.message).joined(separator: " ")
         XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
+        XCTAssertFalse(serializedMessages?.contains(poster.lastPathComponent) == true)
         XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
 

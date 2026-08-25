@@ -42,11 +42,13 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
     public func removeTracks(
         from source: MediaAsset,
         removal: TrackRemoval,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         outputURL: URL
     ) async throws {
         let arguments = try Self.arguments(
             source: source,
             removal: removal,
+            attachmentRemoval: attachmentRemoval,
             outputURL: outputURL
         )
         let result = try await runner.run(
@@ -71,6 +73,7 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
     public static func arguments(
         source: MediaAsset,
         removal: TrackRemoval,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         outputURL: URL
     ) throws -> [String] {
         let selection = try MKVTrackSelection(source: source, removal: removal)
@@ -81,6 +84,14 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
             "--normalize-language-ietf", "canonical",
         ]
         arguments.append(contentsOf: selection.selectorArguments)
+        if let attachmentRemoval {
+            arguments.append(
+                contentsOf: try MKVAttachmentSelection(
+                    source: source,
+                    removal: attachmentRemoval
+                ).selectorArguments
+            )
+        }
         let trackOrder = selection.retainedTracks.map { "0:\($0.id)" }.joined(separator: ",")
         arguments.append(contentsOf: ["--track-order", trackOrder, source.sourceURL.path])
         return arguments

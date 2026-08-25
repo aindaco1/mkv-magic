@@ -104,14 +104,59 @@ final class MKVTrackRemoverTests: XCTestCase {
         }
     }
 
+    func testTrackAndImageAttachmentRemovalShareOneRemuxSelection() throws {
+        let source = asset(
+            tracks: [
+                track(id: 0, kind: .video, uid: 10),
+                track(id: 1, kind: .subtitle, uid: 20),
+            ],
+            attachments: [
+                MediaAttachment(
+                    id: 2,
+                    filename: "Poster.jpg",
+                    mimeType: "image/jpeg",
+                    uid: 22
+                ),
+                MediaAttachment(
+                    id: 4,
+                    filename: "Subtitle.ttf",
+                    mimeType: "font/ttf",
+                    uid: 44
+                ),
+            ]
+        )
+
+        let arguments = try MKVTrackRemover<TrackRemovalStubRunner>.arguments(
+            source: source,
+            removal: TrackRemoval(trackUIDs: [20]),
+            attachmentRemoval: MatroskaAttachmentRemoval(attachmentUIDs: [22]),
+            outputURL: URL(fileURLWithPath: "/output.mkv")
+        )
+
+        XCTAssertEqual(arguments.filter { $0 == "--output" }.count, 1)
+        XCTAssertTrue(containsPair("--no-subtitles", "--attachments", in: arguments))
+        XCTAssertTrue(containsPair("--attachments", "4", in: arguments))
+        XCTAssertTrue(containsPair("--track-order", "0:0", in: arguments))
+    }
+
     private func asset(
         url: URL = URL(fileURLWithPath: "/media/Movie.mkv"),
-        tracks: [MediaTrack]
+        tracks: [MediaTrack],
+        attachments: [MediaAttachment] = []
     ) -> MediaAsset {
-        MediaAsset(sourceURL: url, container: "matroska", tracks: tracks)
+        MediaAsset(
+            sourceURL: url,
+            container: "matroska",
+            tracks: tracks,
+            attachments: attachments
+        )
     }
 
     private func track(id: Int, kind: MediaTrackKind, uid: UInt64?) -> MediaTrack {
         MediaTrack(id: id, kind: kind, codec: "fixture", uid: uid)
     }
+}
+
+private func containsPair(_ first: String, _ second: String, in values: [String]) -> Bool {
+    values.indices.dropLast().contains { values[$0] == first && values[$0 + 1] == second }
 }

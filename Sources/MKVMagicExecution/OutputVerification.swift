@@ -148,6 +148,7 @@ public struct TrackRemovalOutputVerifier: Sendable {
         original: MediaAsset,
         output: MediaAsset,
         removal: TrackRemoval,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         segmentTitle: SegmentTitleExpectation = .preserve,
         tags: MatroskaTagExpectation = .preserve
     ) throws {
@@ -189,9 +190,11 @@ public struct TrackRemovalOutputVerifier: Sendable {
         else {
             throw OutputVerificationError.chaptersChanged
         }
-        guard output.attachments == original.attachments else {
-            throw OutputVerificationError.attachmentsChanged
-        }
+        try verifyAttachments(
+            original: original,
+            output: output,
+            removal: attachmentRemoval
+        )
         guard output.segmentUID != nil,
             original.segmentUID == nil || output.segmentUID != original.segmentUID
         else {
@@ -225,7 +228,9 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
     public func verify(
         original: MediaAsset,
         output: MediaAsset,
-        removal: MatroskaAttachmentRemoval
+        removal: MatroskaAttachmentRemoval,
+        segmentTitle: SegmentTitleExpectation = .preserve,
+        tags: MatroskaTagExpectation = .preserve
     ) throws {
         guard output.fileSize ?? 0 > 0 else { throw OutputVerificationError.emptyOutput }
         guard output.container == original.container else {
@@ -234,13 +239,27 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
         guard remuxDurationsMatch(original.duration, output.duration) else {
             throw OutputVerificationError.durationChanged
         }
-        guard
-            output.metadata.removingRemuxProvenance
-                == original.metadata.removingRemuxProvenance,
-            output.globalTagCount == original.globalTagCount,
-            output.trackTagCount == original.trackTagCount
-        else {
-            throw OutputVerificationError.tagsChanged
+        switch tags {
+        case .preserve:
+            guard output.globalTagCount == original.globalTagCount,
+                output.trackTagCount == original.trackTagCount
+            else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyPreservedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
+        case .removeAll:
+            guard output.globalTagCount == 0, output.trackTagCount == 0 else {
+                throw OutputVerificationError.tagsChanged
+            }
+            try verifyRemovedTagMetadata(
+                original: original,
+                output: output,
+                segmentTitle: segmentTitle
+            )
         }
         guard output.chapters.chapterSnapshots == original.chapters.chapterSnapshots,
             output.chapterEntryCount == original.chapterEntryCount
@@ -250,23 +269,12 @@ public struct MatroskaAttachmentRemovalOutputVerifier: Sendable {
         let originalTracks = original.tracks.filter { $0.kind != .attachment }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
         guard
-            outputTracks.map(RemuxTrackSnapshot.init)
-                == originalTracks.map(RemuxTrackSnapshot.init)
+            outputTracks.map({ RemuxTrackSnapshot($0, includeTags: tags == .preserve) })
+                == originalTracks.map({ RemuxTrackSnapshot($0, includeTags: tags == .preserve) })
         else {
             throw OutputVerificationError.tracksChanged
         }
-
-        let resolution = try MatroskaAttachmentRemovalPolicy.resolve(removal, in: original)
-        let outputAttachments = output.attachments.sorted { $0.id < $1.id }
-        let outputIDs = outputAttachments.map(\.id)
-        guard outputIDs.allSatisfy({ $0 >= 0 }),
-            Set(outputIDs).count == outputIDs.count,
-            outputAttachments.allSatisfy({ $0.uid != nil }),
-            outputAttachments.map(RemuxAttachmentSnapshot.init)
-                == resolution.retainedAttachments.map(RemuxAttachmentSnapshot.init)
-        else {
-            throw OutputVerificationError.attachmentsChanged
-        }
+        try verifyAttachments(original: original, output: output, removal: removal)
         guard output.segmentUID != nil,
             original.segmentUID == nil || output.segmentUID != original.segmentUID
         else {
@@ -336,6 +344,7 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         expectedFormat: ExternalTextSubtitleFormat = .subRip,
         subtitleEnd: SubRipTimestamp,
         trackRemoval: TrackRemoval? = nil,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         segmentTitle: SegmentTitleExpectation = .preserve,
         tags: MatroskaTagExpectation = .preserve
     ) throws {
@@ -382,9 +391,11 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
         else {
             throw OutputVerificationError.chaptersChanged
         }
-        guard output.attachments == original.attachments else {
-            throw OutputVerificationError.attachmentsChanged
-        }
+        try verifyAttachments(
+            original: original,
+            output: output,
+            removal: attachmentRemoval
+        )
         guard output.segmentUID != nil,
             original.segmentUID == nil || output.segmentUID != original.segmentUID
         else {
@@ -1408,6 +1419,30 @@ private func verifyRemovedTagMetadata(
     }
     guard unexpectedOutputMetadata.isEmpty else {
         throw OutputVerificationError.tagsChanged
+    }
+}
+
+private func verifyAttachments(
+    original: MediaAsset,
+    output: MediaAsset,
+    removal: MatroskaAttachmentRemoval?
+) throws {
+    guard let removal else {
+        guard output.attachments == original.attachments else {
+            throw OutputVerificationError.attachmentsChanged
+        }
+        return
+    }
+    let resolution = try MatroskaAttachmentRemovalPolicy.resolve(removal, in: original)
+    let outputAttachments = output.attachments.sorted { $0.id < $1.id }
+    let outputIDs = outputAttachments.map(\.id)
+    guard outputIDs.allSatisfy({ $0 >= 0 }),
+        Set(outputIDs).count == outputIDs.count,
+        outputAttachments.allSatisfy({ $0.uid != nil }),
+        outputAttachments.map(RemuxAttachmentSnapshot.init)
+            == resolution.retainedAttachments.map(RemuxAttachmentSnapshot.init)
+    else {
+        throw OutputVerificationError.attachmentsChanged
     }
 }
 

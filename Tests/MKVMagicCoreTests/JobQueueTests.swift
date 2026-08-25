@@ -89,6 +89,15 @@ final class JobQueueTests: XCTestCase {
         XCTAssertTrue(
             MediaQueueAutomaticWorkflowPolicy.supports(
                 SavedWorkflow(
+                    name: "Remove embedded images",
+                    steps: [SavedWorkflowStep(action: .removeImageAttachments)]
+                ),
+                inputCount: 1
+            )
+        )
+        XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                SavedWorkflow(
                     name: "Convert once",
                     steps: [
                         SavedWorkflowStep(action: .convertVideoRecommended),

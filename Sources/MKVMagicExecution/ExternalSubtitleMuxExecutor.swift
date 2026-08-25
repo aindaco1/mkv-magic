@@ -219,6 +219,7 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         subtitleURL: URL,
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         outputURL: URL
     ) async throws {
         let arguments = try Self.arguments(
@@ -226,6 +227,7 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
             subtitleURL: subtitleURL,
             metadata: metadata,
             trackRemoval: trackRemoval,
+            attachmentRemoval: attachmentRemoval,
             outputURL: outputURL
         )
         let result = try await runner.run(
@@ -254,6 +256,7 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         subtitleURL: URL,
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         outputURL: URL
     ) throws -> [String] {
         let language = try TrackLanguageTag.canonical(metadata.language)
@@ -275,6 +278,14 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
             arguments.append(contentsOf: selection.selectorArguments)
         } else {
             retainedTracks = source.tracks.filter { $0.kind != .attachment }
+        }
+        if let attachmentRemoval {
+            arguments.append(
+                contentsOf: try MKVAttachmentSelection(
+                    source: source,
+                    removal: attachmentRemoval
+                ).selectorArguments
+            )
         }
         arguments.append(contentsOf: [
             source.sourceURL.path,
@@ -360,6 +371,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         subtitlePreview: ExternalSubtitleFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         removesSegmentTitle: Bool = false,
         clearsAllTags: Bool = false,
         destinationURL: URL,
@@ -372,6 +384,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             subtitlePayload: .original(subtitlePreview),
             metadata: metadata,
             trackRemoval: trackRemoval,
+            attachmentRemoval: attachmentRemoval,
             removesSegmentTitle: removesSegmentTitle,
             clearsAllTags: clearsAllTags,
             destinationURL: destinationURL,
@@ -384,6 +397,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         subtitlePayload: ExternalSubtitleMuxPayload,
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
+        attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         removesSegmentTitle: Bool = false,
         clearsAllTags: Bool = false,
         destinationURL: URL,
@@ -425,6 +439,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     subtitleURL: normalizedSubtitleURL,
                     metadata: metadata,
                     trackRemoval: trackRemoval,
+                    attachmentRemoval: attachmentRemoval,
                     outputURL: outputURL
                 )
                 if removesSegmentTitle || clearsAllTags {
@@ -451,6 +466,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     expectedFormat: subtitlePayload.format,
                     subtitleEnd: subtitlePayload.subtitleEnd,
                     trackRemoval: trackRemoval,
+                    attachmentRemoval: attachmentRemoval,
                     segmentTitle: removesSegmentTitle ? .set(nil) : .preserve,
                     tags: clearsAllTags ? .removeAll : .preserve
                 )

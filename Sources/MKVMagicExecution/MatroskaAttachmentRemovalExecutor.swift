@@ -91,20 +91,13 @@ public struct MKVAttachmentRemover<Runner: CommandRunning>: Sendable {
         removal: MatroskaAttachmentRemoval,
         outputURL: URL
     ) throws -> [String] {
-        let resolution = try MatroskaAttachmentRemovalPolicy.resolve(removal, in: source)
+        let selection = try MKVAttachmentSelection(source: source, removal: removal)
         var arguments = [
             "--output", outputURL.path,
             "--abort-on-warnings",
             "--normalize-language-ietf", "canonical",
         ]
-        if resolution.retainedAttachments.isEmpty {
-            arguments.append("--no-attachments")
-        } else {
-            arguments.append(contentsOf: [
-                "--attachments",
-                resolution.retainedAttachments.map { String($0.id) }.joined(separator: ","),
-            ])
-        }
+        arguments.append(contentsOf: selection.selectorArguments)
         let playableTracks = source.tracks.filter { $0.kind != .attachment }
         if !playableTracks.isEmpty {
             arguments.append(contentsOf: [
@@ -114,6 +107,24 @@ public struct MKVAttachmentRemover<Runner: CommandRunning>: Sendable {
         }
         arguments.append(source.sourceURL.path)
         return arguments
+    }
+}
+
+struct MKVAttachmentSelection: Sendable {
+    let retainedAttachments: [MediaAttachment]
+    let selectorArguments: [String]
+
+    init(source: MediaAsset, removal: MatroskaAttachmentRemoval) throws {
+        let resolution = try MatroskaAttachmentRemovalPolicy.resolve(removal, in: source)
+        retainedAttachments = resolution.retainedAttachments
+        if retainedAttachments.isEmpty {
+            selectorArguments = ["--no-attachments"]
+        } else {
+            selectorArguments = [
+                "--attachments",
+                retainedAttachments.map { String($0.id) }.joined(separator: ","),
+            ]
+        }
     }
 }
 

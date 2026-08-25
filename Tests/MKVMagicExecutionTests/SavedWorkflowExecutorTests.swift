@@ -61,6 +61,10 @@ private actor SavedWorkflowRecordingRunner: CommandRunning {
     }
 }
 
+private func containsPair(_ first: String, _ second: String, in values: [String]) -> Bool {
+    values.indices.dropLast().contains { values[$0] == first && values[$0 + 1] == second }
+}
+
 private struct CombinedWorkflowInspector: MediaInspecting {
     let tracks: [MediaTrack]
 
@@ -179,7 +183,106 @@ private struct ClearedTagsWorkflowInspector: MediaInspecting {
     }
 }
 
+private struct ImageAttachmentWorkflowInspector: MediaInspecting {
+    let original: MediaAsset
+    let retainedAttachment: MediaAttachment
+
+    func inspect(_ inputURL: URL) async throws -> MediaAsset {
+        MediaAsset(
+            sourceURL: inputURL,
+            container: original.container,
+            formatLongName: original.formatLongName,
+            duration: original.duration,
+            fileSize: original.fileSize,
+            bitrate: original.bitrate,
+            tracks: original.tracks,
+            chapters: original.chapters,
+            attachments: [
+                MediaAttachment(
+                    id: 0,
+                    filename: retainedAttachment.filename,
+                    mimeType: retainedAttachment.mimeType,
+                    size: retainedAttachment.size,
+                    description: retainedAttachment.description,
+                    uid: retainedAttachment.uid
+                )
+            ],
+            metadata: ["encoder": "mkvmerge"],
+            chapterEntryCount: original.chapterEntryCount,
+            globalTagCount: original.globalTagCount,
+            trackTagCount: original.trackTagCount,
+            segmentUID: "output-segment"
+        )
+    }
+}
+
 final class SavedWorkflowExecutorTests: XCTestCase {
+    func testImageAttachmentCleanupUsesOneVerifiedRemuxAndPreservesFont() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-saved-workflow-images-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("source.mkv")
+        let destinationURL = root.appendingPathComponent("output.mkv")
+        let sourceBytes = Data("reviewed source with image and font".utf8)
+        try sourceBytes.write(to: sourceURL)
+        let poster = MediaAttachment(
+            id: 2,
+            filename: "Poster.jpg",
+            mimeType: "image/jpeg",
+            size: 100,
+            uid: 22
+        )
+        let font = MediaAttachment(
+            id: 4,
+            filename: "Subtitle.ttf",
+            mimeType: "font/ttf",
+            size: 20,
+            uid: 44
+        )
+        let source = MediaAsset(
+            sourceURL: sourceURL,
+            container: "matroska",
+            formatLongName: "Matroska",
+            duration: MediaTime(seconds: 10),
+            fileSize: Int64(sourceBytes.count),
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)],
+            attachments: [poster, font],
+            metadata: ["encoder": "source"],
+            chapterEntryCount: 0,
+            globalTagCount: 0,
+            trackTagCount: 0,
+            segmentUID: "source-segment"
+        )
+        let runner = SavedWorkflowRecordingRunner()
+        let executor = SavedWorkflowExecutor(
+            mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+            runner: runner,
+            inspector: ImageAttachmentWorkflowInspector(
+                original: source,
+                retainedAttachment: font
+            )
+        )
+
+        let output = try await executor.execute(
+            source: source,
+            trackRemoval: nil,
+            attachmentRemoval: MatroskaAttachmentRemoval(attachmentUIDs: [22]),
+            removesSegmentTitle: false,
+            destinationURL: destinationURL
+        )
+        let requests = await runner.requests
+
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(requests[0].executableURL.lastPathComponent, "mkvmerge")
+        XCTAssertTrue(containsPair("--attachments", "4", in: requests[0].arguments))
+        XCTAssertEqual(output.attachments.map(\.uid), [44])
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+    }
+
     func testTitleAndAllTagsClearInOneVerifiedPropertyEdit() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-saved-workflow-tags-\(UUID().uuidString)",

@@ -319,6 +319,54 @@ final class OutputVerificationTests: XCTestCase {
         )
     }
 
+    func testTrackAndImageAttachmentRemovalVerifierPreservesFonts() throws {
+        let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
+        let subtitle = MediaTrack(id: 1, kind: .subtitle, codec: "subrip", uid: 20)
+        let poster = MediaAttachment(
+            id: 2,
+            filename: "Poster.jpg",
+            mimeType: "image/jpeg",
+            size: 100,
+            uid: 22
+        )
+        let font = MediaAttachment(
+            id: 4,
+            filename: "Font.otf",
+            mimeType: "font/otf",
+            size: 20,
+            uid: 44
+        )
+        let original = asset(
+            title: "Movie",
+            tracks: [video, subtitle],
+            attachments: [poster, font]
+        )
+        let output = asset(
+            title: "Movie",
+            tracks: [video],
+            segmentUID: "2233",
+            encoder: "mkvmerge",
+            attachments: [
+                MediaAttachment(
+                    id: 0,
+                    filename: font.filename,
+                    mimeType: font.mimeType,
+                    size: font.size,
+                    uid: font.uid
+                )
+            ]
+        )
+
+        XCTAssertNoThrow(
+            try TrackRemovalOutputVerifier().verify(
+                original: original,
+                output: output,
+                removal: TrackRemoval(trackUIDs: [20]),
+                attachmentRemoval: MatroskaAttachmentRemoval(attachmentUIDs: [22])
+            )
+        )
+    }
+
     func testTrackRemovalVerifierRejectsMaterialDurationChange() throws {
         let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
         let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)
@@ -806,7 +854,10 @@ final class OutputVerificationTests: XCTestCase {
         encoder: String = "fixture",
         globalTagCount: Int = 0,
         trackTagCount: Int = 0,
-        extraMetadata: [String: String] = [:]
+        extraMetadata: [String: String] = [:],
+        attachments: [MediaAttachment] = [
+            MediaAttachment(id: 1, filename: "Font.otf", mimeType: "font/otf", size: 20)
+        ]
     ) -> MediaAsset {
         var metadata = ["encoder": encoder]
         metadata.merge(extraMetadata) { _, new in new }
@@ -818,9 +869,7 @@ final class OutputVerificationTests: XCTestCase {
             fileSize: 1_024,
             tracks: tracks,
             chapters: [ChapterNode(title: "Chapter 1", start: .zero)],
-            attachments: [
-                MediaAttachment(id: 1, filename: "Font.otf", mimeType: "font/otf", size: 20)
-            ],
+            attachments: attachments,
             metadata: metadata,
             chapterEntryCount: 1,
             globalTagCount: globalTagCount,

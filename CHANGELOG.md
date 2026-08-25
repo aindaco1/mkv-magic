@@ -172,6 +172,14 @@ semantic versioning; public release tags are immutable and signed.
   zero output tags plus unchanged unrelated structure before commit, persist no
   tag values in portable recipes or support history, and re-inspect/recompile
   the same zero-encode intent in the automatic queue.
+- Add portable schema-v11 **If present: Remove image attachments** intent.
+  Select only reviewed `image/*` MIME attachments, preserve fonts and unknown
+  types, keep filenames/MIME/IDs/UIDs out of recipe JSON and count-only review,
+  and fuse cleanup into an existing track/subtitle remux or one verified
+  preparation pass before a single final conversion. Exclude FFprobe
+  `attached_pic` cover-art projections from playable tracks, verify the exact
+  retained attachment set before and after commit, preserve source bytes, and
+  re-inspect/recompile the same conditional action in the automatic queue.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track

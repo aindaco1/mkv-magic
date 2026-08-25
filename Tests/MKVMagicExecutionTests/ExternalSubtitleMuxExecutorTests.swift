@@ -671,6 +671,40 @@ final class ExternalSubtitleMuxExecutorTests: XCTestCase {
         }
     }
 
+    func testImageAttachmentOmissionSharesTheSubtitleRemux() throws {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska",
+            tracks: [MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)],
+            attachments: [
+                MediaAttachment(
+                    id: 2,
+                    filename: "Poster.jpg",
+                    mimeType: "image/jpeg",
+                    uid: 22
+                ),
+                MediaAttachment(
+                    id: 4,
+                    filename: "Subtitle.ttf",
+                    mimeType: "font/ttf",
+                    uid: 44
+                ),
+            ]
+        )
+
+        let arguments = try MKVExternalSubtitleMuxer<FoundationCommandRunner>.arguments(
+            source: source,
+            subtitleURL: URL(fileURLWithPath: "/Media/Movie.srt"),
+            metadata: ExternalSubtitleTrackMetadata(language: "en"),
+            attachmentRemoval: MatroskaAttachmentRemoval(attachmentUIDs: [22]),
+            outputURL: URL(fileURLWithPath: "/Media/Output.mkv")
+        )
+
+        XCTAssertEqual(arguments.filter { $0 == "--output" }.count, 1)
+        XCTAssertTrue(containsSubtitleMuxPair("--attachments", "4", in: arguments))
+        XCTAssertEqual(arguments.suffix(2), ["--track-order", "0:0,1:0"])
+    }
+
     private func makeRoot() throws -> URL {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(
             "mkv-magic-subtitle-mux-\(UUID().uuidString)",
@@ -679,4 +713,12 @@ final class ExternalSubtitleMuxExecutorTests: XCTestCase {
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
         return root
     }
+}
+
+private func containsSubtitleMuxPair(
+    _ first: String,
+    _ second: String,
+    in values: [String]
+) -> Bool {
+    zip(values, values.dropFirst()).contains { $0 == first && $1 == second }
 }

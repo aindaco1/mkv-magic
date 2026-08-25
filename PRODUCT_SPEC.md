@@ -538,6 +538,21 @@ and order plus all media tracks, tags, nested chapters, duration, and metadata
 to match before commit and after reopen. The source remains byte-unchanged and
 History records zero video/audio encodes.
 
+Saved workflows also expose **If present: Remove image attachments**. Schema
+v11 stores only that conditional action, never an attachment filename, MIME
+value, ID, UID, size, count, media path, or tool command. Compilation selects
+only attachments whose reviewed, trimmed MIME type begins with `image/`
+case-insensitively. Extension-only guesses are forbidden: font attachments and
+unknown MIME types are preserved. A source with no MIME-confirmed images marks
+the card already satisfied. Applicable image cleanup shares the same one
+zero-encode `mkvmerge` pass as track removal or external subtitle muxing. If a
+complete-file conversion also applies, one verified private attachment-clean
+intermediate feeds the existing single final conversion; media is never
+transcoded twice. Verification requires the exact retained attachment facts and
+all unrelated tracks, tags, nested chapters, metadata, and source bytes before
+commit and after reopen. Immediate and automatic queue execution re-inspect and
+recompile the same portable intent.
+
 **Tags…** accepts an inspected Matroska source with available global and track
 tag counts. It reports those counts and separates two deliberate actions.
 **Export XML…** re-inspects and re-extracts the complete bounded Matroska tag
@@ -551,8 +566,9 @@ metadata outside the removed tags, and segment identity. The XML parser rejects
 oversized, malformed, external-entity, unexpected-root, and count-mismatched
 documents. Both actions bind the complete source snapshot and regular-file
 revision through commit, leave the source byte-unchanged, and record distinct
-zero-encode History jobs. Per-entry tag editing/replacement, saved-workflow,
-queue, and batch tag actions remain separate work.
+zero-encode History jobs. Per-entry tag editing/replacement and batch tag
+actions remain separate work; the portable all-tag cleanup card is specified
+below.
 
 **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable
@@ -634,7 +650,7 @@ payloads selected by this card are re-extracted and semantically compared before
 commit and after reopening the final MKV. Source and sidecar content hashes must
 still match the reviewed revisions. Schema v3 introduced only the cleanup
 action—not a path, subtitle text, metadata, cue/event selection, or review
-identifier—and current schema v10 preserves that boundary. v1-v9 workflows
+identifier—and current schema v11 preserves that boundary. v1-v10 workflows
 migrate without changing recipe or step identity, order, enablement, or action
 semantics; a file cannot claim an older schema while using a newer action.
 When the user explicitly adds this reviewed run to the production queue, its
@@ -683,6 +699,18 @@ created first, followed by exactly one final video/audio conversion. Output
 verification requires zero tag counts and unchanged unrelated tracks, nested
 chapters, attachments, metadata, and source bytes. Immediate and automatic
 queue execution use the same compiler and verified transaction.
+
+Schema v11 adds **If present: Remove image attachments**. The portable card
+stores only conditional intent. Compilation uses the current Matroska
+attachment table, refuses unstable IDs or UIDs, and resolves only MIME-confirmed
+`image/*` attachments into ephemeral removal identities. Fonts and unknown
+attachments are retained. The action is skipped when already satisfied, fuses
+with any existing remux, and otherwise performs one zero-encode remux. When a
+video or audio conversion also applies, the verified private cleanup output
+feeds exactly one final conversion. Output verification allows normal
+attachment-ID renumbering but requires the exact retained UID, filename, MIME,
+description, size, and order along with unchanged unrelated media structure and
+source bytes. Queue admission re-inspects and recompiles before execution.
 
 V1 exposes the generated FFmpeg/MKVToolNix commands with Copy buttons but does not execute arbitrary shell commands.
 
@@ -1355,8 +1383,8 @@ compares size, container, timing/bitrate, tracks, metadata/tags, canonical
 chapters, attachments, and segment identity. Selecting the separate
 Trash-after-verified-success option makes this a recoverable rename-shaped
 workflow; leaving it off preserves both files. Workflow schema v4 introduced
-only the naming intent, never a source or generated filename; current schema v10
-retains that boundary and strictly migrates v1-v9 without allowing an older
+only the naming intent, never a source or generated filename; current schema v11
+retains that boundary and strictly migrates v1-v10 without allowing an older
 schema to claim a newer action. Broader
 conditions remain open.
 

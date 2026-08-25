@@ -56,7 +56,9 @@ private struct FFprobeDocument: Decodable {
 
     func asset(sourceURL: URL, fallbackSize: Int64?) -> MediaAsset {
         let formatNames = format?.formatName?.split(separator: ",") ?? []
-        let normalizedTracks = (streams ?? []).map { $0.track }
+        let normalizedTracks = (streams ?? [])
+            .filter { !$0.isAttachedPicture }
+            .map { $0.track }
         let normalizedChapters = (chapters ?? []).enumerated().map {
             $0.element.chapter(sourceURL: sourceURL, ordinal: $0.offset)
         }
@@ -195,6 +197,10 @@ private struct FFprobeStream: Decodable {
             hdrFormats: normalizedHDRFormats,
             tags: tags ?? [:]
         )
+    }
+
+    var isAttachedPicture: Bool {
+        disposition?["attached_pic"] == 1
     }
 
     private var inferredBitDepth: Int? {

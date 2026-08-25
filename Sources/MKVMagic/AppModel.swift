@@ -2579,6 +2579,7 @@ final class AppModel {
                     output = try await executor.execute(
                         source: asset,
                         trackRemoval: workflow.trackRemoval,
+                        attachmentRemoval: workflow.attachmentRemoval,
                         removesSegmentTitle: workflow.removesSegmentTitle,
                         clearsAllTags: workflow.clearsAllTags,
                         externalSubtitleInput: workflow.externalSubtitleInput,

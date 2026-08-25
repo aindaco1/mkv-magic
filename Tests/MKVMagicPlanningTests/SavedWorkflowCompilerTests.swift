@@ -5,6 +5,115 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testImageAttachmentCleanupIsConditionalPortableAndFused() throws {
+        let poster = MediaAttachment(
+            id: 2,
+            filename: "Private Poster.jpg",
+            mimeType: "image/jpeg",
+            uid: 22
+        )
+        let font = MediaAttachment(
+            id: 4,
+            filename: "Subtitle Font.ttf",
+            mimeType: "font/ttf",
+            uid: 44
+        )
+        let workflow = SavedWorkflow(
+            name: "Remove images",
+            steps: [
+                SavedWorkflowStep(action: .removeImageAttachments),
+                SavedWorkflowStep(action: .removeSegmentTitle),
+            ]
+        )
+
+        let preview = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: makeConvertibleAsset(
+                title: "Remove Me",
+                attachments: [poster, font]
+            )
+        )
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertEqual(compiled.attachmentRemoval?.attachmentUIDs, [22])
+        XCTAssertEqual(
+            compiled.operations,
+            [
+                .removeAttachments(MatroskaAttachmentRemoval(attachmentUIDs: [22])),
+                .editSegmentTitle(nil),
+            ]
+        )
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+        XCTAssertEqual(
+            preview.stepOutcomes.first?.detail,
+            "Remove 1 MIME-identified image attachment"
+        )
+        XCTAssertFalse(compiled.summaries.joined().contains(poster.filename))
+
+        let alreadyClean = try SavedWorkflowCompiler().preview(
+            workflow,
+            for: makeConvertibleAsset(attachments: [font])
+        )
+        XCTAssertNil(alreadyClean.compiledWorkflow)
+        XCTAssertEqual(alreadyClean.stepOutcomes.first?.disposition, .skipped)
+    }
+
+    func testImageAttachmentCleanupPreparesOneVideoConversionAndRequiresStableIDs() throws {
+        let poster = MediaAttachment(
+            id: 2,
+            filename: "Poster.jpg",
+            mimeType: "image/jpeg",
+            uid: 22
+        )
+        let workflow = SavedWorkflow(
+            name: "Clean and convert",
+            steps: [
+                SavedWorkflowStep(action: .removeImageAttachments),
+                SavedWorkflowStep(action: .convertVideoHEVC),
+            ]
+        )
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: makeConvertibleAsset(attachments: [poster]),
+            inputs: SavedWorkflowResolvedInputs(
+                availableVideoPresets: [.hevcCompatibility]
+            )
+        )
+
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 1)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .ffmpegEncode, .verify, .commit]
+        )
+
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow,
+                for: makeConvertibleAsset(
+                    attachments: [
+                        MediaAttachment(
+                            id: 2,
+                            filename: "Unstable.jpg",
+                            mimeType: "image/jpeg"
+                        )
+                    ]
+                ),
+                inputs: SavedWorkflowResolvedInputs(
+                    availableVideoPresets: [.hevcCompatibility]
+                )
+            )
+        ) {
+            XCTAssertEqual(
+                $0 as? SavedWorkflowCompilationError,
+                .unavailableAttachmentIdentity
+            )
+        }
+    }
+
     func testClearAllTagsCompilesConditionallyAndFusesWithTitleRemoval() throws {
         let workflow = SavedWorkflow(
             name: "Privacy cleanup",
@@ -1259,7 +1368,8 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         audioChannels: Int = 2,
         audioLayout: String = "stereo",
         globalTagCount: Int = 0,
-        trackTagCount: Int = 0
+        trackTagCount: Int = 0,
+        attachments: [MediaAttachment] = []
     ) -> MediaAsset {
         var tracks = [
             MediaTrack(
@@ -1318,6 +1428,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
             duration: MediaTime(seconds: 10),
             fileSize: 1_000,
             tracks: tracks,
+            attachments: attachments,
             metadata: title.map { ["title": $0] } ?? [:],
             chapterEntryCount: 0,
             globalTagCount: globalTagCount,

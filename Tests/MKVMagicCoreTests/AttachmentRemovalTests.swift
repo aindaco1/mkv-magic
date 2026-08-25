@@ -45,6 +45,32 @@ final class AttachmentRemovalTests: XCTestCase {
         XCTAssertTrue(resolution.retainedAttachments.isEmpty)
     }
 
+    func testPortableImageIntentSelectsOnlyExplicitImageMIMETypes() throws {
+        let unknownJPEG = MediaAttachment(
+            id: 6,
+            filename: "Unknown.jpg",
+            uid: 66
+        )
+        let uppercaseImage = MediaAttachment(
+            id: 8,
+            filename: "Backdrop.png",
+            mimeType: " IMAGE/PNG ",
+            uid: 88
+        )
+        let source = asset(attachments: [font, poster, unknownJPEG, uppercaseImage])
+
+        let removal = try XCTUnwrap(
+            MatroskaAttachmentRemovalPolicy.imageAttachmentRemoval(in: source)
+        )
+
+        XCTAssertEqual(removal.attachmentUIDs, [22, 88])
+        XCTAssertNil(
+            try MatroskaAttachmentRemovalPolicy.imageAttachmentRemoval(
+                in: asset(attachments: [font, unknownJPEG])
+            )
+        )
+    }
+
     func testRejectsUnsupportedAndUnstableAttachmentTables() {
         let nonMatroska = asset(
             path: "/Media/Movie.mp4",

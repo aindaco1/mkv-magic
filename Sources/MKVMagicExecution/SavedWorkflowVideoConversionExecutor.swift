@@ -82,6 +82,7 @@ public struct SavedWorkflowVideoConversionExecutor<
                 let prepared = try await savedWorkflowExecutor.execute(
                     source: source,
                     trackRemoval: workflow.trackRemoval,
+                    attachmentRemoval: workflow.attachmentRemoval,
                     removesSegmentTitle: workflow.removesSegmentTitle,
                     clearsAllTags: workflow.clearsAllTags,
                     externalSubtitleInput: workflow.externalSubtitleInput,

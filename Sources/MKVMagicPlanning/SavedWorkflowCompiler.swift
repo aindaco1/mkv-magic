@@ -27,6 +27,7 @@ public enum SavedWorkflowCompilationError: Error, Equatable, Sendable {
     case unstableTrackIdentity
     case wouldRemoveAllTracks
     case unavailableMatroskaTagCounts
+    case unavailableAttachmentIdentity
     case noApplicableChanges
 }
 
@@ -75,6 +76,8 @@ extension SavedWorkflowCompilationError: LocalizedError {
         case .wouldRemoveAllTracks: "This workflow would remove every playable track."
         case .unavailableMatroskaTagCounts:
             "Inspect the file again before removing its Matroska tags."
+        case .unavailableAttachmentIdentity:
+            "Inspect the file again before removing its image attachments."
         case .noApplicableChanges: "This file already satisfies the enabled workflow steps."
         }
     }
@@ -215,6 +218,13 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         operations.contains(.clearAllTags)
     }
 
+    public var attachmentRemoval: MatroskaAttachmentRemoval? {
+        for operation in operations {
+            if case .removeAttachments(let removal) = operation { return removal }
+        }
+        return nil
+    }
+
     public var externalSubtitleInput: SavedWorkflowExternalSubtitleInput? {
         for operation in operations {
             if case .addExternalSubtitle(let url, let metadata, let format) = operation {
@@ -234,7 +244,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     }
 
     public var hasDeterministicMediaOperations: Bool {
-        trackRemoval != nil || removesSegmentTitle || clearsAllTags
+        trackRemoval != nil || attachmentRemoval != nil || removesSegmentTitle || clearsAllTags
             || externalSubtitleInput != nil
             || mkvRemuxPlan != nil
     }
@@ -405,6 +415,19 @@ public struct SavedWorkflowCompiler: Sendable {
         }
         let conversionPlanningAsset =
             clearsAllTagsWillRun ? assetWithClearedTagFacts(asset) : asset
+        let imageAttachmentRemoval: MatroskaAttachmentRemoval?
+        if enabledActions.contains(.removeImageAttachments) {
+            do {
+                imageAttachmentRemoval =
+                    try MatroskaAttachmentRemovalPolicy.imageAttachmentRemoval(in: asset)
+            } catch MatroskaAttachmentRemovalPolicyError.unstableAttachmentIdentity {
+                throw SavedWorkflowCompilationError.unavailableAttachmentIdentity
+            } catch {
+                throw SavedWorkflowCompilationError.unsupportedContainer
+            }
+        } else {
+            imageAttachmentRemoval = nil
+        }
         let audioTracks = asset.tracks.filter { $0.kind == .audio }
         let audioTrackCount = audioTracks.count
         let selectedAudioPreset = enabledAudioConversions.first?.action.audioTranscodePreset
@@ -533,6 +556,27 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .skipped,
                             detail: "No global or track Matroska tags are present."
+                        )
+                    )
+                }
+            case .removeImageAttachments:
+                if let imageAttachmentRemoval {
+                    operations.append(.removeAttachments(imageAttachmentRemoval))
+                    let count = imageAttachmentRemoval.attachmentUIDs.count
+                    let noun = count == 1 ? "attachment" : "attachments"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Remove \(count) MIME-identified image \(noun)"
+                        )
+                    )
+                } else {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No MIME-identified image attachments are present."
                         )
                     )
                 }
@@ -859,6 +903,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Remove the segment title"
         case .clearAllTags:
             "Remove all Matroska tags"
+        case .removeImageAttachments:
+            "Remove image attachments"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -891,6 +937,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No segment title is present."
         case .clearAllTags:
             "No global or track Matroska tags are present."
+        case .removeImageAttachments:
+            "No MIME-identified image attachments are present."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

@@ -77,6 +77,27 @@ public enum MatroskaAttachmentRemovalPolicy {
         )
     }
 
+    /// Resolves the portable cleanup intent without storing attachment IDs in
+    /// the saved recipe. Only attachments explicitly identified as images by
+    /// their inspected MIME type are selected; fonts and unknown types remain.
+    public static func imageAttachmentRemoval(
+        in asset: MediaAsset
+    ) throws -> MatroskaAttachmentRemoval? {
+        guard MatroskaEditingPolicy.supports(asset) else {
+            throw MatroskaAttachmentRemovalPolicyError.unsupportedSource
+        }
+        guard !asset.attachments.isEmpty else { return nil }
+        let images = try validatedAttachments(in: asset).filter { attachment in
+            attachment.mimeType?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+                .hasPrefix("image/") == true
+        }
+        let identifiers = Set(images.compactMap(\.uid))
+        return identifiers.isEmpty
+            ? nil : MatroskaAttachmentRemoval(attachmentUIDs: identifiers)
+    }
+
     private static func validatedAttachments(in asset: MediaAsset) throws -> [MediaAttachment] {
         guard MatroskaEditingPolicy.supports(asset), !asset.attachments.isEmpty else {
             throw MatroskaAttachmentRemovalPolicyError.unsupportedSource

@@ -112,6 +112,13 @@ final class UnifiedMediaInspectorTests: XCTestCase {
             },
             {
               "index": 1,
+              "codec_name": "mjpeg",
+              "codec_type": "video",
+              "disposition": {"default": 0, "attached_pic": 1},
+              "tags": {"filename": "Poster.jpg"}
+            },
+            {
+              "index": 2,
               "codec_name": "unknown",
               "codec_type": "attachment",
               "tags": {"filename": "Font.otf"}

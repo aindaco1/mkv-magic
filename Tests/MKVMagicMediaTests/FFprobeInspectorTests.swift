@@ -163,4 +163,42 @@ final class FFprobeInspectorTests: XCTestCase {
             )
         }
     }
+
+    func testExcludesAttachedPictureStreamsFromPlayableTracks() async throws {
+        let json = #"""
+            {
+              "streams": [
+                {
+                  "index": 0,
+                  "codec_name": "aac",
+                  "codec_type": "audio",
+                  "disposition": {"default": 1, "attached_pic": 0}
+                },
+                {
+                  "index": 1,
+                  "codec_name": "mjpeg",
+                  "codec_type": "video",
+                  "disposition": {"default": 0, "attached_pic": 1},
+                  "tags": {"filename": "cover.jpg"}
+                }
+              ],
+              "format": {"format_name": "matroska,webm"}
+            }
+            """#
+        let inspector = FFprobeInspector(
+            ffprobeURL: URL(fileURLWithPath: "/usr/bin/true"),
+            runner: StubRunner(
+                result: CommandResult(
+                    exitCode: 0,
+                    standardOutput: CommandOutput(data: Data(json.utf8), wasTruncated: false),
+                    standardError: CommandOutput(data: Data(), wasTruncated: false)
+                )
+            )
+        )
+
+        let asset = try await inspector.inspect(inputURL)
+
+        XCTAssertEqual(asset.tracks.map(\.id), [0])
+        XCTAssertEqual(asset.tracks.map(\.kind), [.audio])
+    }
 }

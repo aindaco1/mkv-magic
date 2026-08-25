@@ -24,9 +24,11 @@ save, import, and export portable recipe cards. Add Step disables cards already
 present and does not expose the legacy combined compatibility action. New
 workflows begin with separate plain-language conditions for removing explicitly
 non-English subtitles and removing redundant English SDH subtitles, plus
-optional segment-title and all-tag removal. The tag card is conditional,
-reports reviewed global/track counts, and clears every Matroska tag without
-encoding while preserving tracks, chapters, attachments, and unrelated
+optional segment-title and all-tag removal. The safe Add Step catalog also
+offers conditional image-attachment removal. The tag card reports reviewed
+global/track counts and clears every Matroska tag without encoding. The image
+card removes only attachments whose reviewed MIME type is `image/*`; subtitle
+fonts and unknown attachments remain. Both preserve unrelated structure and
 metadata. Applicable subtitle
 removals are fused into one remux. Workflows store intent rather than media paths
 or track identifiers, compile against the selected inspection, show a zero-encode
@@ -84,14 +86,18 @@ transaction.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
-Workflow schema v10 still stores only portable action intent—never paths, local
+Workflow schema v11 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v9 workflow files migrate
+Original v1-v10 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Tag removal can share one mkvpropedit invocation with segment-title removal,
 run after an existing zero-encode remux, or prepare a tagged MKV for one final
 video/audio conversion. The conversion itself still occurs at most once.
+Image-attachment removal shares one mkvmerge pass with track cleanup or external
+subtitle muxing, or creates the one verified private preparation remux before a
+single final conversion. Its portable review reports only the number of images,
+never attachment names, MIME values, UIDs, or paths.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically
@@ -453,7 +459,11 @@ and its app connection in
 extended to reviewed external subtitle inputs in
 [docs/releases/M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md](docs/releases/M7_AUTOMATIC_EXTERNAL_SUBTITLE_QUEUE_SLICE.md),
 followed by portable filename cleanup in
-[docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md).
+[docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md](docs/releases/M7_FILENAME_CLEANUP_WORKFLOW_SLICE.md),
+portable tag cleanup in
+[docs/releases/M7_PORTABLE_TAG_REMOVAL_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_TAG_REMOVAL_WORKFLOW_SLICE.md),
+and MIME-strict image-attachment cleanup in
+[docs/releases/M7_PORTABLE_IMAGE_ATTACHMENT_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_IMAGE_ATTACHMENT_WORKFLOW_SLICE.md).
 
 The first M8 performance harness is also checked in. Its release-mode,
 synthetic-only responsiveness probe measures workflow compilation against a
@@ -559,7 +569,7 @@ fails below conservative line, function, or region floors; tests, generated
 runners, Sparkle, and other dependencies cannot inflate the gate. See
 [docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
 It also enforces the public-beta requirement of at least 80% collective non-UI
-line coverage; the current measured result is 87.64%. See
+line coverage; the current bundled-runtime result is 88.61%. See
 [docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md](docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md).
 
 For safe recovery steps, unavailable-action prerequisites, queue/encoding
