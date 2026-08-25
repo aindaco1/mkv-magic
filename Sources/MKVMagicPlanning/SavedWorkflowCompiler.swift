@@ -435,10 +435,24 @@ public struct SavedWorkflowCompiler: Sendable {
         } else {
             imageAttachmentRemoval = nil
         }
+        let plannedRemovalTrackUIDs = enabledSteps.reduce(into: Set<UInt64>()) {
+            identifiers, step in
+            switch step.action {
+            case .englishLibraryCleanup, .removeNonEnglishSubtitles,
+                .removeRedundantEnglishSDH:
+                identifiers.formUnion(
+                    cleanupSuggestions(for: step.action, asset: asset).map(\.trackUID)
+                )
+            default:
+                break
+            }
+        }
         let commentaryFlagEdits: [TrackMetadataEdit]
         if enabledActions.contains(.markCommentaryTracks) {
             do {
-                commentaryFlagEdits = try CommentaryTrackPolicy.metadataEdits(in: asset)
+                commentaryFlagEdits = try CommentaryTrackPolicy.metadataEdits(in: asset).filter {
+                    !plannedRemovalTrackUIDs.contains($0.trackUID)
+                }
             } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
@@ -448,7 +462,9 @@ public struct SavedWorkflowCompiler: Sendable {
         let commentaryNameEdits: [TrackMetadataEdit]
         if enabledActions.contains(.normalizeCommentaryNames) {
             do {
-                commentaryNameEdits = try CommentaryNamePolicy.metadataEdits(in: asset)
+                commentaryNameEdits = try CommentaryNamePolicy.metadataEdits(in: asset).filter {
+                    !plannedRemovalTrackUIDs.contains($0.trackUID)
+                }
             } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
@@ -458,7 +474,9 @@ public struct SavedWorkflowCompiler: Sendable {
         let forcedSubtitleEdits: [TrackMetadataEdit]
         if enabledActions.contains(.markForcedSubtitles) {
             do {
-                forcedSubtitleEdits = try ForcedSubtitlePolicy.metadataEdits(in: asset)
+                forcedSubtitleEdits = try ForcedSubtitlePolicy.metadataEdits(in: asset).filter {
+                    !plannedRemovalTrackUIDs.contains($0.trackUID)
+                }
             } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
@@ -470,7 +488,7 @@ public struct SavedWorkflowCompiler: Sendable {
             do {
                 hearingImpairedSubtitleEdits = try HearingImpairedSubtitlePolicy.metadataEdits(
                     in: asset
-                )
+                ).filter { !plannedRemovalTrackUIDs.contains($0.trackUID) }
             } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
@@ -481,6 +499,7 @@ public struct SavedWorkflowCompiler: Sendable {
         if enabledActions.contains(.markAudioDescriptionTracks) {
             do {
                 audioDescriptionEdits = try AudioDescriptionTrackPolicy.metadataEdits(in: asset)
+                    .filter { !plannedRemovalTrackUIDs.contains($0.trackUID) }
             } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }

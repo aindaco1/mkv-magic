@@ -1371,6 +1371,93 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
     }
 
+    func testFirstRunCleanMKVPresetCompilesLegacyCleanupIntoOneLosslessPlan() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.2025.1080p.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "hevc", uid: 1),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 2,
+                    language: "en",
+                    title: "Director Commentary"
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 10,
+                    language: "en",
+                    title: "English"
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 11,
+                    language: "en",
+                    title: "English SDH"
+                ),
+                MediaTrack(
+                    id: 4,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 12,
+                    language: "fr",
+                    title: "French"
+                ),
+                MediaTrack(
+                    id: 5,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 13,
+                    language: "en",
+                    title: "English Forced"
+                ),
+            ],
+            attachments: [
+                MediaAttachment(
+                    id: 1,
+                    filename: "cover.jpg",
+                    mimeType: "image/jpeg",
+                    uid: 100
+                ),
+                MediaAttachment(
+                    id: 2,
+                    filename: "subtitles.ttf",
+                    mimeType: "font/ttf",
+                    uid: 101
+                ),
+            ],
+            metadata: ["title": "Release title"],
+            globalTagCount: 1,
+            trackTagCount: 1
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            SavedWorkflowPresetCatalog.cleanMKV,
+            for: asset
+        )
+
+        XCTAssertEqual(compiled.workflowName, "Clean MKV")
+        XCTAssertEqual(compiled.trackRemoval?.trackUIDs, [11, 12])
+        XCTAssertEqual(compiled.attachmentRemoval?.attachmentUIDs, [100])
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertTrue(compiled.clearsAllTags)
+        XCTAssertEqual(compiled.suggestedOutputFilename, "Movie (2025).mkv")
+        XCTAssertEqual(Set(compiled.trackMetadataEdits.map(\.trackUID)), [2, 13])
+        XCTAssertFalse(compiled.trackMetadataEdits.contains { $0.trackUID == 11 })
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+    }
+
     func testPreviewExplainsAppliedSkippedAndDisabledStepsInRecipeOrder() throws {
         let workflow = SavedWorkflow(
             name: "Explain this run",

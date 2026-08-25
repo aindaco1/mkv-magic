@@ -19,6 +19,43 @@ final class SavedWorkflowStoreTests: XCTestCase {
         if rootURL != nil { try FileManager.default.removeItem(at: rootURL) }
     }
 
+    func testMissingLibraryLoadsCleanMKVFirstRunPresetWithoutWritingUserData() async throws {
+        let store = try JSONSavedWorkflowStore(fileURL: fileURL)
+
+        let loaded = try await store.load()
+
+        XCTAssertEqual(loaded, SavedWorkflowPresetCatalog.firstRunWorkflows)
+        XCTAssertEqual(loaded.first?.name, "Clean MKV")
+        XCTAssertEqual(
+            loaded.first?.steps.map(\.action),
+            [
+                .removeNonEnglishSubtitles,
+                .removeRedundantEnglishSDH,
+                .removeSegmentTitle,
+                .clearAllTags,
+                .removeImageAttachments,
+                .markCommentaryTracks,
+                .normalizeCommentaryNames,
+                .markForcedSubtitles,
+                .markSDHSubtitles,
+                .normalizeFilename,
+            ]
+        )
+        XCTAssertTrue(loaded.first?.steps.allSatisfy(\.isEnabled) == true)
+        XCTAssertEqual(Set(loaded.first?.steps.map(\.id) ?? []).count, 10)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
+    func testSavedEmptyLibraryDoesNotResurrectFirstRunPreset() async throws {
+        let store = try JSONSavedWorkflowStore(fileURL: fileURL)
+
+        try await store.save([])
+        let loaded = try await store.load()
+
+        XCTAssertTrue(loaded.isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: fileURL.path))
+    }
+
     func testRoundTripsVersionedLibraryWithPrivatePermissions() async throws {
         let store = try JSONSavedWorkflowStore(fileURL: fileURL)
         let workflow = makeWorkflow()

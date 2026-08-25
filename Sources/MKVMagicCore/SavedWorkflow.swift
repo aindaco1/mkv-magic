@@ -39,6 +39,60 @@ public struct SavedWorkflowStep: Codable, Hashable, Identifiable, Sendable {
     }
 }
 
+/// Stable, portable recipes shown before a user has saved a workflow library.
+/// Once saved they are ordinary user-owned workflows: they can be edited,
+/// duplicated, exported, or deleted without being recreated.
+public enum SavedWorkflowPresetCatalog {
+    public static let cleanMKV = SavedWorkflow(
+        id: UUID(uuidString: "25C5ED03-D2ED-481E-A907-47E0BA4E64F4")!,
+        name: "Clean MKV",
+        steps: [
+            SavedWorkflowStep(
+                id: UUID(uuidString: "98CC4831-F2EB-4305-9E7B-8B5010026FBA")!,
+                action: .removeNonEnglishSubtitles
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "87C7E437-BC3F-42B4-BF7D-840DD38EAE7E")!,
+                action: .removeRedundantEnglishSDH
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "7421ACDB-1811-4013-9922-78931F32D269")!,
+                action: .removeSegmentTitle
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "79E85B75-2BA8-4F02-95F8-8BEF1F90119A")!,
+                action: .clearAllTags
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "CFC6E748-4823-490D-87BA-37E2C6AEEC5B")!,
+                action: .removeImageAttachments
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "C66F30BC-C27D-4E6A-A4D9-38825C7816C0")!,
+                action: .markCommentaryTracks
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "1C0AFE09-2193-4927-ADED-81564A4FB306")!,
+                action: .normalizeCommentaryNames
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "A8F589C3-46A3-4377-9D9D-E5D67A4544BB")!,
+                action: .markForcedSubtitles
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "5D953D80-7596-468C-A24D-F45D01ADC627")!,
+                action: .markSDHSubtitles
+            ),
+            SavedWorkflowStep(
+                id: UUID(uuidString: "5F4C74C6-B285-4CFC-BA84-9B1A91FDDD84")!,
+                action: .normalizeFilename
+            ),
+        ]
+    )
+
+    public static let firstRunWorkflows = [cleanMKV]
+}
+
 public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendable {
     case englishLibraryCleanup
     case removeNonEnglishSubtitles

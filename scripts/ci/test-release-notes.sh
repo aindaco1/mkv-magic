@@ -15,6 +15,7 @@ notes="$repo_root/docs/releases/0.1.0.md"
 "$validator" 0.1.2 >/dev/null
 "$validator" 0.1.3 >/dev/null
 "$validator" 0.1.4 >/dev/null
+"$validator" 0.1.5 >/dev/null
 
 expect_rejection() {
     local description="$1"

@@ -20,12 +20,18 @@ retained streams without encoding, preserves their order, chapters, tags, and
 attachments, and uses the same verify-before-commit rule. A deterministic Clean
 MKV preview can suggest English-library subtitle removals for individual review.
 The native Workflows builder can name, duplicate, add, remove, reorder, enable,
-save, import, and export portable recipe cards. Add Step disables cards already
-present and does not expose the legacy combined compatibility action. New
-workflows begin with separate plain-language conditions for removing explicitly
-non-English subtitles and removing redundant English SDH subtitles, plus
-optional segment-title and all-tag removal. The safe Add Step catalog also
-offers conditional image-attachment removal. The tag card reports reviewed
+save, import, and export portable recipe cards. On first use it includes an
+editable **Clean MKV** workflow modeled on the legacy `clean_mkv.py` utility.
+It preserves every video and audio stream, removes explicitly non-English and
+redundant English SDH subtitles, removes the segment title, Matroska tags, and
+image attachments, normalizes recognized commentary names and role flags,
+marks recognized forced and SDH subtitles, and offers a conservative
+Jellyfin/Plex-friendly filename. It never requests an audio or video encode.
+Creating another workflow starts from the same useful cards with fresh portable
+identifiers; users can disable, reorder, remove, or add cards before saving.
+Deleting every saved workflow is respected and does not recreate the preset.
+Add Step disables cards already present and does not expose the legacy combined
+compatibility action. The tag card reports reviewed
 global/track counts and clears every Matroska tag without encoding. The image
 card removes only attachments whose reviewed MIME type is `image/*`; subtitle
 fonts and unknown attachments remain. Both preserve unrelated structure and

@@ -5,6 +5,17 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.5 - 2026-08-25
+
+- Add an editable first-run **Clean MKV** workflow modeled on the legacy Python
+  cleaner. It combines English-library subtitle cleanup, segment-title and tag
+  removal, image-attachment removal, commentary/forced/SDH role cleanup, and
+  conservative filename normalization without encoding audio or video.
+- Start newly created workflows from the same useful cleanup cards with fresh
+  portable identifiers, while respecting an intentionally saved empty library.
+- Prevent a combined workflow from scheduling metadata edits for tracks that
+  the same reviewed plan removes.
+
 ## 0.1.4 - 2026-08-25
 
 - Show an accessible activity indicator during file discovery, inspection,

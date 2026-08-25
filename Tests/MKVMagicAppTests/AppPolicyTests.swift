@@ -2495,7 +2495,7 @@ final class AppPolicyTests: XCTestCase {
     @MainActor
     func testWorkflowWindowUsesCompactNativeLayout() throws {
         let controller = WorkflowWindowController(
-            workflows: [WorkflowEditorPolicy.newWorkflow()],
+            workflows: SavedWorkflowPresetCatalog.firstRunWorkflows,
             hasSelectedAsset: true,
             onSave: { _ in },
             onUse: { _ in }
@@ -2530,7 +2530,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(preview.keyEquivalent, "\r")
         XCTAssertTrue(save.accessibilityHelp()?.contains("privately on this Mac") == true)
         XCTAssertTrue(preview.accessibilityHelp()?.contains("selected file") == true)
-        XCTAssertEqual(steps.numberOfRows, 4)
+        XCTAssertEqual(steps.numberOfRows, 10)
         XCTAssertEqual(
             WorkflowEditorPolicy.newWorkflow().steps.map(\.action),
             [
@@ -2538,6 +2538,12 @@ final class AppPolicyTests: XCTestCase {
                 .removeRedundantEnglishSDH,
                 .removeSegmentTitle,
                 .clearAllTags,
+                .removeImageAttachments,
+                .markCommentaryTracks,
+                .normalizeCommentaryNames,
+                .markForcedSubtitles,
+                .markSDHSubtitles,
+                .normalizeFilename,
             ]
         )
         if let capturePath = ProcessInfo.processInfo.environment[

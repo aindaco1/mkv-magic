@@ -58,7 +58,9 @@ public actor JSONSavedWorkflowStore: SavedWorkflowPersisting {
     }
 
     public func load() async throws -> [SavedWorkflow] {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return [] }
+        guard FileManager.default.fileExists(atPath: fileURL.path) else {
+            return SavedWorkflowPresetCatalog.firstRunWorkflows
+        }
         let data = try readRegularFile(at: fileURL, maximumBytes: Self.maximumDocumentBytes)
         let object: Any
         do {

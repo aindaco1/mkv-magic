@@ -712,12 +712,9 @@ enum WorkflowEditorPolicy {
     static func newWorkflow() -> SavedWorkflow {
         SavedWorkflow(
             name: "New Workflow",
-            steps: [
-                SavedWorkflowStep(action: .removeNonEnglishSubtitles),
-                SavedWorkflowStep(action: .removeRedundantEnglishSDH),
-                SavedWorkflowStep(isEnabled: false, action: .removeSegmentTitle),
-                SavedWorkflowStep(isEnabled: false, action: .clearAllTags),
-            ]
+            steps: SavedWorkflowPresetCatalog.cleanMKV.steps.map {
+                SavedWorkflowStep(isEnabled: $0.isEnabled, action: $0.action)
+            }
         )
     }
 
