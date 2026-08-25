@@ -5,6 +5,21 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.4 - 2026-08-25
+
+- Show an accessible activity indicator during file discovery, inspection,
+  planning, queue mutations and execution, encoding tests, workflow saves,
+  chapter analysis, thumbnail loading, history export, and every verified
+  output operation.
+- Add a per-file remove button and Delete-key action to the media list. Removing
+  an item only changes MKV Magic's inspected list and never deletes or modifies
+  the source file.
+- Make the output-location contract explicit in every media save panel: the
+  original file's directory is selected by default and the same panel can be
+  used to choose any other accessible directory.
+- Update the pinned Universal MKVToolNix runtime and corresponding source to
+  version 101.0 using the upstream-published SHA-256 digests.
+
 ## 0.1.3 - 2026-08-25
 
 - Keep the ad-hoc package rehearsal isolated from production keychain, Team ID,

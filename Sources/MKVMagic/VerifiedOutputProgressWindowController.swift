@@ -123,6 +123,19 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         )
     }
 
+    static func verifiedChange(
+        title: String,
+        initialMessage: String
+    ) -> VerifiedOutputProgressWindowController {
+        VerifiedOutputProgressWindowController(
+            title: title,
+            initialMessage: initialMessage,
+            verifyingMessage: "Reopening and verifying the complete temporary output…",
+            committingMessage: "Verification passed. Saving and auditing the final output…",
+            cancellingMessage: "Cancelling and removing the temporary output…"
+        )
+    }
+
     func beginSheet(for parentWindow: NSWindow) {
         guard let window else { return }
         parentWindow.beginSheet(window)
@@ -158,6 +171,10 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
                 "Cancellation is unavailable while the verified output is committed atomically."
             )
         }
+    }
+
+    func update(message: String) {
+        setStatus(message)
     }
 
     func finish() {

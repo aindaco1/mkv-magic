@@ -6,6 +6,58 @@ import MKVMagicSystem
 import UniformTypeIdentifiers
 
 @MainActor
+private final class MediaAssetTableView: NSTableView {
+    var onDeleteSelection: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 51 || event.keyCode == 117 {
+            onDeleteSelection?()
+        } else {
+            super.keyDown(with: event)
+        }
+    }
+}
+
+@MainActor
+private final class MediaAssetTableCellView: NSTableCellView {
+    let removeButton = NSButton()
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        let label = NSTextField(labelWithString: "")
+        label.translatesAutoresizingMaskIntoConstraints = false
+        label.lineBreakMode = .byTruncatingMiddle
+        textField = label
+        addSubview(label)
+
+        removeButton.translatesAutoresizingMaskIntoConstraints = false
+        removeButton.image = NSImage(
+            systemSymbolName: "xmark.circle.fill",
+            accessibilityDescription: "Remove file"
+        )
+        removeButton.imagePosition = .imageOnly
+        removeButton.isBordered = false
+        removeButton.bezelStyle = .inline
+        addSubview(removeButton)
+
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
+            label.trailingAnchor.constraint(equalTo: removeButton.leadingAnchor, constant: -6),
+            label.centerYAnchor.constraint(equalTo: centerYAnchor),
+            removeButton.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -6),
+            removeButton.centerYAnchor.constraint(equalTo: centerYAnchor),
+            removeButton.widthAnchor.constraint(equalToConstant: 22),
+            removeButton.heightAnchor.constraint(equalToConstant: 22),
+        ])
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+}
+
+@MainActor
 final class MainViewController: NSViewController, NSTableViewDataSource, NSTableViewDelegate {
     private struct PreparedSavedWorkflow {
         let recipe: SavedWorkflow
@@ -59,6 +111,42 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case tagRemoval(MatroskaTagPreview)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
         case remuxToMKV(MKVRemuxPreview)
+
+        var progressPresentation: (title: String, message: String) {
+            switch self {
+            case .segmentTitle, .track:
+                ("Editing MKV Metadata", "Editing a temporary verified copy without encoding…")
+            case .trackRemoval:
+                ("Removing MKV Tracks", "Remuxing retained tracks without encoding…")
+            case .savedWorkflow(let prepared):
+                (
+                    "Running \(prepared.recipe.name)",
+                    "Applying the reviewed workflow to one temporary output…"
+                )
+            case .subtitleCleanup, .advancedSubtitleCleanup:
+                ("Cleaning Subtitle", "Writing and verifying the cleaned subtitle copy…")
+            case .externalSubtitle:
+                ("Adding Subtitle", "Adding the reviewed subtitle without encoding video…")
+            case .embeddedSubtitle:
+                ("Cleaning Embedded Subtitle", "Replacing the reviewed subtitle in one remux…")
+            case .timedTextSubtitle:
+                ("Converting Subtitle", "Writing and verifying the converted subtitle…")
+            case .textSubtitleExtraction:
+                ("Extracting Subtitle", "Extracting and verifying the exact subtitle track…")
+            case .attachmentExtraction:
+                ("Extracting Attachment", "Extracting and verifying the exact attachment…")
+            case .attachmentRemoval:
+                ("Removing Attachments", "Remuxing the retained MKV content without encoding…")
+            case .tagExport:
+                ("Exporting Tags", "Extracting and verifying the complete Matroska tag XML…")
+            case .tagRemoval:
+                ("Removing Tags", "Clearing tags on a temporary verified MKV copy…")
+            case .chapters:
+                ("Saving Chapters", "Replacing chapters on a temporary verified MKV copy…")
+            case .remuxToMKV:
+                ("Remuxing to MKV", "Copying compatible streams into one verified MKV…")
+            }
+        }
     }
 
     private enum SubtitleCleanupCandidate {
@@ -114,10 +202,14 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private let model: AppModel
-    private let tableView = NSTableView()
+    private let tableView = MediaAssetTableView()
     private let inspectorText = NSTextView()
     private let segmentTitleField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "Ready")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "MKV Magic activity",
+        help: "Shows when MKV Magic is inspecting, preparing, processing, or verifying local media."
+    )
     private let impactLabel = NSTextField(labelWithString: "No pending plan")
     private let previewButton = NSButton(title: "Preview Change", target: nil, action: nil)
     private let editTrackButton = NSButton(title: "Edit a Track…", target: nil, action: nil)
@@ -169,6 +261,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var losslessJoinProgressWindowController: VerifiedOutputProgressWindowController?
     private var losslessJoinTask: Task<Void, Never>?
     private var verifiedRunTask: Task<Void, Never>?
+    private var verifiedRunProgressWindowController: VerifiedOutputProgressWindowController?
+    private var interfaceActivityIDs = Set<UUID>()
 
     var preferredInitialFirstResponder: NSView { chooseFilesButton }
 
@@ -327,10 +421,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.dataSource = self
         tableView.delegate = self
         tableView.rowHeight = 32
-        tableView.allowsEmptySelection = false
+        tableView.allowsEmptySelection = true
+        tableView.onDeleteSelection = { [weak self] in self?.removeSelectedAsset() }
         tableView.setAccessibilityLabel("Inspected media files")
         tableView.setAccessibilityHelp(
-            "Choose a file to inspect its tracks and enable applicable actions."
+            "Choose a file to inspect its tracks and enable applicable actions. Use its remove button or press Delete to remove it from this list without deleting the source file."
         )
         let scroll = NSScrollView()
         scroll.documentView = tableView
@@ -525,7 +620,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let stack = NSStackView(views: [
-            statusLabel, spacer, impactLabel, queueButton, runButton,
+            activityIndicator, statusLabel, spacer, impactLabel, queueButton, runButton,
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
@@ -560,8 +655,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc func showHistory() {
-        statusLabel.stringValue = "Loading history…"
+        let activityID = beginInterfaceActivity("Loading history…")
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let records = try await model.loadHistory()
                 let controller = HistoryWindowController(
@@ -598,8 +694,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             controller.window?.makeKeyAndOrderFront(nil)
             return
         }
-        statusLabel.stringValue = "Loading queue…"
+        let activityID = beginInterfaceActivity("Loading queue…")
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let snapshot = try await model.loadQueue()
                 let controller = QueueWindowController(
@@ -651,8 +748,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc func showEncodingBenchmark() {
-        statusLabel.stringValue = "Loading the saved local encoding recommendation…"
+        let activityID = beginInterfaceActivity(
+            "Loading the saved local encoding recommendation…"
+        )
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let report = try await model.loadEncodingBenchmarkReport()
                 let controller = EncodingBenchmarkWindowController(
@@ -697,8 +797,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc func showWorkflows() {
-        statusLabel.stringValue = "Loading workflows…"
+        let activityID = beginInterfaceActivity("Loading workflows…")
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let workflows = try await model.loadWorkflows()
                 let controller = WorkflowWindowController(
@@ -782,6 +883,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             ? TrimPresentationPolicy.thumbnailTimes(duration: duration) : []
         guard operation == .transcode || !times.isEmpty else { return }
         isPreparingVideoProcessing = true
+        updateActivityIndicator()
         trimButton.isEnabled = false
         convertButton.isEnabled = false
         statusLabel.stringValue =
@@ -789,6 +891,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             ? "Loading local encoder choices…"
             : "Loading local trim thumbnails and encoder choices…"
         Task {
+            defer { updateActivityIndicator() }
             do {
                 async let capabilityTask = model.probeEncodingCapabilities()
                 let thumbnails =
@@ -863,12 +966,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             preview.operation == .transcode
             ? "Save Verified Converted MKV" : "Save Verified Trimmed MKV"
         panel.prompt = preview.operation == .transcode ? "Convert & Save" : "Trim & Save"
+        panel.message = OutputDestinationPolicy.savePanelMessage()
         panel.canCreateDirectories = true
         panel.nameFieldStringValue =
             preview.operation == .transcode
             ? OutputNamingPolicy.convertedFilename(for: preview.source.sourceURL)
             : OutputNamingPolicy.trimmedFilename(for: preview.source.sourceURL)
-        panel.directoryURL = preview.source.sourceURL.deletingLastPathComponent()
+        panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
+            for: preview.source.sourceURL
+        )
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -935,8 +1041,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
         joinButton.isEnabled = false
-        statusLabel.stringValue = "Reading exact nested chapters for join setup…"
+        let activityID = beginInterfaceActivity(
+            "Reading exact nested chapters for join setup…"
+        )
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let options = try await model.loadLosslessJoinSourceOptions(sources)
                 let capabilities = await model.probeEncodingCapabilities()
@@ -1018,8 +1127,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         resolvedPlan: ResolvedJoinNormalizationPlan,
         parentWindow: NSWindow
     ) {
-        statusLabel.stringValue = "Confirming approved choices and unchanged sources…"
+        let activityID = beginInterfaceActivity(
+            "Confirming approved choices and unchanged sources…"
+        )
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewCommonFormatJoin(
                     candidate,
@@ -1050,11 +1162,15 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let panel = NSSavePanel()
         panel.title = "Save Verified Joined MKV"
         panel.prompt = "Normalize, Join & Save"
-        panel.message =
-            "Incompatible lanes will be normalized once in private temporary storage; the final MKV is saved only after verification."
+        panel.message = OutputDestinationPolicy.savePanelMessage(
+            detail:
+                "Incompatible lanes will be normalized once in private temporary storage; the final MKV is saved only after verification."
+        )
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
-        panel.directoryURL = firstSource.sourceURL.deletingLastPathComponent()
+        panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
+            for: firstSource.sourceURL
+        )
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -1107,8 +1223,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         _ candidate: LosslessJoinCandidate,
         parentWindow: NSWindow
     ) {
-        statusLabel.stringValue = "Confirming every reviewed source is unchanged…"
+        let activityID = beginInterfaceActivity(
+            "Confirming every reviewed source is unchanged…"
+        )
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewLosslessJoin(candidate)
                 guard view.window === parentWindow else { return }
@@ -1136,9 +1255,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let panel = NSSavePanel()
         panel.title = "Save Verified Joined MKV"
         panel.prompt = "Join & Save"
+        panel.message = OutputDestinationPolicy.savePanelMessage()
         panel.canCreateDirectories = true
         panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
-        panel.directoryURL = firstSource.sourceURL.deletingLastPathComponent()
+        panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
+            for: firstSource.sourceURL
+        )
         panel.allowedContentTypes = [UTType(filenameExtension: "mkv") ?? .data]
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
@@ -1264,9 +1386,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
 
-        statusLabel.stringValue = "Checking compatible video encoders on this Mac…"
+        let activityID = beginInterfaceActivity(
+            "Checking compatible video encoders on this Mac…"
+        )
         Task { [weak self, weak parentWindow] in
             guard let self else { return }
+            defer { endInterfaceActivity(activityID) }
             let capabilities = await model.probeEncodingCapabilities()
             guard let parentWindow, view.window === parentWindow,
                 selectedAsset?.id == asset.id
@@ -1403,6 +1528,54 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         Task { await model.addFiles(urls) }
     }
 
+    @objc private func removeAssetFromList(_ sender: NSButton) {
+        removeAsset(at: sender.tag)
+    }
+
+    private func removeSelectedAsset() {
+        removeAsset(at: tableView.selectedRow)
+    }
+
+    private func removeAsset(at row: Int) {
+        guard model.assets.indices.contains(row), !isMediaWorkBusy else { return }
+        let asset = model.assets[row]
+        let remaining = model.assets.enumerated().filter { $0.offset != row }.map(\.element)
+        preferredSelectionURL =
+            remaining.indices.contains(row)
+            ? remaining[row].sourceURL : remaining.last?.sourceURL
+        clearPendingChange()
+        model.removeAssets(withIDs: [asset.id])
+    }
+
+    @discardableResult
+    private func beginInterfaceActivity(_ message: String) -> UUID {
+        let id = UUID()
+        interfaceActivityIDs.insert(id)
+        statusLabel.stringValue = message
+        updateActivityIndicator()
+        return id
+    }
+
+    private func endInterfaceActivity(_ id: UUID) {
+        interfaceActivityIDs.remove(id)
+        updateActivityIndicator()
+    }
+
+    private var isMediaWorkBusy: Bool {
+        model.state.showsProgressIndicator
+            || verifiedRunTask != nil
+            || trimTask != nil
+            || losslessJoinTask != nil
+            || isPreparingVideoProcessing
+    }
+
+    private func updateActivityIndicator() {
+        ActivityIndicatorPresentation.set(
+            activityIndicator,
+            active: isMediaWorkBusy || !interfaceActivityIDs.isEmpty
+        )
+    }
+
     @objc private func previewChange() {
         guard let asset = selectedAsset else { return }
         guard MatroskaEditingPolicy.supports(asset) else {
@@ -1486,10 +1659,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         guard let asset = selectedAsset, MatroskaEditingPolicy.supports(asset),
             let parentWindow = view.window
         else { return }
-        statusLabel.stringValue =
+        let activityID = beginInterfaceActivity(
             "Extracting nested chapters from \(asset.sourceURL.lastPathComponent)…"
+        )
         chaptersButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewChapters(in: asset)
                 guard selectedAsset?.id == asset.id else {
@@ -1585,9 +1760,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             presentEmbeddedSubtitleCleanup(asset: asset, parentWindow: parentWindow)
             return
         }
-        statusLabel.stringValue = "Reading \(asset.sourceURL.lastPathComponent)…"
+        let activityID = beginInterfaceActivity(
+            "Reading \(asset.sourceURL.lastPathComponent)…"
+        )
         cleanSubtitleButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let candidate: SubtitleCleanupCandidate
                 switch asset.sourceURL.pathExtension.lowercased() {
@@ -1761,9 +1939,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func previewMatroskaTextSubtitleExtraction(asset: MediaAsset, trackUID: UInt64) {
-        statusLabel.stringValue = "Extracting embedded subtitle privately for review…"
+        let activityID = beginInterfaceActivity(
+            "Extracting embedded subtitle privately for review…"
+        )
         extractSubtitleButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewMatroskaTextSubtitleExtraction(
                     in: asset,
@@ -1836,9 +2017,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         asset: MediaAsset,
         attachmentUID: UInt64
     ) {
-        statusLabel.stringValue = "Extracting attachment privately for review…"
+        let activityID = beginInterfaceActivity(
+            "Extracting attachment privately for review…"
+        )
         attachmentsButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewMatroskaAttachmentExtraction(
                     in: asset,
@@ -1903,9 +2087,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         asset: MediaAsset,
         removal: MatroskaAttachmentRemoval
     ) {
-        statusLabel.stringValue = "Re-inspecting attachment removal for review…"
+        let activityID = beginInterfaceActivity(
+            "Re-inspecting attachment removal for review…"
+        )
         removeAttachmentsButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewMatroskaAttachmentRemoval(
                     in: asset,
@@ -1968,9 +2155,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func previewMatroskaTags(asset: MediaAsset, action: MatroskaTagAction) {
-        statusLabel.stringValue = "Extracting Matroska tags privately for review…"
+        let activityID = beginInterfaceActivity(
+            "Extracting Matroska tags privately for review…"
+        )
         tagsButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewMatroskaTags(in: asset)
                 guard selectedAsset?.id == asset.id else {
@@ -2015,9 +2205,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func previewTimedTextSubtitleConversion(asset: MediaAsset, trackID: Int) {
-        statusLabel.stringValue = "Converting MP4 timed text privately for review…"
+        let activityID = beginInterfaceActivity(
+            "Converting MP4 timed text privately for review…"
+        )
         convertTimedTextButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewTimedTextSubtitleConversion(
                     in: asset,
@@ -2059,9 +2252,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         trackUID: UInt64,
         parentWindow: NSWindow
     ) {
-        statusLabel.stringValue = "Extracting embedded subtitle for review…"
+        let activityID = beginInterfaceActivity(
+            "Extracting embedded subtitle for review…"
+        )
         cleanSubtitleButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview = try await model.previewEmbeddedSubtitleCleanup(
                     in: asset,
@@ -2180,9 +2376,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
 
-        statusLabel.stringValue = "Reading \(subtitleURL.lastPathComponent)…"
+        let activityID = beginInterfaceActivity(
+            "Reading \(subtitleURL.lastPathComponent)…"
+        )
         addSubtitleButton.isEnabled = false
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let preview: ExternalSubtitleFilePreview
                 let match: ExternalSubtitleMatch
@@ -2407,9 +2606,23 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             )
         else { return }
         disableEditingControls()
-        verifiedRunTask = Task { [weak self] in
+        let presentation = pendingChange.progressPresentation
+        let progress = VerifiedOutputProgressWindowController.verifiedChange(
+            title: presentation.title,
+            initialMessage: presentation.message
+        )
+        verifiedRunProgressWindowController = progress
+        if let parentWindow = view.window {
+            progress.beginSheet(for: parentWindow)
+        }
+        let task = Task { [weak self, weak progress] in
             guard let self else { return }
-            defer { self.verifiedRunTask = nil }
+            defer {
+                progress?.finish()
+                self.verifiedRunProgressWindowController = nil
+                self.verifiedRunTask = nil
+                self.refresh()
+            }
             do {
                 let outputURL: URL
                 switch pendingChange {
@@ -2521,11 +2734,13 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                     model.assets.contains { $0.sourceURL == outputURL }
                     ? outputURL : nil
                 clearPendingChange()
-                refresh()
             } catch {
                 restoreEditingControls(for: asset)
             }
         }
+        verifiedRunTask = task
+        progress.onCancel = { [weak self] in self?.verifiedRunTask?.cancel() }
+        updateActivityIndicator()
     }
 
     @objc private func addPendingWorkflowToQueue() {
@@ -2548,7 +2763,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         disableEditingControls()
         verifiedRunTask = Task { [weak self] in
             guard let self else { return }
-            defer { self.verifiedRunTask = nil }
+            defer {
+                self.verifiedRunTask = nil
+                self.refresh()
+            }
             do {
                 _ = try await model.enqueueSavedWorkflow(
                     prepared.compiled,
@@ -2577,6 +2795,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 )
             }
         }
+        updateActivityIndicator()
     }
 
     private func chooseDestination(
@@ -2652,6 +2871,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 : (isSubtitleCleanup || isTimedTextConversion || isTextSubtitleExtraction
                     ? "Save Verified Subtitle Copy" : "Save Verified MKV Copy"))
         panel.prompt = prompt
+        panel.message = OutputDestinationPolicy.savePanelMessage()
         panel.canCreateDirectories = true
         if case .savedWorkflow(let prepared) = pendingChange,
             let suggestedFilename = prepared.compiled.suggestedOutputFilename
@@ -2698,7 +2918,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
         }
-        panel.directoryURL = asset.sourceURL.deletingLastPathComponent()
+        panel.directoryURL = OutputDestinationPolicy.defaultDirectory(for: asset.sourceURL)
         let outputExtension: String
         if case .attachmentExtraction(let preview) = pendingChange {
             outputExtension =
@@ -2794,8 +3014,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         queueWindowController?.close()
         queueWindowController = nil
-        statusLabel.stringValue = "Restoring \(job.inputs.first?.displayName ?? "queued input")…"
+        let activityID = beginInterfaceActivity(
+            "Restoring \(job.inputs.first?.displayName ?? "queued input")…"
+        )
         Task {
+            defer { endInterfaceActivity(activityID) }
             do {
                 let sourceURL = try model.resolvePrimaryQueueInput(job)
                 await model.addFiles([sourceURL])
@@ -2854,6 +3077,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             }
             lastAnnouncedModelFailure = message
         }
+        if let progressMessage = model.state.progressMessage {
+            verifiedRunProgressWindowController?.update(message: progressMessage)
+        }
+        updateActivityIndicator()
+        chooseFilesButton.isEnabled = !model.state.showsProgressIndicator
         if tableView.selectedRow >= model.assets.count {
             tableView.deselectAll(nil)
         }
@@ -2869,7 +3097,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
         renderInspector()
         joinButton.isEnabled = model.assets.filter { MatroskaEditingPolicy.supports($0) }.count >= 2
-        if case .executing = model.state {
+        if isMediaWorkBusy {
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
@@ -3111,22 +3339,22 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     ) -> NSView? {
         let identifier = NSUserInterfaceItemIdentifier("AssetCell")
         let cell =
-            tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView
-            ?? NSTableCellView()
+            tableView.makeView(withIdentifier: identifier, owner: self)
+            as? MediaAssetTableCellView
+            ?? MediaAssetTableCellView()
         cell.identifier = identifier
-        if cell.textField == nil {
-            let label = NSTextField(labelWithString: "")
-            label.translatesAutoresizingMaskIntoConstraints = false
-            label.lineBreakMode = .byTruncatingMiddle
-            cell.addSubview(label)
-            cell.textField = label
-            NSLayoutConstraint.activate([
-                label.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 8),
-                label.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -8),
-                label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-        }
-        cell.textField?.stringValue = model.assets[row].sourceURL.lastPathComponent
+        let asset = model.assets[row]
+        cell.textField?.stringValue = asset.sourceURL.lastPathComponent
+        cell.removeButton.tag = row
+        cell.removeButton.target = self
+        cell.removeButton.action = #selector(removeAssetFromList(_:))
+        cell.removeButton.isEnabled = !isMediaWorkBusy
+        cell.removeButton.setAccessibilityLabel(
+            "Remove \(asset.sourceURL.lastPathComponent) from MKV Magic"
+        )
+        cell.removeButton.setAccessibilityHelp(
+            "Remove this item from the list without deleting or changing the source file."
+        )
         return cell
     }
 
@@ -3249,6 +3477,19 @@ enum InspectorPresentationPolicy {
 
     static func displayedBitDepth(for track: MediaTrack) -> Int? {
         track.kind == .video ? track.bitDepth : nil
+    }
+}
+
+enum OutputDestinationPolicy {
+    static func defaultDirectory(for sourceURL: URL) -> URL {
+        sourceURL.standardizedFileURL.deletingLastPathComponent()
+    }
+
+    static func savePanelMessage(detail: String? = nil) -> String {
+        let location =
+            "The original file’s folder is selected by default. Choose another folder here if you prefer."
+        guard let detail, !detail.isEmpty else { return location }
+        return "\(location) \(detail)"
     }
 }
 

@@ -81,6 +81,10 @@ final class EncodingBenchmarkViewController: NSViewController {
     private let onRun: @MainActor @Sendable () async throws -> EncodingBenchmarkReport
     private let resultsText = NSTextView()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "Encoding test activity",
+        help: "Shows while MKV Magic runs the private local encoding benchmark."
+    )
     private let runButton = NSButton(title: "Run Encoding Test", target: nil, action: nil)
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private let closeButton = NSButton(title: "Close", target: nil, action: nil)
@@ -156,7 +160,7 @@ final class EncodingBenchmarkViewController: NSViewController {
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let controls = NSStackView(views: [
-            statusLabel, spacer, cancelButton, closeButton, runButton,
+            activityIndicator, statusLabel, spacer, cancelButton, closeButton, runButton,
         ])
         controls.orientation = .horizontal
         controls.alignment = .centerY
@@ -237,6 +241,7 @@ final class EncodingBenchmarkViewController: NSViewController {
     }
 
     private func setRunning(_ isRunning: Bool) {
+        ActivityIndicatorPresentation.set(activityIndicator, active: isRunning)
         runButton.isEnabled = !isRunning
         closeButton.isEnabled = !isRunning
         cancelButton.isHidden = !isRunning

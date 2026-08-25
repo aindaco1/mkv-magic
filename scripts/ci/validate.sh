@@ -21,6 +21,7 @@ actionlint -color
 ./scripts/ci/test-release-tag-containment.sh
 ./scripts/ci/test-repository-release-controls.sh
 ./scripts/ci/test-runtime-build-dependencies.sh
+./scripts/ci/test-runtime-version-pin.sh
 ./scripts/ci/test-tool-tree-layout.sh
 ./scripts/ci/test-reseal-tool-manifests.sh
 

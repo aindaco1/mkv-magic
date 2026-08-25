@@ -39,6 +39,10 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         action: nil
     )
     private let exportStatus = NSTextField(labelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "History export activity",
+        help: "Shows while MKV Magic builds the privacy-safe local support report."
+    )
 
     var preferredInitialFirstResponder: NSView { tableView }
 
@@ -122,7 +126,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         exportStatus.textColor = .secondaryLabelColor
         exportStatus.lineBreakMode = .byTruncatingMiddle
         exportStatus.setAccessibilityLabel("Report export status")
-        let exportRow = NSStackView(views: [exportButton, exportStatus])
+        let exportRow = NSStackView(views: [exportButton, activityIndicator, exportStatus])
         exportRow.orientation = .horizontal
         exportRow.spacing = 10
         exportRow.alignment = .centerY
@@ -196,9 +200,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self, let destinationURL = panel.url else { return }
             self.exportButton.isEnabled = false
+            ActivityIndicatorPresentation.set(self.activityIndicator, active: true)
             self.exportStatus.stringValue = "Building report…"
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                defer {
+                    ActivityIndicatorPresentation.set(self.activityIndicator, active: false)
+                }
                 do {
                     try await onExport(destinationURL)
                     self.exportStatus.stringValue = "Privacy-safe report exported."

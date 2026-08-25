@@ -109,6 +109,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private var suggestionReviewController: ChapterSuggestionReviewWindowController?
     private var thumbnailTask: Task<Void, Never>?
     private var thumbnailWindowController: ChapterThumbnailWindowController?
+    private var activityCount = 0
 
     private let outlineView = NSOutlineView()
     private let selectionHeading = NSTextField(labelWithString: "Select an edition or chapter")
@@ -126,6 +127,10 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private let orderedCheck = NSButton(
         checkboxWithTitle: "Ordered edition", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "Chapter Studio activity",
+        help: "Shows while MKV Magic analyzes chapter suggestions or loads local thumbnails."
+    )
     private let addChildButton = NSButton(title: "Add Child", target: nil, action: nil)
     private let duplicateButton = NSButton(title: "Duplicate", target: nil, action: nil)
     private let removeButton = NSButton(title: "Remove", target: nil, action: nil)
@@ -187,7 +192,9 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let footer = NSStackView(views: [statusLabel, spacer, cancelButton, useChangesButton])
+        let footer = NSStackView(views: [
+            activityIndicator, statusLabel, spacer, cancelButton, useChangesButton,
+        ])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 10
@@ -842,10 +849,12 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         guard let suggestionProvider, let duration = preview.source.duration else { return }
         analysisTask?.cancel()
         suggestButton.isEnabled = false
+        beginChapterActivity()
         showInfo("Analyzing locally with FFmpeg…")
         let startsAtLaunch = allChapterStarts()
         analysisTask = Task { [weak self] in
             guard let self else { return }
+            defer { endChapterActivity() }
             do {
                 let analyzed = try await suggestionProvider(options, startsAtLaunch)
                 try Task.checkCancellation()
@@ -948,9 +957,11 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
 
         thumbnailTask?.cancel()
         thumbnailsButton.isEnabled = false
+        beginChapterActivity()
         showInfo("Loading local thumbnails…")
         thumbnailTask = Task { [weak self] in
             guard let self else { return }
+            defer { endChapterActivity() }
             do {
                 let thumbnails = try await thumbnailProvider(times)
                 try Task.checkCancellation()
@@ -1331,6 +1342,16 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private func showInfo(_ message: String) {
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.stringValue = message
+    }
+
+    private func beginChapterActivity() {
+        activityCount += 1
+        ActivityIndicatorPresentation.set(activityIndicator, active: true)
+    }
+
+    private func endChapterActivity() {
+        activityCount = max(0, activityCount - 1)
+        ActivityIndicatorPresentation.set(activityIndicator, active: activityCount > 0)
     }
 
     private func clearStatus() {

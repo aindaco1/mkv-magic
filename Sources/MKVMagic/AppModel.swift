@@ -169,6 +169,22 @@ final class AppModel {
         case completed(String)
         case completedWithWarnings(String)
         case failed(String)
+
+        var showsProgressIndicator: Bool {
+            switch self {
+            case .discovering, .inspecting, .executing: true
+            case .ready, .completed, .completedWithWarnings, .failed: false
+            }
+        }
+
+        var progressMessage: String? {
+            switch self {
+            case .discovering: "Finding media files…"
+            case .inspecting(let filename): "Inspecting \(filename)…"
+            case .executing(let message): message
+            case .ready, .completed, .completedWithWarnings, .failed: nil
+            }
+        }
     }
 
     private(set) var assets: [MediaAsset] = []
@@ -190,6 +206,7 @@ final class AppModel {
         @Sendable () throws -> any EncodingBenchmarkPersisting
 
     init(
+        initialAssets: [MediaAsset] = [],
         historyRecorderFactory: @escaping @Sendable () throws -> any JobHistoryRecording = {
             try AppHistoryLocation.makeStore()
         },
@@ -209,6 +226,7 @@ final class AppModel {
                 try AppHistoryLocation.makeEncodingBenchmarkStore()
             }
     ) {
+        assets = initialAssets
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
         self.queueStoreFactory = queueStoreFactory
@@ -2021,6 +2039,26 @@ final class AppModel {
             )
         } else {
             state = .ready
+        }
+        didChange?()
+    }
+
+    func removeAssets(withIDs ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        let removedIDs = Set(assets.lazy.map(\.id)).intersection(ids)
+        guard !removedIDs.isEmpty else { return }
+
+        assets.removeAll { removedIDs.contains($0.id) }
+        for id in removedIDs {
+            inspectedAssetRevisions.removeValue(forKey: id)
+        }
+        if assets.isEmpty {
+            state = .ready
+        } else {
+            let noun = removedIDs.count == 1 ? "file" : "files"
+            state = .completed(
+                "Removed \(removedIDs.count) \(noun) from MKV Magic; source files unchanged."
+            )
         }
         didChange?()
     }

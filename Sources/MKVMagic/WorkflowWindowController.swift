@@ -49,6 +49,10 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
     private let stepTable = NSTableView()
     private let nameField = NSTextField()
     private let statusLabel = NSTextField(labelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "Workflow activity",
+        help: "Shows while MKV Magic saves the local workflow library."
+    )
     private let duplicateButton = NSButton(title: "Duplicate", target: nil, action: nil)
     private let deleteButton = NSButton(title: "Delete", target: nil, action: nil)
     private let importButton = NSButton(title: "Import…", target: nil, action: nil)
@@ -249,8 +253,12 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setAccessibilityLabel("Workflow status")
+        let statusRow = NSStackView(views: [activityIndicator, statusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 8
         let stack = NSStackView(views: [
-            heading, nameLabel, nameField, stepLabel, scroll, stepButtons, statusLabel, actions,
+            heading, nameLabel, nameField, stepLabel, scroll, stepButtons, statusRow, actions,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -479,8 +487,10 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             workflowToUse = nil
         }
         setEditingEnabled(false)
+        ActivityIndicatorPresentation.set(activityIndicator, active: true)
         statusLabel.stringValue = "Saving…"
         Task {
+            defer { ActivityIndicatorPresentation.set(activityIndicator, active: false) }
             do {
                 try await onSave(workflows)
                 statusLabel.stringValue = "Saved privately on this Mac."

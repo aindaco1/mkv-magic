@@ -238,6 +238,7 @@ final class AppPolicyTests: XCTestCase {
             $0.accessibilityLabel()
         }
         XCTAssertTrue(accessibilityLabels.contains("Inspected media files"))
+        XCTAssertTrue(accessibilityLabels.contains("MKV Magic activity"))
         XCTAssertTrue(accessibilityLabels.contains("Selected media details"))
         XCTAssertTrue(accessibilityLabels.contains("Segment title"))
         XCTAssertTrue(accessibilityLabels.contains("Application status"))
@@ -401,6 +402,61 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(AssetSelectionPolicy.rowToSelect(currentRow: -1, assetCount: 1), 0)
         XCTAssertNil(AssetSelectionPolicy.rowToSelect(currentRow: 0, assetCount: 2))
         XCTAssertNil(AssetSelectionPolicy.rowToSelect(currentRow: -1, assetCount: 0))
+    }
+
+    @MainActor
+    func testRemovingInspectedAssetsOnlyChangesTheInAppList() {
+        let first = MediaAsset(
+            id: UUID(),
+            sourceURL: URL(fileURLWithPath: "/Media/First.mkv"),
+            container: "matroska"
+        )
+        let second = MediaAsset(
+            id: UUID(),
+            sourceURL: URL(fileURLWithPath: "/Media/Second.mkv"),
+            container: "matroska"
+        )
+        let model = AppModel(initialAssets: [first, second])
+
+        model.removeAssets(withIDs: [first.id])
+
+        XCTAssertEqual(model.assets, [second])
+        XCTAssertEqual(
+            model.state,
+            .completed("Removed 1 file from MKV Magic; source files unchanged.")
+        )
+
+        model.removeAssets(withIDs: [second.id])
+
+        XCTAssertTrue(model.assets.isEmpty)
+        XCTAssertEqual(model.state, .ready)
+    }
+
+    @MainActor
+    func testBusyModelStatesOwnVisibleProgressMessages() {
+        XCTAssertTrue(AppModel.State.discovering.showsProgressIndicator)
+        XCTAssertEqual(AppModel.State.discovering.progressMessage, "Finding media files…")
+        XCTAssertTrue(AppModel.State.inspecting("Movie.mkv").showsProgressIndicator)
+        XCTAssertEqual(
+            AppModel.State.inspecting("Movie.mkv").progressMessage,
+            "Inspecting Movie.mkv…"
+        )
+        XCTAssertTrue(AppModel.State.executing("Verifying…").showsProgressIndicator)
+        XCTAssertFalse(AppModel.State.completed("Done").showsProgressIndicator)
+        XCTAssertNil(AppModel.State.failed("Failed").progressMessage)
+    }
+
+    func testOutputDestinationDefaultsBesideSourceAndExplainsAlternateFolder() {
+        let source = URL(fileURLWithPath: "/Media/Features/Movie.mkv")
+
+        XCTAssertEqual(
+            OutputDestinationPolicy.defaultDirectory(for: source).path,
+            "/Media/Features"
+        )
+        let message = OutputDestinationPolicy.savePanelMessage(detail: "Verified after writing.")
+        XCTAssertTrue(message.contains("selected by default"))
+        XCTAssertTrue(message.contains("Choose another folder"))
+        XCTAssertTrue(message.contains("Verified after writing."))
     }
 
     func testEditedOutputNamePreservesContainerExtension() {
@@ -2556,6 +2612,19 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(commitCancel.isEnabled)
         XCTAssertTrue(commitStatus.stringValue.contains("Verification passed"))
         XCTAssertTrue(commitCancel.accessibilityHelp()?.contains("committed atomically") == true)
+
+        let generic = VerifiedOutputProgressWindowController.verifiedChange(
+            title: "Cleaning Subtitle",
+            initialMessage: "Writing subtitle…"
+        )
+        let genericContent = try XCTUnwrap(generic.window?.contentView)
+        let genericStatus = try XCTUnwrap(
+            descendants(in: genericContent).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Execution status"
+            }
+        )
+        generic.update(message: "Reopening and verifying…")
+        XCTAssertEqual(genericStatus.stringValue, "Reopening and verifying…")
     }
 
     @MainActor
@@ -3817,6 +3886,43 @@ final class AppPolicyTests: XCTestCase {
             try captureWindow(window: window, content: controller.view, at: capturePath)
             window.close()
         }
+    }
+
+    @MainActor
+    func testMainFileListRemoveButtonPreservesSourceBytes() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-remove-list-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let sourceURL = root.appendingPathComponent("Movie.mkv")
+        let sourceBytes = Data("source stays unchanged".utf8)
+        try sourceBytes.write(to: sourceURL)
+        let asset = MediaAsset(sourceURL: sourceURL, container: "matroska")
+        let model = AppModel(initialAssets: [asset])
+        let controller = MainViewController(model: model)
+        let window = NSWindow(contentViewController: controller)
+        defer { window.close() }
+        window.setContentSize(NSSize(width: 1_080, height: 680))
+        controller.view.layoutSubtreeIfNeeded()
+        let table = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTableView }.first {
+                $0.accessibilityLabel() == "Inspected media files"
+            }
+        )
+        let cell = try XCTUnwrap(table.view(atColumn: 0, row: 0, makeIfNecessary: true))
+        let remove = try XCTUnwrap(
+            buttons(in: cell).first {
+                $0.accessibilityLabel() == "Remove Movie.mkv from MKV Magic"
+            }
+        )
+
+        remove.performClick(nil)
+
+        XCTAssertTrue(model.assets.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
+        XCTAssertTrue(remove.accessibilityHelp()?.contains("without deleting") == true)
     }
 
     @MainActor

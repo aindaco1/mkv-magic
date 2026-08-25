@@ -63,6 +63,11 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "Queue activity",
+        help: "Shows while MKV Magic updates the queue or a queued media job is active."
+    )
+    private var isUpdating = false
 
     var preferredInitialFirstResponder: NSView { tableView }
 
@@ -159,7 +164,11 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         controls.alignment = .centerY
         controls.spacing = 8
 
-        let stack = NSStackView(views: [heading, help, scroll, statusLabel, controls])
+        let statusRow = NSStackView(views: [activityIndicator, statusLabel])
+        statusRow.orientation = .horizontal
+        statusRow.alignment = .centerY
+        statusRow.spacing = 8
+        let stack = NSStackView(views: [heading, help, scroll, statusRow, controls])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -175,7 +184,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             help.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
-            statusLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
             controls.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         view = root
@@ -275,10 +284,16 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         selecting jobID: UUID? = nil,
         _ operation: @escaping @MainActor () async throws -> MediaQueueSnapshot
     ) {
+        isUpdating = true
+        updateActivityIndicator()
         setControlsEnabled(false)
         statusLabel.stringValue = "Updating queue…"
         Task { @MainActor [weak self] in
             guard let self else { return }
+            defer {
+                self.isUpdating = false
+                self.updateActivityIndicator()
+            }
             do {
                 self.snapshot = try await operation()
                 self.tableView.reloadData()
@@ -308,6 +323,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
     }
 
     private func refreshSelection() {
+        updateActivityIndicator()
         pauseButton.title =
             snapshot.isPaused ? "Resume Automatic Starts" : "Pause Automatic Starts"
         pauseButton.isEnabled = true
@@ -351,6 +367,16 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         let pendingIndex = pending.firstIndex(where: { $0.id == job.id })
         moveUpButton.isEnabled = pendingIndex.map { $0 > 0 } ?? false
         moveDownButton.isEnabled = pendingIndex.map { $0 + 1 < pending.count } ?? false
+    }
+
+    private func updateActivityIndicator() {
+        let hasActiveJob = snapshot.jobs.contains {
+            $0.state == .running || $0.state == .cancelling
+        }
+        ActivityIndicatorPresentation.set(
+            activityIndicator,
+            active: isUpdating || hasActiveJob
+        )
     }
 
     private func setControlsEnabled(_ enabled: Bool) {

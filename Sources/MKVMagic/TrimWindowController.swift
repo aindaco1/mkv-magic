@@ -266,6 +266,10 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
     private let av1SpeedLabel = NSTextField(labelWithString: "AV1 speed (0–13)")
     private let av1SpeedField = NSTextField()
     private let inputMessage = NSTextField(wrappingLabelWithString: "")
+    private let activityIndicator = ActivityIndicatorPresentation.make(
+        label: "Trim review activity",
+        help: "Shows while MKV Magic reads keyframes, chapters, and encoder choices for review."
+    )
     private let reviewText = NSTextField(wrappingLabelWithString: "")
     private let reviewButton = NSButton(title: "Review Trim", target: nil, action: nil)
     private let continueButton = NSButton(title: "Continue to Save…", target: nil, action: nil)
@@ -501,7 +505,9 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         )
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let footer = NSStackView(views: [spacer, cancelButton, reviewButton, continueButton])
+        let footer = NSStackView(views: [
+            activityIndicator, spacer, cancelButton, reviewButton, continueButton,
+        ])
         footer.orientation = .horizontal
         footer.alignment = .centerY
         footer.spacing = 10
@@ -643,6 +649,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         invalidateReview()
         reviewedRequest = request
         reviewButton.isEnabled = false
+        ActivityIndicatorPresentation.set(activityIndicator, active: true)
         modeControl.isEnabled = false
         inField.isEnabled = false
         outField.isEnabled = false
@@ -661,6 +668,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
                 : "Binding the selected encoder, range, tracks, and exact nested chapters…"
         reviewTask = Task { [weak self] in
             guard let self else { return }
+            defer { ActivityIndicatorPresentation.set(activityIndicator, active: false) }
             do {
                 let preview = try await reviewProvider(request)
                 try Task.checkCancellation()
