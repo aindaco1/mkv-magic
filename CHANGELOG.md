@@ -5,6 +5,11 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.3 - 2026-08-25
+
+- Keep the ad-hoc package rehearsal isolated from production keychain, Team ID,
+  notarization, certificate, and update-key paths during the release source gate.
+
 ## 0.1.2 - 2026-08-25
 
 - Isolate the source/package rehearsal from release-only runtime paths so the

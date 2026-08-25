@@ -11,6 +11,11 @@ release_root="$gate_root/artifacts"
 export MKV_MAGIC_BUNDLE_IDENTIFIER=com.dustwave.mkvmagic.package-gate
 export MKV_MAGIC_TOOL_SOURCE_ROOT=''
 export MKV_MAGIC_REQUIRE_TOOLS=0
+export EXPECTED_TEAM_ID=''
+export NOTARY_KEY_PATH=''
+export SIGNING_CERTIFICATE_PATH=''
+export SIGNING_KEYCHAIN_PATH=''
+export SPARKLE_KEY_PATH=''
 private_rehearsal_build=20260825
 fixture_release_build=1787702400
 

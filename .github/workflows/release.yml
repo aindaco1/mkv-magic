@@ -95,8 +95,15 @@ jobs:
 
       - name: Validate source
         env:
+          EXPECTED_TEAM_ID: ""
+          MKV_MAGIC_RELEASE_ROOT: ""
+          MKV_MAGIC_TOOL_CACHE: ""
           MKV_MAGIC_TOOL_SOURCE_ROOT: ""
           MKV_MAGIC_REQUIRE_TOOLS: "0"
+          NOTARY_KEY_PATH: ""
+          SIGNING_CERTIFICATE_PATH: ""
+          SIGNING_KEYCHAIN_PATH: ""
+          SPARKLE_KEY_PATH: ""
         run: ./scripts/ci/local-gate.sh
 
       - name: Build verified Universal media runtime
