@@ -190,8 +190,9 @@ if [[ "$cli_architectures" != "x86_64 arm64" && \
 fi
 
 server_log="$work_root/loopback-server.log"
-python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$feed_root" \
-    >"$server_log" 2>&1 &
+server_ready_file="$work_root/loopback-server.port"
+python3 -u "$repo_root/scripts/release/serve-loopback.py" \
+    "$feed_root" "$server_ready_file" >"$server_log" 2>&1 &
 server_pid=$!
 server_port=''
 for ((attempt = 0; attempt < 100; attempt++)); do
@@ -199,7 +200,9 @@ for ((attempt = 0; attempt < 100; attempt++)); do
         echo "loopback-only updater acceptance server stopped unexpectedly" >&2
         exit 1
     fi
-    server_port="$(sed -nE 's/.* port ([0-9]+) .*/\1/p' "$server_log" | head -n 1)"
+    if [[ -f "$server_ready_file" && ! -L "$server_ready_file" ]]; then
+        server_port="$(tr -d '\n' <"$server_ready_file")"
+    fi
     if [[ "$server_port" =~ ^[1-9][0-9]*$ ]]; then
         break
     fi

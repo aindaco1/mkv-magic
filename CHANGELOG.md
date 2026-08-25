@@ -9,6 +9,8 @@ semantic versioning; public release tags are immutable and signed.
   no-bypass `v*` tag ruleset that prevents release-tag deletion and movement.
 - Keep the public macOS CI gates compatible with the pinned Xcode toolchain and
   install every command required to reproduce the bundled media runtime.
+- Make signed-update acceptance publish its ephemeral loopback port through a
+  private readiness file instead of depending on Python's server banner format.
 - Establish the native Universal macOS architecture, local-only security
   boundary, deterministic workflow planner, FFprobe normalization, AppKit shell,
   signed manual updater policy, tests, CI, and release automation.

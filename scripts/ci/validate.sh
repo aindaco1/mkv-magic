@@ -13,6 +13,7 @@ actionlint -color
 ./scripts/ci/test-coverage-gate.sh
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
+./scripts/ci/test-loopback-server.sh
 ./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-release-build-number.sh
 ./scripts/ci/test-release-notes.sh
