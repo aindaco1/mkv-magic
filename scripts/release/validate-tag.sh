@@ -13,10 +13,7 @@ if [[ "$(git rev-parse "$tag^{commit}")" != "$(git rev-parse HEAD)" ]]; then
     echo "release tag does not identify checked-out commit" >&2
     exit 1
 fi
-if [[ "$(git branch --contains HEAD --format='%(refname:short)' | grep -x main || true)" != main ]]; then
-    echo "release commit is not contained by main" >&2
-    exit 1
-fi
+"$repo_root/scripts/release/verify-main-containment.sh" HEAD
 verification="$(git tag -v "$tag" 2>&1)" || {
     echo "$verification" >&2
     exit 1

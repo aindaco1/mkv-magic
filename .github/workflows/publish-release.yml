@@ -53,6 +53,8 @@ jobs:
 
       - name: Validate signed tag and exact source
         run: |
+          git fetch --no-tags origin \
+            refs/heads/main:refs/remotes/origin/main
           git config gpg.format ssh
           git config gpg.ssh.allowedSignersFile \
             "$GITHUB_WORKSPACE/.github/allowed_signers"

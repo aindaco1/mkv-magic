@@ -5,6 +5,10 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.1 - 2026-08-25
+
+- Verify signed release-tag ancestry against freshly fetched `origin/main` so
+  exact detached-tag checkouts do not depend on a runner-local `main` branch.
 - Make the GitHub repository public, enable immutable releases, and activate a
   no-bypass `v*` tag ruleset that prevents release-tag deletion and movement.
 - Keep the public macOS CI gates compatible with the pinned Xcode toolchain and
