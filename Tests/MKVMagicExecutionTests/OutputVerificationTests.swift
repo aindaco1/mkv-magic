@@ -194,7 +194,7 @@ final class OutputVerificationTests: XCTestCase {
             codec: "aac",
             uid: 41,
             language: "en",
-            title: "Director Commentary"
+            title: "Director Commentary Audio Description"
         )
         let commentarySubtitle = MediaTrack(
             id: 1,
@@ -205,6 +205,16 @@ final class OutputVerificationTests: XCTestCase {
             title: "Forced SDH Commentary"
         )
         let markedAudio = MediaTrack(
+            id: 0,
+            kind: .audio,
+            codec: "aac",
+            uid: 41,
+            language: "en",
+            title: "Commentary",
+            isCommentary: true,
+            isVisualImpaired: true
+        )
+        let missingAudioDescriptionRole = MediaTrack(
             id: 0,
             kind: .audio,
             codec: "aac",
@@ -249,6 +259,7 @@ final class OutputVerificationTests: XCTestCase {
                     SavedWorkflowStep(action: .normalizeCommentaryNames),
                     SavedWorkflowStep(action: .markForcedSubtitles),
                     SavedWorkflowStep(action: .markSDHSubtitles),
+                    SavedWorkflowStep(action: .markAudioDescriptionTracks),
                 ]
             ),
             for: original
@@ -267,6 +278,17 @@ final class OutputVerificationTests: XCTestCase {
             try TrackMetadataOutputVerifier().verify(
                 original: original,
                 output: asset(title: nil, tracks: [markedAudio, commentarySubtitle]),
+                expectedEdits: edits,
+                segmentTitle: .set(nil),
+                tags: .removeAll
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .trackMetadataMismatch)
+        }
+        XCTAssertThrowsError(
+            try TrackMetadataOutputVerifier().verify(
+                original: original,
+                output: asset(title: nil, tracks: [missingAudioDescriptionRole, markedSubtitle]),
                 expectedEdits: edits,
                 segmentTitle: .set(nil),
                 tags: .removeAll

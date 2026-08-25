@@ -477,12 +477,23 @@ public struct SavedWorkflowCompiler: Sendable {
         } else {
             hearingImpairedSubtitleEdits = []
         }
+        let audioDescriptionEdits: [TrackMetadataEdit]
+        if enabledActions.contains(.markAudioDescriptionTracks) {
+            do {
+                audioDescriptionEdits = try AudioDescriptionTrackPolicy.metadataEdits(in: asset)
+            } catch TrackRolePolicyError.unstableTrackIdentity {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+        } else {
+            audioDescriptionEdits = []
+        }
         let roleMetadataEdits = mergedTrackRoleEdits(
             asset: asset,
             commentaryFlagEdits: commentaryFlagEdits,
             commentaryNameEdits: commentaryNameEdits,
             forcedSubtitleEdits: forcedSubtitleEdits,
-            hearingImpairedSubtitleEdits: hearingImpairedSubtitleEdits
+            hearingImpairedSubtitleEdits: hearingImpairedSubtitleEdits,
+            audioDescriptionEdits: audioDescriptionEdits
         )
         let roleOperationInsertionAction = enabledSteps.first { step in
             switch step.action {
@@ -490,6 +501,7 @@ public struct SavedWorkflowCompiler: Sendable {
             case .normalizeCommentaryNames: !commentaryNameEdits.isEmpty
             case .markForcedSubtitles: !forcedSubtitleEdits.isEmpty
             case .markSDHSubtitles: !hearingImpairedSubtitleEdits.isEmpty
+            case .markAudioDescriptionTracks: !audioDescriptionEdits.isEmpty
             default: false
             }
         }?.action
@@ -752,6 +764,33 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .applied,
                             detail: "Mark \(count) clearly named SDH \(noun)"
+                        )
+                    )
+                }
+            case .markAudioDescriptionTracks:
+                if audioDescriptionEdits.isEmpty {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No unmarked audio-description track has a clear name."
+                        )
+                    )
+                } else {
+                    if roleOperationInsertionAction == step.action {
+                        operations.append(
+                            contentsOf: roleMetadataEdits.map(
+                                WorkflowOperation.editTrackMetadata
+                            )
+                        )
+                    }
+                    let count = audioDescriptionEdits.count
+                    let noun = count == 1 ? "track" : "tracks"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Mark \(count) clearly named audio-description \(noun)"
                         )
                     )
                 }
@@ -1054,7 +1093,8 @@ public struct SavedWorkflowCompiler: Sendable {
         commentaryFlagEdits: [TrackMetadataEdit],
         commentaryNameEdits: [TrackMetadataEdit],
         forcedSubtitleEdits: [TrackMetadataEdit],
-        hearingImpairedSubtitleEdits: [TrackMetadataEdit]
+        hearingImpairedSubtitleEdits: [TrackMetadataEdit],
+        audioDescriptionEdits: [TrackMetadataEdit]
     ) -> [TrackMetadataEdit] {
         let commentaryFlagsByUID = Dictionary(
             uniqueKeysWithValues: commentaryFlagEdits.map { ($0.trackUID, $0) }
@@ -1068,10 +1108,14 @@ public struct SavedWorkflowCompiler: Sendable {
         let hearingImpairedSubtitlesByUID = Dictionary(
             uniqueKeysWithValues: hearingImpairedSubtitleEdits.map { ($0.trackUID, $0) }
         )
+        let audioDescriptionsByUID = Dictionary(
+            uniqueKeysWithValues: audioDescriptionEdits.map { ($0.trackUID, $0) }
+        )
         return asset.tracks.compactMap { track in
             guard let uid = track.uid,
                 let base = commentaryNamesByUID[uid] ?? commentaryFlagsByUID[uid]
                     ?? forcedSubtitlesByUID[uid] ?? hearingImpairedSubtitlesByUID[uid]
+                    ?? audioDescriptionsByUID[uid]
             else {
                 return nil
             }
@@ -1085,7 +1129,8 @@ public struct SavedWorkflowCompiler: Sendable {
                 isCommentary: commentaryFlagsByUID[uid]?.isCommentary ?? base.isCommentary,
                 isHearingImpaired: hearingImpairedSubtitlesByUID[uid]?.isHearingImpaired
                     ?? base.isHearingImpaired,
-                isVisualImpaired: base.isVisualImpaired,
+                isVisualImpaired: audioDescriptionsByUID[uid]?.isVisualImpaired
+                    ?? base.isVisualImpaired,
                 isOriginal: base.isOriginal,
                 isTextDescription: base.isTextDescription
             )
@@ -1131,6 +1176,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Mark clearly named forced subtitles"
         case .markSDHSubtitles:
             "Mark clearly named SDH subtitles"
+        case .markAudioDescriptionTracks:
+            "Mark clearly named audio-description tracks"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -1173,6 +1220,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No unmarked subtitle track contains the distinct word forced."
         case .markSDHSubtitles:
             "No unmarked subtitle track is clearly named SDH or hearing impaired."
+        case .markAudioDescriptionTracks:
+            "No unmarked audio-description track has a clear name."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

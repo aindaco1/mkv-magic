@@ -86,9 +86,9 @@ transaction.
 Automatic queue reinspection must resolve the same codec-bearing semantic plan
 or move the job to Needs Review. Audio-only execution independently fingerprints
 every copied video, audio, and subtitle packet before commit.
-Workflow schema v15 still stores only portable action intent—never paths, local
+Workflow schema v16 still stores only portable action intent—never paths, local
 capability results, bitrate controls, subtitle text, or per-file review IDs.
-Original v1-v14 workflow files migrate
+Original v1-v15 workflow files migrate
 without changing recipe IDs, card IDs, order, enablement, or action semantics.
 Older schema numbers cannot claim actions introduced by a newer schema.
 Tag removal can share one mkvpropedit invocation with segment-title removal,
@@ -121,6 +121,12 @@ subtitle names containing the distinct token `SDH`, `CC`, or `hearing impaired`.
 It sets Matroska's native hearing-impaired flag while preserving the name,
 language, playback state, every other role, and packets. Overlapping
 commentary/name/forced/SDH intent is merged into that same single property pass.
+The opt-in **If useful: Mark audio-description tracks** card recognizes only
+unmarked audio names containing a clear phrase such as `Audio Description`,
+`Descriptive Audio`, or `Visually Impaired`. It deliberately ignores the
+ambiguous abbreviation `AD`. It sets Matroska's native visual-impaired flag
+without renaming the track, changing another flag, or encoding media, and its
+intent joins the same single reviewed property pass.
 Selected SRT, ASS, and SSA files can also be decoded, structurally normalized,
 and reviewed cue by cue for deterministic YTS/YIFY advertisement removal and
 accidental edge whitespace. A bounded local English OCR policy automatically
@@ -494,7 +500,9 @@ and opt-in commentary-name normalization in
 followed by conservative forced-subtitle role marking in
 [docs/releases/M7_PORTABLE_FORCED_SUBTITLE_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_FORCED_SUBTITLE_WORKFLOW_SLICE.md),
 and conservative SDH/hearing-impaired role marking in
-[docs/releases/M7_PORTABLE_SDH_SUBTITLE_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_SDH_SUBTITLE_WORKFLOW_SLICE.md).
+[docs/releases/M7_PORTABLE_SDH_SUBTITLE_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_SDH_SUBTITLE_WORKFLOW_SLICE.md),
+followed by conservative audio-description role marking in
+[docs/releases/M7_PORTABLE_AUDIO_DESCRIPTION_WORKFLOW_SLICE.md](docs/releases/M7_PORTABLE_AUDIO_DESCRIPTION_WORKFLOW_SLICE.md).
 
 The first M8 performance harness is also checked in. Its release-mode,
 synthetic-only responsiveness probe measures workflow compilation against a
@@ -600,7 +608,7 @@ fails below conservative line, function, or region floors; tests, generated
 runners, Sparkle, and other dependencies cannot inflate the gate. See
 [docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md](docs/releases/M8_SOURCE_COVERAGE_GATE_SLICE.md).
 It also enforces the public-beta requirement of at least 80% collective non-UI
-line coverage; the current bundled-runtime result is 88.65%. See
+line coverage; the current bundled-runtime result is 88.64%. See
 [docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md](docs/releases/M8_NON_UI_COVERAGE_GATE_SLICE.md).
 
 For safe recovery steps, unavailable-action prerequisites, queue/encoding

@@ -13,6 +13,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 SavedWorkflowStep(action: .normalizeCommentaryNames),
                 SavedWorkflowStep(action: .markForcedSubtitles),
                 SavedWorkflowStep(action: .markSDHSubtitles),
+                SavedWorkflowStep(action: .markAudioDescriptionTracks),
                 SavedWorkflowStep(action: .clearAllTags),
                 SavedWorkflowStep(action: .removeSegmentTitle),
             ]
@@ -29,7 +30,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                     codec: "aac",
                     uid: 11,
                     language: "en",
-                    title: "Director Commentary",
+                    title: "Director Commentary Audio Description",
                     isDefault: true
                 ),
                 MediaTrack(
@@ -53,6 +54,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(compiled.trackMetadataEdits.map(\.name), ["Commentary", "Commentary"])
         XCTAssertTrue(compiled.trackMetadataEdits.allSatisfy(\.isCommentary))
         XCTAssertFalse(compiled.trackMetadataEdits[0].isForced)
+        XCTAssertTrue(compiled.trackMetadataEdits[0].isVisualImpaired)
         XCTAssertTrue(compiled.trackMetadataEdits[1].isForced)
         XCTAssertTrue(compiled.trackMetadataEdits[1].isHearingImpaired)
         XCTAssertEqual(
@@ -66,6 +68,7 @@ final class SavedWorkflowCompilerTests: XCTestCase {
                 "Normalize 2 commentary track names",
                 "Mark 1 clearly named forced subtitle",
                 "Mark 1 clearly named SDH subtitle",
+                "Mark 1 clearly named audio-description track",
                 "Remove 1 global and 1 track Matroska tags",
                 "Remove the segment title",
             ]
@@ -77,8 +80,9 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertTrue(json.contains("normalizeCommentaryNames"))
         XCTAssertTrue(json.contains("markForcedSubtitles"))
         XCTAssertTrue(json.contains("markSDHSubtitles"))
+        XCTAssertTrue(json.contains("markAudioDescriptionTracks"))
         XCTAssertFalse(json.contains("trackUID"))
-        XCTAssertFalse(json.contains("Director Commentary"))
+        XCTAssertFalse(json.contains("Director Commentary Audio Description"))
         XCTAssertFalse(json.contains("Private Movie"))
 
         let alreadyMarked = MediaAsset(

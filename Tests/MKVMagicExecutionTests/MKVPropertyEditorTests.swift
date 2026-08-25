@@ -218,7 +218,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                 codec: "aac",
                 uid: 11,
                 language: "en",
-                title: "Director Commentary"
+                title: "Director Commentary Audio Description"
             ),
             MediaTrack(
                 id: 2,
@@ -237,6 +237,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                     SavedWorkflowStep(action: .normalizeCommentaryNames),
                     SavedWorkflowStep(action: .markForcedSubtitles),
                     SavedWorkflowStep(action: .markSDHSubtitles),
+                    SavedWorkflowStep(action: .markAudioDescriptionTracks),
                 ]
             ),
             for: MediaAsset(sourceURL: file, container: "matroska", tracks: tracks)
@@ -262,6 +263,7 @@ final class MKVPropertyEditorTests: XCTestCase {
                 "--tags", "all:",
                 "--edit", "track:=11", "--set", "name=Commentary",
                 "--set", "flag-commentary=1",
+                "--set", "flag-visual-impaired=1",
                 "--edit", "track:=12", "--set", "name=Commentary",
                 "--set", "flag-forced=1", "--set", "flag-commentary=1",
                 "--set", "flag-hearing-impaired=1",

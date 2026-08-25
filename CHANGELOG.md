@@ -200,6 +200,11 @@ semantic versioning; public release tags are immutable and signed.
   Matroska's hearing-impaired flag, preserve every other field and packet, and
   merge overlapping commentary/name/forced/SDH intent into the existing single
   verified property pass without persisting private track facts.
+- Add portable schema-v16 **If useful: Mark audio-description tracks** intent.
+  Match only clear descriptive-audio or visual-impaired phrases on currently
+  unmarked audio tracks, leave ambiguous `AD` labels untouched, set only
+  Matroska's visual-impaired flag, and merge the result into the existing single
+  verified property pass without persisting private track facts.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track

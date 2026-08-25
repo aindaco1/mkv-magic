@@ -417,4 +417,139 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
     }
+
+    func testMarksOnlyClearlyNamedUnmarkedAudioDescriptionTracks() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Description.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 20,
+                    language: "en",
+                    title: "English Audio Description",
+                    isDefault: true
+                ),
+                MediaTrack(
+                    id: 1,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 21,
+                    title: "Descriptive Audio",
+                    isCommentary: true
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 22,
+                    title: "Visually-Impaired",
+                    isOriginal: true
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 23,
+                    title: "English AudioDescription"
+                ),
+                MediaTrack(
+                    id: 4,
+                    kind: .video,
+                    codec: "av1",
+                    uid: 24,
+                    title: "Audio Description"
+                ),
+                MediaTrack(
+                    id: 5,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 25,
+                    title: "Audio Description"
+                ),
+                MediaTrack(
+                    id: 6,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 26,
+                    title: "Audio Descriptive"
+                ),
+                MediaTrack(
+                    id: 7,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 27,
+                    title: "Audio Description",
+                    isVisualImpaired: true
+                ),
+                MediaTrack(
+                    id: 8,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 28,
+                    title: "English Audio-Described"
+                ),
+                MediaTrack(
+                    id: 9,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 29,
+                    title: "English Visual Impaired"
+                ),
+                MediaTrack(
+                    id: 10,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 30,
+                    title: "English DescriptiveAudio"
+                ),
+                MediaTrack(
+                    id: 11,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 31,
+                    title: "English VisuallyImpaired"
+                ),
+                MediaTrack(
+                    id: 12,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 32,
+                    title: "English AD"
+                ),
+            ]
+        )
+
+        let edits = try AudioDescriptionTrackPolicy.metadataEdits(in: asset)
+
+        XCTAssertEqual(edits.map(\.trackUID), [20, 21, 22, 23, 28, 29, 30, 31])
+        XCTAssertTrue(edits.allSatisfy(\.isVisualImpaired))
+        XCTAssertTrue(edits[0].isDefault)
+        XCTAssertTrue(edits[1].isCommentary)
+        XCTAssertTrue(edits[2].isOriginal)
+        XCTAssertEqual(edits[3].name, "English AudioDescription")
+    }
+
+    func testAudioDescriptionMarkingRequiresUniqueStableIdentity() {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Unstable Description.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 9,
+                    title: "Audio Description"
+                ),
+                MediaTrack(id: 1, kind: .subtitle, codec: "subrip", uid: 9),
+            ]
+        )
+
+        XCTAssertThrowsError(try AudioDescriptionTrackPolicy.metadataEdits(in: asset)) {
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
+        }
+    }
 }

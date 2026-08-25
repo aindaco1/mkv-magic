@@ -116,6 +116,40 @@ public enum HearingImpairedSubtitlePolicy {
     }
 }
 
+/// Produces per-run edits only for clearly named, currently unmarked audio-description tracks.
+public enum AudioDescriptionTrackPolicy {
+    public static func metadataEdits(in asset: MediaAsset) throws -> [TrackMetadataEdit] {
+        let stableTrackUIDs = uniqueTrackUIDs(in: asset.tracks)
+        let candidates = asset.tracks.filter { track in
+            track.kind == .audio
+                && !track.isVisualImpaired
+                && titleIdentifiesAudioDescription(track.title)
+        }
+        guard candidates.allSatisfy({ $0.uid.map(stableTrackUIDs.contains) == true }) else {
+            throw TrackRolePolicyError.unstableTrackIdentity
+        }
+        return try candidates.map { track in
+            try roleMetadataEdit(for: track, isVisualImpaired: true)
+        }
+    }
+
+    private static func titleIdentifiesAudioDescription(_ title: String?) -> Bool {
+        let tokens = normalizedTitleTokens(title)
+        if tokens.contains("audiodescription") || tokens.contains("descriptiveaudio")
+            || tokens.contains("visuallyimpaired") || tokens.contains("visualimpaired")
+        {
+            return true
+        }
+        return tokens.enumerated().contains { index, token in
+            guard index + 1 < tokens.count else { return false }
+            let next = tokens[index + 1]
+            return (token == "audio" && (next == "description" || next == "described"))
+                || (token == "descriptive" && next == "audio")
+                || ((token == "visual" || token == "visually") && next == "impaired")
+        }
+    }
+}
+
 private func uniqueTrackUIDs(in tracks: [MediaTrack]) -> Set<UInt64> {
     let counts = tracks.compactMap(\.uid).reduce(into: [UInt64: Int]()) { counts, uid in
         counts[uid, default: 0] += 1
@@ -137,7 +171,8 @@ private func roleMetadataEdit(
     name: String? = nil,
     isForced: Bool? = nil,
     isCommentary: Bool? = nil,
-    isHearingImpaired: Bool? = nil
+    isHearingImpaired: Bool? = nil,
+    isVisualImpaired: Bool? = nil
 ) throws -> TrackMetadataEdit {
     let original = try TrackMetadataEdit(track: track)
     return TrackMetadataEdit(
@@ -149,7 +184,7 @@ private func roleMetadataEdit(
         isEnabled: original.isEnabled,
         isCommentary: isCommentary ?? original.isCommentary,
         isHearingImpaired: isHearingImpaired ?? original.isHearingImpaired,
-        isVisualImpaired: original.isVisualImpaired,
+        isVisualImpaired: isVisualImpaired ?? original.isVisualImpaired,
         isOriginal: original.isOriginal,
         isTextDescription: original.isTextDescription
     )

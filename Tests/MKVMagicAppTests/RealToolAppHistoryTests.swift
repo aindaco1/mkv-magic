@@ -1544,7 +1544,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "-hide_banner", "-loglevel", "error",
                     "-f", "s16le", "-ar", "48000", "-ac", "1", "-i", rawAudio.path,
                     "-c:a", "aac",
-                    "-metadata:s:a:0", "title=Director Commentary",
+                    "-metadata:s:a:0", "title=Director Commentary Audio Description",
                     "-metadata", "title=Remove Automatically",
                     base.path,
                 ],
@@ -1611,6 +1611,7 @@ final class RealToolAppHistoryTests: XCTestCase {
                 SavedWorkflowStep(action: .normalizeCommentaryNames),
                 SavedWorkflowStep(action: .markForcedSubtitles),
                 SavedWorkflowStep(action: .markSDHSubtitles),
+                SavedWorkflowStep(action: .markAudioDescriptionTracks),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
@@ -1652,6 +1653,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let commentaryTrack = outputAsset.tracks.first(where: { $0.kind == .audio })
         XCTAssertEqual(commentaryTrack?.title, "Commentary")
         XCTAssertTrue(commentaryTrack?.isCommentary == true)
+        XCTAssertTrue(commentaryTrack?.isVisualImpaired == true)
         let forcedTrack = outputAsset.tracks.first(where: { $0.kind == .subtitle })
         XCTAssertEqual(forcedTrack?.title, "English Forced SDH")
         XCTAssertTrue(forcedTrack?.isForced == true)
@@ -1669,7 +1671,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         let serializedMessages = records.first?.events.compactMap(\.message).joined(separator: " ")
         XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
         XCTAssertFalse(serializedMessages?.contains(poster.lastPathComponent) == true)
-        XCTAssertFalse(serializedMessages?.contains("Director Commentary") == true)
+        XCTAssertFalse(
+            serializedMessages?.contains("Director Commentary Audio Description") == true
+        )
         XCTAssertFalse(serializedMessages?.contains("English Forced SDH") == true)
         XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
