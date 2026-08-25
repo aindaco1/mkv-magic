@@ -1,14 +1,14 @@
 import Foundation
 
-public enum CommentaryTrackPolicyError: Error, Equatable, Sendable {
+public enum TrackRolePolicyError: Error, Equatable, Sendable {
     case unstableTrackIdentity
 }
 
-extension CommentaryTrackPolicyError: LocalizedError {
+extension TrackRolePolicyError: LocalizedError {
     public var errorDescription: String? {
         switch self {
         case .unstableTrackIdentity:
-            "A clearly named commentary track has no unique Matroska UID."
+            "A recognized track has no unique Matroska UID."
         }
     }
 }
@@ -24,17 +24,15 @@ public enum CommentaryTrackPolicy {
                 && titleIdentifiesCommentary(track.title)
         }
         guard candidates.allSatisfy({ $0.uid.map(stableTrackUIDs.contains) == true }) else {
-            throw CommentaryTrackPolicyError.unstableTrackIdentity
+            throw TrackRolePolicyError.unstableTrackIdentity
         }
         return try candidates.map { track in
-            try commentaryMetadataEdit(for: track, isCommentary: true)
+            try roleMetadataEdit(for: track, isCommentary: true)
         }
     }
 
     public static func titleIdentifiesCommentary(_ title: String?) -> Bool {
-        guard let title else { return false }
-        return title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .contains("commentary")
+        titleContainsDistinctToken("commentary", in: title)
     }
 }
 
@@ -56,11 +54,11 @@ public enum CommentaryNamePolicy {
             }
             guard changes.allSatisfy({ $0.element.uid.map(stableTrackUIDs.contains) == true })
             else {
-                throw CommentaryTrackPolicyError.unstableTrackIdentity
+                throw TrackRolePolicyError.unstableTrackIdentity
             }
             edits.append(
                 contentsOf: try changes.map { index, track in
-                    try commentaryMetadataEdit(for: track, name: normalizedName(at: index))
+                    try roleMetadataEdit(for: track, name: normalizedName(at: index))
                 }
             )
         }
@@ -72,6 +70,24 @@ public enum CommentaryNamePolicy {
     }
 }
 
+/// Produces per-run edits only for clearly named, currently unforced subtitles.
+public enum ForcedSubtitlePolicy {
+    public static func metadataEdits(in asset: MediaAsset) throws -> [TrackMetadataEdit] {
+        let stableTrackUIDs = uniqueTrackUIDs(in: asset.tracks)
+        let candidates = asset.tracks.filter { track in
+            track.kind == .subtitle
+                && !track.isForced
+                && titleContainsDistinctToken("forced", in: track.title)
+        }
+        guard candidates.allSatisfy({ $0.uid.map(stableTrackUIDs.contains) == true }) else {
+            throw TrackRolePolicyError.unstableTrackIdentity
+        }
+        return try candidates.map { track in
+            try roleMetadataEdit(for: track, isForced: true)
+        }
+    }
+}
+
 private func uniqueTrackUIDs(in tracks: [MediaTrack]) -> Set<UInt64> {
     let counts = tracks.compactMap(\.uid).reduce(into: [UInt64: Int]()) { counts, uid in
         counts[uid, default: 0] += 1
@@ -79,9 +95,16 @@ private func uniqueTrackUIDs(in tracks: [MediaTrack]) -> Set<UInt64> {
     return Set(counts.compactMap { uid, count in count == 1 ? uid : nil })
 }
 
-private func commentaryMetadataEdit(
+private func titleContainsDistinctToken(_ token: String, in title: String?) -> Bool {
+    guard let title else { return false }
+    return title.lowercased().split(whereSeparator: { !$0.isLetter && !$0.isNumber })
+        .contains(Substring(token))
+}
+
+private func roleMetadataEdit(
     for track: MediaTrack,
     name: String? = nil,
+    isForced: Bool? = nil,
     isCommentary: Bool? = nil
 ) throws -> TrackMetadataEdit {
     let original = try TrackMetadataEdit(track: track)
@@ -90,7 +113,7 @@ private func commentaryMetadataEdit(
         name: name ?? original.name,
         language: original.language,
         isDefault: original.isDefault,
-        isForced: original.isForced,
+        isForced: isForced ?? original.isForced,
         isEnabled: original.isEnabled,
         isCommentary: isCommentary ?? original.isCommentary,
         isHearingImpaired: original.isHearingImpaired,

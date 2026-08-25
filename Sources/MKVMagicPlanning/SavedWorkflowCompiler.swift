@@ -439,7 +439,7 @@ public struct SavedWorkflowCompiler: Sendable {
         if enabledActions.contains(.markCommentaryTracks) {
             do {
                 commentaryFlagEdits = try CommentaryTrackPolicy.metadataEdits(in: asset)
-            } catch CommentaryTrackPolicyError.unstableTrackIdentity {
+            } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
         } else {
@@ -449,21 +449,33 @@ public struct SavedWorkflowCompiler: Sendable {
         if enabledActions.contains(.normalizeCommentaryNames) {
             do {
                 commentaryNameEdits = try CommentaryNamePolicy.metadataEdits(in: asset)
-            } catch CommentaryTrackPolicyError.unstableTrackIdentity {
+            } catch TrackRolePolicyError.unstableTrackIdentity {
                 throw SavedWorkflowCompilationError.unstableTrackIdentity
             }
         } else {
             commentaryNameEdits = []
         }
-        let commentaryMetadataEdits = mergedCommentaryEdits(
+        let forcedSubtitleEdits: [TrackMetadataEdit]
+        if enabledActions.contains(.markForcedSubtitles) {
+            do {
+                forcedSubtitleEdits = try ForcedSubtitlePolicy.metadataEdits(in: asset)
+            } catch TrackRolePolicyError.unstableTrackIdentity {
+                throw SavedWorkflowCompilationError.unstableTrackIdentity
+            }
+        } else {
+            forcedSubtitleEdits = []
+        }
+        let roleMetadataEdits = mergedTrackRoleEdits(
             asset: asset,
-            flagEdits: commentaryFlagEdits,
-            nameEdits: commentaryNameEdits
+            commentaryFlagEdits: commentaryFlagEdits,
+            commentaryNameEdits: commentaryNameEdits,
+            forcedSubtitleEdits: forcedSubtitleEdits
         )
-        let commentaryOperationInsertionAction = enabledSteps.first { step in
+        let roleOperationInsertionAction = enabledSteps.first { step in
             switch step.action {
             case .markCommentaryTracks: !commentaryFlagEdits.isEmpty
             case .normalizeCommentaryNames: !commentaryNameEdits.isEmpty
+            case .markForcedSubtitles: !forcedSubtitleEdits.isEmpty
             default: false
             }
         }?.action
@@ -629,9 +641,9 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 } else {
-                    if commentaryOperationInsertionAction == step.action {
+                    if roleOperationInsertionAction == step.action {
                         operations.append(
-                            contentsOf: commentaryMetadataEdits.map(
+                            contentsOf: roleMetadataEdits.map(
                                 WorkflowOperation.editTrackMetadata
                             )
                         )
@@ -657,9 +669,9 @@ public struct SavedWorkflowCompiler: Sendable {
                         )
                     )
                 } else {
-                    if commentaryOperationInsertionAction == step.action {
+                    if roleOperationInsertionAction == step.action {
                         operations.append(
-                            contentsOf: commentaryMetadataEdits.map(
+                            contentsOf: roleMetadataEdits.map(
                                 WorkflowOperation.editTrackMetadata
                             )
                         )
@@ -671,6 +683,33 @@ public struct SavedWorkflowCompiler: Sendable {
                             for: step,
                             disposition: .applied,
                             detail: "Normalize \(count) commentary track \(noun)"
+                        )
+                    )
+                }
+            case .markForcedSubtitles:
+                if forcedSubtitleEdits.isEmpty {
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .skipped,
+                            detail: "No unmarked subtitle track contains the distinct word forced."
+                        )
+                    )
+                } else {
+                    if roleOperationInsertionAction == step.action {
+                        operations.append(
+                            contentsOf: roleMetadataEdits.map(
+                                WorkflowOperation.editTrackMetadata
+                            )
+                        )
+                    }
+                    let count = forcedSubtitleEdits.count
+                    let noun = count == 1 ? "subtitle" : "subtitles"
+                    stepOutcomes.append(
+                        outcome(
+                            for: step,
+                            disposition: .applied,
+                            detail: "Mark \(count) clearly named forced \(noun)"
                         )
                     )
                 }
@@ -968,27 +1007,36 @@ public struct SavedWorkflowCompiler: Sendable {
         return videoConversionWillRun ? nil : .commonInputRequiresVideoConversion
     }
 
-    private func mergedCommentaryEdits(
+    private func mergedTrackRoleEdits(
         asset: MediaAsset,
-        flagEdits: [TrackMetadataEdit],
-        nameEdits: [TrackMetadataEdit]
+        commentaryFlagEdits: [TrackMetadataEdit],
+        commentaryNameEdits: [TrackMetadataEdit],
+        forcedSubtitleEdits: [TrackMetadataEdit]
     ) -> [TrackMetadataEdit] {
-        let flagsByUID = Dictionary(uniqueKeysWithValues: flagEdits.map { ($0.trackUID, $0) })
-        let namesByUID = Dictionary(uniqueKeysWithValues: nameEdits.map { ($0.trackUID, $0) })
+        let commentaryFlagsByUID = Dictionary(
+            uniqueKeysWithValues: commentaryFlagEdits.map { ($0.trackUID, $0) }
+        )
+        let commentaryNamesByUID = Dictionary(
+            uniqueKeysWithValues: commentaryNameEdits.map { ($0.trackUID, $0) }
+        )
+        let forcedSubtitlesByUID = Dictionary(
+            uniqueKeysWithValues: forcedSubtitleEdits.map { ($0.trackUID, $0) }
+        )
         return asset.tracks.compactMap { track in
             guard let uid = track.uid,
-                let base = namesByUID[uid] ?? flagsByUID[uid]
+                let base = commentaryNamesByUID[uid] ?? commentaryFlagsByUID[uid]
+                    ?? forcedSubtitlesByUID[uid]
             else {
                 return nil
             }
             return TrackMetadataEdit(
                 trackUID: uid,
-                name: namesByUID[uid]?.name ?? base.name,
+                name: commentaryNamesByUID[uid]?.name ?? base.name,
                 language: base.language,
                 isDefault: base.isDefault,
-                isForced: base.isForced,
+                isForced: forcedSubtitlesByUID[uid]?.isForced ?? base.isForced,
                 isEnabled: base.isEnabled,
-                isCommentary: flagsByUID[uid]?.isCommentary ?? base.isCommentary,
+                isCommentary: commentaryFlagsByUID[uid]?.isCommentary ?? base.isCommentary,
                 isHearingImpaired: base.isHearingImpaired,
                 isVisualImpaired: base.isVisualImpaired,
                 isOriginal: base.isOriginal,
@@ -1032,6 +1080,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "Mark clearly named commentary tracks"
         case .normalizeCommentaryNames:
             "Normalize commentary track names"
+        case .markForcedSubtitles:
+            "Mark clearly named forced subtitles"
         case .normalizeFilename:
             "Clean up the output filename"
         case .addExternalSubtitle:
@@ -1070,6 +1120,8 @@ public struct SavedWorkflowCompiler: Sendable {
             "No unmarked, clearly named commentary tracks are present."
         case .normalizeCommentaryNames:
             "Recognized commentary track names already follow the simple numbering convention."
+        case .markForcedSubtitles:
+            "No unmarked subtitle track contains the distinct word forced."
         case .normalizeFilename:
             "The filename is already simple."
         case .addExternalSubtitle:

@@ -680,6 +680,7 @@ enum WorkflowEditorPolicy {
         .removeImageAttachments,
         .markCommentaryTracks,
         .normalizeCommentaryNames,
+        .markForcedSubtitles,
         .normalizeFilename,
         .addExternalSubtitle,
         .cleanExternalSubtitleText,

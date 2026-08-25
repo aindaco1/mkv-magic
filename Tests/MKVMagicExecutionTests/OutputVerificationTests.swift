@@ -202,7 +202,7 @@ final class OutputVerificationTests: XCTestCase {
             codec: "subrip",
             uid: 42,
             language: "en",
-            title: "Commentary"
+            title: "Forced Commentary"
         )
         let markedAudio = MediaTrack(
             id: 0,
@@ -220,6 +220,7 @@ final class OutputVerificationTests: XCTestCase {
             uid: 42,
             language: "en",
             title: "Commentary",
+            isForced: true,
             isCommentary: true
         )
         let original = asset(
@@ -235,6 +236,7 @@ final class OutputVerificationTests: XCTestCase {
                 steps: [
                     SavedWorkflowStep(action: .markCommentaryTracks),
                     SavedWorkflowStep(action: .normalizeCommentaryNames),
+                    SavedWorkflowStep(action: .markForcedSubtitles),
                 ]
             ),
             for: original

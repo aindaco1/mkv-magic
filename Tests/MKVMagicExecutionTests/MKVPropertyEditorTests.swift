@@ -1,5 +1,6 @@
 import Foundation
 import MKVMagicCore
+import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
@@ -225,16 +226,20 @@ final class MKVPropertyEditorTests: XCTestCase {
                 codec: "subrip",
                 uid: 12,
                 language: "en",
-                title: "Commentary"
+                title: "Forced Commentary"
             ),
         ]
-        let edits = try CommentaryTrackPolicy.metadataEdits(
-            in: MediaAsset(
-                sourceURL: file,
-                container: "matroska",
-                tracks: tracks
-            )
-        )
+        let edits = try SavedWorkflowCompiler().compile(
+            SavedWorkflow(
+                name: "Track roles",
+                steps: [
+                    SavedWorkflowStep(action: .markCommentaryTracks),
+                    SavedWorkflowStep(action: .normalizeCommentaryNames),
+                    SavedWorkflowStep(action: .markForcedSubtitles),
+                ]
+            ),
+            for: MediaAsset(sourceURL: file, container: "matroska", tracks: tracks)
+        ).trackMetadataEdits
 
         try await editor.editWorkflowProperties(
             at: file,
@@ -254,8 +259,10 @@ final class MKVPropertyEditorTests: XCTestCase {
                 "--abort-on-warnings",
                 "--edit", "info", "--delete", "title",
                 "--tags", "all:",
-                "--edit", "track:=11", "--set", "flag-commentary=1",
-                "--edit", "track:=12", "--set", "flag-commentary=1",
+                "--edit", "track:=11", "--set", "name=Commentary",
+                "--set", "flag-commentary=1",
+                "--edit", "track:=12", "--set", "name=Commentary",
+                "--set", "flag-forced=1", "--set", "flag-commentary=1",
             ]
         )
     }

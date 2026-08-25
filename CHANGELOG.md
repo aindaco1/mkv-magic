@@ -190,6 +190,11 @@ semantic versioning; public release tags are immutable and signed.
   `Commentary`, `Commentary #2`, and so on, skip already correct names, preserve
   every other field and packet, and merge simultaneous name/role edits by
   stable UID into the same single verified property pass.
+- Add portable schema-v14 **If useful: Mark forced subtitles** intent. Match
+  only the distinct word `forced` on currently unforced subtitle names, set
+  only Matroska's forced flag, preserve defaults/enabled state and every other
+  field and packet, and merge overlapping role/name intent into one edit per
+  stable UID without persisting private track facts.
 - Admit explicitly reviewed external SRT, ASS, and SSA saved workflows to the
   automatic queue. Keep portable recipes path- and review-free while a private
   queue intent binds two narrow bookmarks, revisions, the sidecar SHA-256, track

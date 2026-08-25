@@ -1516,9 +1516,13 @@ final class RealToolAppHistoryTests: XCTestCase {
         let trackTags = fixtureRoot.appendingPathComponent("track.xml")
         let poster = fixtureRoot.appendingPathComponent("Queue private poster.jpg")
         let font = fixtureRoot.appendingPathComponent("Queue private subtitle.ttf")
+        let forcedSubtitle = fixtureRoot.appendingPathComponent("Queue private forced.srt")
         try Data(repeating: 0, count: 96_000).write(to: rawAudio)
         try Data("private image payload".utf8).write(to: poster)
         try Data("private font payload".utf8).write(to: font)
+        try Data("1\n00:00:00,000 --> 00:00:00,900\nForced line\n".utf8).write(
+            to: forcedSubtitle
+        )
         try Data(
             """
             <?xml version="1.0" encoding="UTF-8"?>
@@ -1560,6 +1564,9 @@ final class RealToolAppHistoryTests: XCTestCase {
                     "--attachment-mime-type", "font/ttf",
                     "--attach-file", font.path,
                     base.path,
+                    "--language", "0:en",
+                    "--track-name", "0:English Forced",
+                    forcedSubtitle.path,
                 ],
                 timeout: 60
             )
@@ -1595,19 +1602,20 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         XCTAssertEqual(imageRemoval.attachmentUIDs.count, 1)
         let workflow = SavedWorkflow(
-            name: "Remove reviewed title, tags, and images; mark commentary",
+            name: "Remove reviewed title, tags, and images; mark track roles",
             steps: [
                 SavedWorkflowStep(action: .clearAllTags),
                 SavedWorkflowStep(action: .removeImageAttachments),
                 SavedWorkflowStep(action: .removeSegmentTitle),
                 SavedWorkflowStep(action: .markCommentaryTracks),
                 SavedWorkflowStep(action: .normalizeCommentaryNames),
+                SavedWorkflowStep(action: .markForcedSubtitles),
             ]
         )
         let compiled = try SavedWorkflowCompiler().compile(workflow, for: asset)
         XCTAssertTrue(compiled.clearsAllTags)
         XCTAssertEqual(compiled.attachmentRemoval, imageRemoval)
-        XCTAssertEqual(compiled.trackMetadataEdits.count, 1)
+        XCTAssertEqual(compiled.trackMetadataEdits.count, 2)
         let createdAt = Date()
         try await queueStore.save(
             MediaQueueSnapshot(isPaused: true, updatedAt: createdAt)
@@ -1643,6 +1651,9 @@ final class RealToolAppHistoryTests: XCTestCase {
         let commentaryTrack = outputAsset.tracks.first(where: { $0.kind == .audio })
         XCTAssertEqual(commentaryTrack?.title, "Commentary")
         XCTAssertTrue(commentaryTrack?.isCommentary == true)
+        let forcedTrack = outputAsset.tracks.first(where: { $0.kind == .subtitle })
+        XCTAssertEqual(forcedTrack?.title, "English Forced")
+        XCTAssertTrue(forcedTrack?.isForced == true)
         let records = try await historyStore.load()
         XCTAssertEqual(records.count, 1)
         XCTAssertEqual(records.first?.workflowID, workflow.id)
@@ -1657,6 +1668,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         XCTAssertFalse(serializedMessages?.contains("Queue private value") == true)
         XCTAssertFalse(serializedMessages?.contains(poster.lastPathComponent) == true)
         XCTAssertFalse(serializedMessages?.contains("Director Commentary") == true)
+        XCTAssertFalse(serializedMessages?.contains("English Forced") == true)
         XCTAssertFalse(serializedMessages?.contains(fixtureRoot.path) == true)
     }
 

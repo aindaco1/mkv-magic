@@ -88,7 +88,7 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             ]
         )
         XCTAssertThrowsError(try CommentaryTrackPolicy.metadataEdits(in: missing)) {
-            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
 
         let duplicate = MediaAsset(
@@ -112,7 +112,7 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             ]
         )
         XCTAssertThrowsError(try CommentaryTrackPolicy.metadataEdits(in: duplicate)) {
-            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
     }
 
@@ -226,7 +226,7 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             ]
         )
         XCTAssertThrowsError(try CommentaryNamePolicy.metadataEdits(in: needsChangeWithoutUID)) {
-            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
 
         let duplicateUID = MediaAsset(
@@ -249,7 +249,81 @@ final class CommentaryTrackPolicyTests: XCTestCase {
             ]
         )
         XCTAssertThrowsError(try CommentaryNamePolicy.metadataEdits(in: duplicateUID)) {
-            XCTAssertEqual($0 as? CommentaryTrackPolicyError, .unstableTrackIdentity)
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
+        }
+    }
+
+    func testMarksOnlyClearlyNamedUnforcedSubtitleTracks() throws {
+        let source = MediaTrack(
+            id: 0,
+            kind: .subtitle,
+            codec: "subrip",
+            uid: 10,
+            language: "en-US",
+            title: "English FORCED",
+            isDefault: true,
+            isEnabled: false,
+            isHearingImpaired: true
+        )
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Forced.mkv"),
+            container: "matroska",
+            tracks: [
+                source,
+                MediaTrack(
+                    id: 1,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 11,
+                    title: "unforced"
+                ),
+                MediaTrack(
+                    id: 2,
+                    kind: .audio,
+                    codec: "aac",
+                    uid: 12,
+                    title: "Forced"
+                ),
+                MediaTrack(
+                    id: 3,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 13,
+                    title: "Forced",
+                    isForced: true
+                ),
+            ]
+        )
+
+        let edits = try ForcedSubtitlePolicy.metadataEdits(in: asset)
+
+        XCTAssertEqual(edits.map(\.trackUID), [10])
+        XCTAssertEqual(edits.first?.name, source.title)
+        XCTAssertEqual(edits.first?.language, "en-US")
+        XCTAssertTrue(edits.first?.isForced == true)
+        XCTAssertTrue(edits.first?.isDefault == true)
+        XCTAssertTrue(edits.first?.isEnabled == false)
+        XCTAssertTrue(edits.first?.isHearingImpaired == true)
+    }
+
+    func testForcedSubtitleMarkingRequiresAUIDUniqueAcrossEveryTrack() {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/private/media/Unstable Forced.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    uid: 9,
+                    title: "Forced"
+                ),
+                MediaTrack(id: 1, kind: .video, codec: "av1", uid: 9),
+            ]
+        )
+
+        XCTAssertThrowsError(try ForcedSubtitlePolicy.metadataEdits(in: asset)) {
+            XCTAssertEqual($0 as? TrackRolePolicyError, .unstableTrackIdentity)
         }
     }
 }

@@ -3,7 +3,7 @@ import Foundation
 /// A reusable workflow stores intent only. It deliberately contains no media path,
 /// Matroska track identifier, or other fact tied to one inspected file.
 public struct SavedWorkflow: Codable, Hashable, Identifiable, Sendable {
-    public static let currentSchemaVersion = 13
+    public static let currentSchemaVersion = 14
 
     public let id: UUID
     public var schemaVersion: Int
@@ -48,6 +48,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
     case removeImageAttachments
     case markCommentaryTracks
     case normalizeCommentaryNames
+    case markForcedSubtitles
     case normalizeFilename
     case addExternalSubtitle
     case cleanExternalSubtitleText
@@ -146,6 +147,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeImageAttachments: 11
         case .markCommentaryTracks: 12
         case .normalizeCommentaryNames: 13
+        case .markForcedSubtitles: 14
         default: 1
         }
     }
@@ -160,6 +162,7 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
         case .removeImageAttachments: "If present: Remove image attachments"
         case .markCommentaryTracks: "If useful: Mark commentary tracks"
         case .normalizeCommentaryNames: "If useful: Normalize commentary names"
+        case .markForcedSubtitles: "If useful: Mark forced subtitles"
         case .normalizeFilename: "If useful: Clean up the output filename"
         case .addExternalSubtitle: "Add one external text subtitle"
         case .cleanExternalSubtitleText: "Clean the added subtitle text"
@@ -207,6 +210,8 @@ public enum SavedWorkflowAction: String, Codable, CaseIterable, Hashable, Sendab
             "Mark clearly named audio and subtitle tracks with Matroska's commentary flag without changing their names, languages, other flags, or media packets."
         case .normalizeCommentaryNames:
             "Rename recognized commentary audio and subtitle tracks as Commentary, Commentary #2, and so on within each track type; preserve every other field and all media packets."
+        case .markForcedSubtitles:
+            "Mark subtitle tracks whose names contain the distinct word forced with Matroska's forced flag; preserve names, defaults, enabled state, every other field, and all media packets."
         case .normalizeFilename:
             "Suggest a simple Title (Year) output name for common release-style filenames. You can review or replace it before saving."
         case .addExternalSubtitle:
