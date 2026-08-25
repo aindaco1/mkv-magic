@@ -52,12 +52,11 @@ and the already-published release remains immutable for investigation.
 ## Repository environment
 
 The GitHub `release-publication` environment is configured to accept only `v*`
-tag refs. The current private-repository plan does not support required-reviewer
-or wait-timer rules; GitHub rejected that stronger setting without changing the
-environment. The manual-only workflow, exact tag/source checks, draft-state
-requirement, and three digest attestations therefore remain the active controls.
-Required reviewers should be added when the repository visibility or plan makes
-that protection available.
+tag refs. The repository is now public, but no independent release reviewer has
+been selected, so the environment retains its tag restriction without a
+required-reviewer rule. The manual-only workflow, exact tag/source checks,
+draft-state requirement, and three digest attestations remain the active
+controls. Add a required reviewer when an appropriate second person is chosen.
 
 ## Regression evidence
 

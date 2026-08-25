@@ -684,12 +684,12 @@ replacement. See
 
 The release workflow also verifies live repository controls before any signing
 or Apple submission. It requires a public repository, immutable releases, and
-an active no-bypass `v*` tag ruleset that blocks deletion and force updates. The
-current private-repository plan does not satisfy that gate, so no public release
-can proceed until those user-visible repository settings are deliberately
-changed. The live immutable-setting check uses a repository-scoped,
-Administration-read-only release-environment token rather than a broad personal
-credential; that narrow token is not provisioned yet. See
+an active no-bypass `v*` tag ruleset that blocks deletion and force updates. On
+August 25, 2026, the public repository enabled immutable releases and activated
+that exact tag ruleset; the repository's live preflight passes. The hosted
+workflow still uses a repository-scoped, Administration-read-only environment
+token rather than a broad personal credential, and that narrow token is not
+provisioned yet. See
 [docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md](docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md).
 
 Candidate notes for a possible 0.1.0 beta now describe only currently executable

@@ -1,21 +1,16 @@
 # M9 repository release-control preflight
 
 This records the fail-closed repository controls required before MKV Magic can
-create its first public release. It does not claim those controls are active or
-that a release exists.
+create its first public release. The controls are active; no release or release
+tag exists yet.
 
 ## Observed repository state
 
-On August 24, 2026, `aindaco1/mkv-magic` remained private. GitHub returned an
-upgrade-or-public-repository error for repository rulesets, and the repository's
-immutable-release endpoint reported `enabled: false`. The current state
-therefore does not satisfy the product specification's immutable tag and asset
-contract.
-
-No repository visibility or immutability setting was changed automatically.
-Making the repository public is a user-visible publication decision, and
-GitHub notes that release immutability applies only to releases created after
-the setting is enabled.
+On August 25, 2026, `aindaco1/mkv-magic` became public, enabled immutable
+releases, and activated a repository tag ruleset for `refs/tags/v*`. The ruleset
+has no bypass actors and blocks deletion and non-fast-forward updates. The live
+repository preflight passes. GitHub release immutability applies to releases
+created after the setting was enabled; no release existed at activation time.
 
 Once a draft is published under that setting, its assets and tag are locked.
 The publication workflow therefore performs every acceptance check before
@@ -39,8 +34,9 @@ workflow therefore requires a fine-grained, repository-scoped,
 Administration-read-only environment secret named
 `RELEASE_CONTROLS_READ_TOKEN`; it must have no write permission and must not be
 a broad personal token. That secret is not provisioned in the current release
-environment, so the hosted release remains fail-closed even apart from the
-repository visibility and GitHub billing blockers.
+environment, so the hosted release remains fail-closed even though the live
+repository controls now pass. GitHub billing also currently prevents hosted
+jobs from starting.
 
 The same preflight can be run before creating a signed tag:
 
