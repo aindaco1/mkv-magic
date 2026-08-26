@@ -11,6 +11,7 @@ on:
         type: string
 
 permissions:
+  actions: read
   contents: write
   id-token: write
   attestations: write
@@ -88,10 +89,8 @@ jobs:
           ./scripts/release/verify-repository-release-controls.sh \
             "$GITHUB_REPOSITORY"
 
-      - name: Install source and runtime-build dependencies
-        run: >-
-          brew install actionlint autoconf automake cmake libtool meson ninja
-          pkgconf ripgrep shellcheck
+      - name: Install release-check dependencies
+        run: brew install actionlint ripgrep shellcheck
 
       - name: Validate source
         env:
@@ -104,10 +103,15 @@ jobs:
           SIGNING_CERTIFICATE_PATH: ""
           SIGNING_KEYCHAIN_PATH: ""
           SPARKLE_KEY_PATH: ""
-        run: ./scripts/ci/local-gate.sh
+        run: ./scripts/ci/release-source-gate.sh
 
-      - name: Build verified Universal media runtime
-        run: ./scripts/tools/build-runtime.sh "$MKV_MAGIC_TOOL_SOURCE_ROOT"
+      - name: Restore exact successful CI runtime and security evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ./scripts/release/restore-ci-runtime.sh \
+            "$GITHUB_REPOSITORY" "$GITHUB_SHA" \
+            "$MKV_MAGIC_TOOL_SOURCE_ROOT" "$MKV_MAGIC_TOOL_CACHE"
 
       - name: Build app with required tools
         run: ./scripts/release/build-app.sh

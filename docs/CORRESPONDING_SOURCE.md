@@ -15,3 +15,8 @@ source archive. Application assembly and release scripts are under
 required to build the distributed open-source code, although Apple-issued
 credentials are required to reproduce the Developer ID signature and
 notarization ticket.
+
+The release workflow may reuse the exact dependency archives built and checked
+by the successful `main` CI run for the release commit. Reuse does not weaken
+this archive's contract: every dependency is selected from `SOURCES.json` and
+verified again by SHA-256 before it enters the corresponding-source ZIP.

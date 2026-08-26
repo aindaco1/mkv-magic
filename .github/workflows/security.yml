@@ -37,9 +37,11 @@ jobs:
           languages: swift
           build-mode: manual
 
-      - name: Build Universal application
+      # GitHub recommends one architecture for Swift CodeQL. Universal output
+      # remains a separate required CI and release-package invariant.
+      - name: Build analyzed ARM64 application
         run: >-
-          swift build -c release --arch arm64 --arch x86_64
+          swift build -c release --arch arm64
           --product MKVMagic --disable-automatic-resolution
 
       - name: Analyze

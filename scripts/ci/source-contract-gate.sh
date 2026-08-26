@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+cd "$repo_root"
+
+./scripts/ci/check-local-only.sh
+./scripts/ci/check-appkit-accessibility.sh
+./scripts/ci/check-user-facing-errors.sh
+./scripts/ci/scan-secrets.sh
+./scripts/ci/verify-actions-pinning.sh
+actionlint -color
+./scripts/ci/test-coverage-gate.sh
+./scripts/ci/test-dmg-verification.sh
+./scripts/ci/test-downloaded-release-verification.sh
+./scripts/ci/test-loopback-server.sh
+./scripts/ci/test-publication-acceptance.sh
+./scripts/ci/test-release-build-number.sh
+./scripts/ci/test-release-ci-provenance.sh
+./scripts/ci/test-release-notes.sh
+./scripts/ci/test-release-source-isolation.sh
+./scripts/ci/test-release-tag-containment.sh
+./scripts/ci/test-repository-release-controls.sh
+./scripts/ci/test-runtime-build-dependencies.sh
+./scripts/ci/test-runtime-artifact-extraction.sh
+./scripts/ci/test-runtime-version-pin.sh
+./scripts/ci/test-tool-source-cache.sh
+./scripts/ci/test-tool-tree-layout.sh
+./scripts/ci/test-reseal-tool-manifests.sh
+./scripts/ci/test-codeql-build-scope.sh
+
+shell_files=()
+while IFS= read -r -d '' shell_file; do
+    shell_files+=("$shell_file")
+done < <(find scripts -type f -name '*.sh' -print0)
+if [[ "${#shell_files[@]}" -gt 0 ]]; then
+    shellcheck -x "${shell_files[@]}"
+fi
+
+swift format lint --strict --configuration .swift-format --recursive \
+    Package.swift Sources Tests scripts/ci/check-coverage.swift
+
+resolved_before="$(shasum -a 256 Package.resolved | awk '{print $1}')"
+swift package resolve
+resolved_after="$(shasum -a 256 Package.resolved | awk '{print $1}')"
+if [[ "$resolved_before" != "$resolved_after" ]]; then
+    echo "swift package resolve changed Package.resolved" >&2
+    git diff -- Package.resolved >&2
+    exit 1
+fi
+git diff --check
+echo "source contract gate passed"

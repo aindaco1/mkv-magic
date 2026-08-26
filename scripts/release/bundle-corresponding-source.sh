@@ -7,6 +7,7 @@ if [[ $# -ne 1 || "$1" != /* ]]; then
 fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/release/corresponding-source-verification.sh"
+source "$repo_root/scripts/ci/tool-source-cache.sh"
 tool_root="$1"
 release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
 cache_root="${MKV_MAGIC_TOOL_CACHE:-$repo_root/.build/tool-sources}"
@@ -19,6 +20,7 @@ if [[ ! -d "$tool_root" || -L "$tool_root" || \
     exit 1
 fi
 "$repo_root/scripts/ci/check-tool-tree.sh" "$tool_root"
+mkv_magic_verify_tool_source_cache "$cache_root" "$tool_root/SOURCES.json"
 
 version="$(plutil -extract CFBundleShortVersionString raw -o - \
     "$app_path/Contents/Info.plist")"
@@ -46,56 +48,11 @@ bundle_root="$work_root/MKV-Magic-$version-corresponding-source"
 mkdir -p "$bundle_root/dependencies"
 install -m 0644 "$tool_root/SOURCES.json" "$bundle_root/SOURCES.json"
 
-copy_verified_source() {
-    local cache_path="$1"
-    local expected_hash="$2"
-    if [[ "$cache_path" != "$cache_root"/* || ! -f "$cache_path" || \
-          -L "$cache_path" || ! "$expected_hash" =~ ^[a-f0-9]{64}$ ]]; then
-        echo "source cache input is missing or unsafe: $cache_path" >&2
-        exit 1
-    fi
-    local actual_hash
-    actual_hash="$(shasum -a 256 "$cache_path" | awk '{print $1}')"
-    if [[ "$actual_hash" != "$expected_hash" ]]; then
-        echo "source cache checksum mismatch: $cache_path" >&2
-        exit 1
-    fi
-    install -m 0644 "$cache_path" "$bundle_root/dependencies/$(basename "$cache_path")"
-}
-
 sources="$tool_root/SOURCES.json"
-ffmpeg_version="$(jq -r '.ffmpeg.version' "$sources")"
-nasm_version="$(jq -r '.nasm.version' "$sources")"
-svtav1_version="$(jq -r '.svtav1.version' "$sources")"
-dav1d_version="$(jq -r '.dav1d.version' "$sources")"
-opus_version="$(jq -r '.opus.version' "$sources")"
-zimg_version="$(jq -r '.zimg.version' "$sources")"
-mkvtoolnix_version="$(jq -r '.mkvtoolnix.version' "$sources")"
-qt_version="$(jq -r '.qtbase.version' "$sources")"
-copy_verified_source \
-    "$cache_root/ffmpeg-$ffmpeg_version/ffmpeg-$ffmpeg_version.tar.xz" \
-    "$(jq -r '.ffmpeg.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/nasm-$nasm_version/nasm-$nasm_version.tar.xz" \
-    "$(jq -r '.nasm.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/svt-av1-$svtav1_version/SVT-AV1-v$svtav1_version.tar.gz" \
-    "$(jq -r '.svtav1.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/dav1d-$dav1d_version/dav1d-$dav1d_version.tar.xz" \
-    "$(jq -r '.dav1d.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/opus-$opus_version/opus-$opus_version.tar.gz" \
-    "$(jq -r '.opus.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/zimg-$zimg_version/zimg-release-$zimg_version.tar.gz" \
-    "$(jq -r '.zimg.sha256' "$sources")"
-copy_verified_source \
-    "$cache_root/mkvtoolnix-$mkvtoolnix_version/mkvtoolnix-$mkvtoolnix_version.tar.xz" \
-    "$(jq -r '.mkvtoolnix.sourceSha256' "$sources")"
-copy_verified_source \
-    "$cache_root/qtbase-$qt_version/qtbase-everywhere-src-$qt_version.tar.xz" \
-    "$(jq -r '.qtbase.sha256' "$sources")"
+while IFS=$'\t' read -r relative_path expected_hash; do
+    install -m 0644 "$cache_root/$relative_path" \
+        "$bundle_root/dependencies/$(basename "$relative_path")"
+done < <(mkv_magic_tool_source_cache_entries "$sources")
 
 git -C "$repo_root" diff --quiet -- .
 git -C "$repo_root" diff --cached --quiet -- .

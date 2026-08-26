@@ -706,6 +706,17 @@ token rather than a broad personal credential, and that narrow token is not
 provisioned yet. See
 [docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md](docs/releases/M9_REPOSITORY_RELEASE_CONTROLS_SLICE.md).
 
+CI now builds and executes the checksum-pinned Universal media runtime once for
+each exact `main` commit. It retains that runtime and its independently verified
+corresponding-source archives as a short-lived, immutable, provenance-attested
+artifact. A signed-tag release must find successful CI and CodeQL runs for the
+same commit, verify that artifact's GitHub-hosted provenance and metadata, and
+reject unsafe archive layouts before reuse. Release still reruns the shared
+source contract, assembles a fresh Universal app, signs and notarizes it, and
+performs both native-architecture DMG checks. CodeQL analyzes one ARM64 build;
+the separate CI and release gates retain the Universal binary requirement. See
+[docs/releases/M9_VERIFIED_BUILD_REUSE_SLICE.md](docs/releases/M9_VERIFIED_BUILD_REUSE_SLICE.md).
+
 Candidate notes for a possible 0.1.0 beta now describe only currently executable
 capabilities and disclose the important roadmap gaps. The release workflow
 rejects fixture, placeholder, unbounded, linked, missing, or version-mismatched

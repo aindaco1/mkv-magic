@@ -38,7 +38,11 @@ assert_runtime_dependencies() {
 }
 
 assert_runtime_dependencies "$repo_root/.github/workflows/ci.yml"
-assert_runtime_dependencies "$repo_root/.github/workflows/release.yml"
+if grep -Eq 'brew install .*(autoconf|automake|cmake|libtool|meson|ninja|pkgconf)' \
+    "$repo_root/.github/workflows/release.yml"; then
+    echo "release workflow still installs runtime build dependencies" >&2
+    exit 1
+fi
 
 required_command_line="$(
     grep '^for required_command in ' "$repo_root/scripts/tools/build-runtime.sh" | tr ';' ' '

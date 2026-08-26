@@ -9,7 +9,7 @@ source_step="$({
     awk '
         /- name: Validate source/ { capture = 1 }
         capture { print }
-        /- name: Build verified Universal media runtime/ { exit }
+        /- name: Restore exact successful CI runtime/ { exit }
     ' "$release_workflow"
 })"
 for required_fragment in \
@@ -22,7 +22,7 @@ for required_fragment in \
     'SIGNING_CERTIFICATE_PATH: ""' \
     'SIGNING_KEYCHAIN_PATH: ""' \
     'SPARKLE_KEY_PATH: ""' \
-    'run: ./scripts/ci/local-gate.sh'; do
+    'run: ./scripts/ci/release-source-gate.sh'; do
     if [[ "$source_step" != *"$required_fragment"* ]]; then
         echo "release source gate does not isolate: $required_fragment" >&2
         exit 1
