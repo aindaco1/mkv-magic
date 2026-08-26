@@ -16,6 +16,12 @@ for required_fragment in \
         exit 1
     fi
 done
+if rg -n 'xcodebuild -version[[:space:]]*\|[[:space:]]*head' \
+    "$ci_workflow" "$release_workflow" \
+    "$repo_root/scripts/tools/package-ci-runtime.sh"; then
+    echo "Xcode version detection can terminate xcodebuild through a short pipe" >&2
+    exit 1
+fi
 if ! grep -Fq './scripts/ci/source-contract-gate.sh' \
     "$repo_root/scripts/ci/release-source-gate.sh"; then
     echo "release source gate does not share the CI source contract" >&2

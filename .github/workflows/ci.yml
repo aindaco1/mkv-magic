@@ -78,7 +78,8 @@ jobs:
       - name: Select pinned runtime-build Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
-          test "$(xcodebuild -version | head -1)" = "Xcode 26.3"
+          xcode_version="$(xcodebuild -version)"
+          test "${xcode_version%%$'\n'*}" = "Xcode 26.3"
 
       - name: Install runtime-build dependencies
         run: brew install autoconf automake cmake libtool meson ninja pkgconf

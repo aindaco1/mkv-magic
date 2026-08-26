@@ -57,7 +57,8 @@ source_index_hash="$({
 build_script_hash="$(
     shasum -a 256 "$repo_root/scripts/tools/build-runtime.sh" | awk '{print $1}'
 )"
-xcode_version="$(xcodebuild -version | head -1)"
+xcode_version_output="$(xcodebuild -version)"
+xcode_version="${xcode_version_output%%$'\n'*}"
 jq -n \
     --arg repository "$repository" \
     --arg commit "$commit" \

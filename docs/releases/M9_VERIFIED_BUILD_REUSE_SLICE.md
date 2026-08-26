@@ -52,6 +52,12 @@ uploaded to the draft release, downloaded again, and independently verified.
 - `scripts/ci/test-tool-source-cache.sh`
 - `scripts/ci/test-codeql-build-scope.sh`
 
+The first hosted handoff attempt found that piping `xcodebuild -version` into a
+short-lived `head` process can raise a broken-pipe exception in Xcode 26.3. The
+workflows and packager now capture the complete bounded version output before
+selecting its first line, and the provenance regression test rejects that pipe
+pattern.
+
 The optimized hosted durations must be recorded from the first successful push
 before a time reduction is treated as measured rather than projected. A signed
 tag and draft release are intentionally outside this slice.
