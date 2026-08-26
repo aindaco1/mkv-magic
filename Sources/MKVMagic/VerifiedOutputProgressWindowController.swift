@@ -50,6 +50,15 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let buttons = NSStackView(views: [spacer, cancelButton])
         buttons.orientation = .horizontal
+        // AppKit versions disagree slightly about the rounded button bezel's
+        // trailing alignment inside a stack. Keep one extra native control gap
+        // so the visible button remains inset on every supported macOS build.
+        buttons.edgeInsets = NSEdgeInsets(
+            top: 0,
+            left: 0,
+            bottom: 0,
+            right: MKVMagicLayoutMetrics.controlGap
+        )
         let stack = NSStackView(views: [statusLabel, progress, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
