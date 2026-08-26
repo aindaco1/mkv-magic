@@ -201,6 +201,51 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         }
     }
 
+    private struct PreparedBatchSubtitleCleanupItem {
+        let asset: MediaAsset
+        let candidate: SubtitleCleanupCandidate
+
+        var presentation: BatchReviewItemPresentation {
+            BatchReviewItemPresentation(
+                id: asset.id,
+                inputName: asset.sourceURL.lastPathComponent,
+                outputName: OutputNamingPolicy.cleanedSubtitleFilename(
+                    for: asset.sourceURL
+                ),
+                status: candidate.normalizationNeeded || candidate.changeCount > 0
+                    ? .ready : .noChanges,
+                detail: candidate.normalizationNeeded || candidate.changeCount > 0
+                    ? "Normalize UTF-8 and apply \(candidate.changeCount) deterministic suggestions"
+                    : "No output needed"
+            )
+        }
+    }
+
+    private struct PreparedBatchSavedWorkflowItem {
+        let asset: MediaAsset
+        let prepared: PreparedSavedWorkflow
+
+        var outputFilename: String {
+            OutputNamingPolicy.savedWorkflowFilename(
+                for: asset.sourceURL,
+                suggestedFilename: prepared.compiled.suggestedOutputFilename,
+                requiresMKV: prepared.compiled.requiresMKVOutputExtension
+            )
+        }
+
+        var presentation: BatchReviewItemPresentation {
+            BatchReviewItemPresentation(
+                id: asset.id,
+                inputName: asset.sourceURL.lastPathComponent,
+                outputName: outputFilename,
+                status: .ready,
+                detail: WorkflowPlanReviewPresentation.impactSummary(
+                    for: prepared.compiled
+                )
+            )
+        }
+    }
+
     private let model: AppModel
     private let tableView = MediaAssetTableView()
     private let inspectorText = NSTextView()
@@ -245,6 +290,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private var workflowWindowController: WorkflowWindowController?
     private var workflowPlanReviewWindowController: WorkflowPlanReviewWindowController?
     private var subtitleCleanupWindowController: SubtitleCleanupWindowController?
+    private var batchReviewWindowController: BatchReviewWindowController?
+    private var batchProgressWindowController: VerifiedOutputProgressWindowController?
+    private var batchTask: Task<Void, Never>?
     private var externalSubtitleMuxWindowController: ExternalSubtitleMuxWindowController?
     private var embeddedSubtitleTrackPickerWindowController:
         EmbeddedSubtitleTrackPickerWindowController?
@@ -311,8 +359,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             footer.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             footer.heightAnchor.constraint(equalToConstant: 52),
             sidebar.widthAnchor.constraint(equalToConstant: 175),
-            inspector.widthAnchor.constraint(greaterThanOrEqualToConstant: 260),
-            inspector.widthAnchor.constraint(lessThanOrEqualToConstant: 340),
+            inspector.widthAnchor.constraint(greaterThanOrEqualToConstant: 300),
+            inspector.widthAnchor.constraint(lessThanOrEqualToConstant: 380),
         ])
     }
 
@@ -348,7 +396,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 symbol: "speedometer",
                 action: #selector(showEncodingBenchmark)
             ),
-            sidebarLabel("Queue", symbol: "list.bullet.rectangle"),
+            sidebarLabel("Activity", symbol: "list.bullet.rectangle"),
             sidebarButton(
                 "Queue",
                 symbol: "list.bullet.rectangle",
@@ -422,6 +470,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.delegate = self
         tableView.rowHeight = 32
         tableView.allowsEmptySelection = true
+        tableView.allowsMultipleSelection = true
         tableView.onDeleteSelection = { [weak self] in self?.removeSelectedAsset() }
         tableView.setAccessibilityLabel("Inspected media files")
         tableView.setAccessibilityHelp(
@@ -435,7 +484,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let stack = NSStackView(views: [heading, help, chooseFilesButton, scroll])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 12
+        stack.spacing = MKVMagicLayoutMetrics.sectionGap
         stack.edgeInsets = NSEdgeInsets(top: 32, left: 28, bottom: 24, right: 28)
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
@@ -448,7 +497,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
         ])
         return container
@@ -474,6 +523,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
         let titleLabel = NSTextField(labelWithString: "Segment title")
         segmentTitleField.placeholderString = "Leave empty to remove"
+        segmentTitleField.isEnabled = false
         segmentTitleField.setAccessibilityLabel("Segment title")
         segmentTitleField.setAccessibilityHelp(
             "Edit the Matroska segment title, or leave it empty to remove the title."
@@ -541,31 +591,18 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         convertButton.target = self
         convertButton.action = #selector(convertVideo)
         convertButton.isEnabled = false
-        let metadataButtons = NSStackView(views: [previewButton, editTrackButton])
-        metadataButtons.orientation = .horizontal
-        metadataButtons.spacing = 8
-        let structuralButtons = NSStackView(views: [cleanMKVButton, removeTracksButton])
-        structuralButtons.orientation = .horizontal
-        structuralButtons.spacing = 8
-        let subtitleButtons = NSStackView(views: [cleanSubtitleButton, addSubtitleButton])
-        subtitleButtons.orientation = .horizontal
-        subtitleButtons.spacing = 8
-        let subtitleConversionButtons = NSStackView(views: [
+        let metadataButtons = inspectorActionRow([previewButton, editTrackButton])
+        let structuralButtons = inspectorActionRow([cleanMKVButton, removeTracksButton])
+        let subtitleButtons = inspectorActionRow([cleanSubtitleButton, addSubtitleButton])
+        let subtitleConversionButtons = inspectorActionRow([
             extractSubtitleButton, convertTimedTextButton,
         ])
-        subtitleConversionButtons.orientation = .horizontal
-        subtitleConversionButtons.spacing = 8
-        let chapterButtons = NSStackView(views: [chaptersButton, trimButton])
-        chapterButtons.orientation = .horizontal
-        chapterButtons.spacing = 8
-        let attachmentButtons = NSStackView(views: [attachmentsButton, removeAttachmentsButton])
-        attachmentButtons.orientation = .horizontal
-        attachmentButtons.spacing = 8
-        let tagButtons = NSStackView(views: [tagsButton])
-        tagButtons.orientation = .horizontal
-        let videoButtons = NSStackView(views: [remuxButton, convertButton])
-        videoButtons.orientation = .horizontal
-        videoButtons.spacing = 8
+        let chapterButtons = inspectorActionRow([chaptersButton, trimButton])
+        let attachmentButtons = inspectorActionRow([
+            attachmentsButton, removeAttachmentsButton,
+        ])
+        let tagButtons = inspectorActionRow([tagsButton])
+        let videoButtons = inspectorActionRow([remuxButton, convertButton])
 
         let stack = NSStackView(views: [
             heading, scroll, titleLabel, segmentTitleField, metadataButtons, structuralButtons,
@@ -574,8 +611,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 9
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 16, bottom: 20, right: 16)
+        stack.spacing = MKVMagicLayoutMetrics.controlGap
+        stack.edgeInsets = MKVMagicLayoutMetrics.inspectorInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
         segmentTitleField.translatesAutoresizingMaskIntoConstraints = false
@@ -587,11 +624,28 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 220),
-            segmentTitleField.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: segmentTitleField),
+            stack.contentWidthConstraint(for: metadataButtons),
+            stack.contentWidthConstraint(for: structuralButtons),
+            stack.contentWidthConstraint(for: subtitleButtons),
+            stack.contentWidthConstraint(for: subtitleConversionButtons),
+            stack.contentWidthConstraint(for: chapterButtons),
+            stack.contentWidthConstraint(for: attachmentButtons),
+            stack.contentWidthConstraint(for: tagButtons),
+            stack.contentWidthConstraint(for: videoButtons),
         ])
         return container
+    }
+
+    private func inspectorActionRow(_ buttons: [NSButton]) -> NSStackView {
+        let row = NSStackView(views: buttons)
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.distribution = .fillEqually
+        row.spacing = MKVMagicLayoutMetrics.compactControlGap
+        return row
     }
 
     private func makeFooter() -> NSView {
@@ -624,8 +678,8 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         ])
         stack.orientation = .horizontal
         stack.alignment = .centerY
-        stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 8, left: 16, bottom: 8, right: 16)
+        stack.spacing = MKVMagicLayoutMetrics.largeSectionGap
+        stack.edgeInsets = MKVMagicLayoutMetrics.footerInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         let container = NSVisualEffectView()
         container.material = .headerView
@@ -804,7 +858,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 let workflows = try await model.loadWorkflows()
                 let controller = WorkflowWindowController(
                     workflows: workflows,
-                    hasSelectedAsset: selectedAsset != nil,
+                    hasSelectedAsset: !selectedAssets.isEmpty,
                     onSave: { [model] workflows in
                         try await model.saveWorkflows(workflows)
                     },
@@ -1314,6 +1368,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil
     ) {
+        if selectedAssets.count > 1 {
+            prepareBatchSavedWorkflow(workflow, assets: selectedAssets)
+            return
+        }
         guard let asset = selectedAsset, let parentWindow = view.window else {
             impactLabel.stringValue = "Select an inspected file first."
             clearPendingChange()
@@ -1358,6 +1416,218 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 retryingQueueJobID: retryingQueueJobID
             )
         }
+    }
+
+    private func prepareBatchSavedWorkflow(
+        _ workflow: SavedWorkflow,
+        assets: [MediaAsset]
+    ) {
+        guard let parentWindow = view.window, assets.count > 1 else { return }
+        guard
+            !workflow.steps.contains(where: {
+                $0.isEnabled && $0.action == .addExternalSubtitle
+            })
+        else {
+            impactLabel.stringValue =
+                "External-subtitle workflows require one selected video and one reviewed subtitle."
+            statusLabel.stringValue = "Select one video for this workflow."
+            return
+        }
+        clearPendingChange()
+        let activityID = beginInterfaceActivity(
+            "Compiling \(workflow.name) for \(assets.count) files…"
+        )
+        Task { [weak self, weak parentWindow] in
+            guard let self else { return }
+            defer { endInterfaceActivity(activityID) }
+            let needsCapabilities = assets.contains {
+                SavedWorkflowCompiler().needsEncodingCapabilities(
+                    for: workflow,
+                    asset: $0
+                )
+            }
+            let capabilities =
+                needsCapabilities
+                ? await model.probeEncodingCapabilities() : nil
+            var prepared = [PreparedBatchSavedWorkflowItem]()
+            var presentations = [BatchReviewItemPresentation]()
+            let queueSupportsWorkflow = MediaQueueAutomaticWorkflowPolicy.supports(
+                workflow,
+                inputCount: 1
+            )
+            for (index, asset) in assets.enumerated() {
+                statusLabel.stringValue =
+                    "Compiling file \(index + 1) of \(assets.count)…"
+                guard let revision = model.reviewedSourceRevision(for: asset) else {
+                    presentations.append(
+                        BatchReviewItemPresentation(
+                            id: asset.id,
+                            inputName: asset.sourceURL.lastPathComponent,
+                            outputName: "—",
+                            status: .blocked,
+                            detail: "Inspect this source again before queueing"
+                        )
+                    )
+                    continue
+                }
+                do {
+                    let preview = try SavedWorkflowCompiler().preview(
+                        workflow,
+                        for: asset,
+                        inputs: SavedWorkflowResolvedInputs(
+                            availableVideoPresets: capabilities?.availableVideoPresets ?? [],
+                            availableAudioPresets: capabilities?.availableAudioPresets ?? []
+                        )
+                    )
+                    guard let compiled = preview.compiledWorkflow else {
+                        presentations.append(
+                            BatchReviewItemPresentation(
+                                id: asset.id,
+                                inputName: asset.sourceURL.lastPathComponent,
+                                outputName: "—",
+                                status: .noChanges,
+                                detail: "The selected workflow is already satisfied"
+                            )
+                        )
+                        continue
+                    }
+                    guard queueSupportsWorkflow else {
+                        presentations.append(
+                            BatchReviewItemPresentation(
+                                id: asset.id,
+                                inputName: asset.sourceURL.lastPathComponent,
+                                outputName: "—",
+                                status: .blocked,
+                                detail:
+                                    "This workflow requires another interactive review for each file"
+                            )
+                        )
+                        continue
+                    }
+                    let item = PreparedBatchSavedWorkflowItem(
+                        asset: asset,
+                        prepared: PreparedSavedWorkflow(
+                            recipe: workflow,
+                            compiled: compiled,
+                            externalSubtitlePayload: nil,
+                            sourceDisposition: .keepOriginal,
+                            retryingQueueJobID: nil,
+                            expectedSourceRevision: revision
+                        )
+                    )
+                    prepared.append(item)
+                    presentations.append(item.presentation)
+                } catch {
+                    presentations.append(
+                        BatchReviewItemPresentation(
+                            id: asset.id,
+                            inputName: asset.sourceURL.lastPathComponent,
+                            outputName: "—",
+                            status: .blocked,
+                            detail: UserFacingErrorPresentation.shortReason(error)
+                        )
+                    )
+                }
+            }
+            guard let parentWindow, view.window === parentWindow else { return }
+            let controller = BatchReviewWindowController(
+                title: "Review \(workflow.name) Batch",
+                explanation:
+                    "MKV Magic compiled this portable workflow independently for every selected file. Ready files become separate queue jobs; already-satisfied and blocked files are skipped.",
+                items: presentations,
+                actionTitle: "Add Ready Jobs to Queue",
+                offersSourceDisposition: true
+            )
+            batchReviewWindowController = controller
+            controller.beginSheet(for: parentWindow) { [weak self] decision in
+                guard let self else { return }
+                self.batchReviewWindowController = nil
+                guard let decision else {
+                    self.refresh()
+                    return
+                }
+                self.enqueueBatchSavedWorkflow(
+                    prepared,
+                    decision: decision,
+                    parentWindow: parentWindow
+                )
+            }
+        }
+    }
+
+    private func enqueueBatchSavedWorkflow(
+        _ items: [PreparedBatchSavedWorkflowItem],
+        decision: BatchReviewDecision,
+        parentWindow: NSWindow
+    ) {
+        guard !items.isEmpty else {
+            statusLabel.stringValue = "No workflow jobs were ready to queue."
+            return
+        }
+        disableEditingControls()
+        let progress = VerifiedOutputProgressWindowController.verifiedChange(
+            title: "Adding Workflow Batch",
+            initialMessage: "Preparing the first of \(items.count) independent queue jobs…"
+        )
+        batchProgressWindowController = progress
+        progress.beginSheet(for: parentWindow)
+        let task = Task { [weak self, weak progress] in
+            guard let self else { return }
+            var queued = 0
+            var failed = 0
+            var skipped = 0
+            for (index, item) in items.enumerated() {
+                do {
+                    try Task.checkCancellation()
+                    progress?.update(
+                        message:
+                            "Queueing \(index + 1) of \(items.count): \(item.asset.sourceURL.lastPathComponent)"
+                    )
+                    let directory =
+                        decision.commonDestinationDirectory
+                        ?? OutputDestinationPolicy.defaultDirectory(
+                            for: item.asset.sourceURL
+                        )
+                    let destinationURL = directory.appendingPathComponent(
+                        item.outputFilename,
+                        isDirectory: false
+                    )
+                    guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+                        skipped += 1
+                        continue
+                    }
+                    _ = try await model.enqueueSavedWorkflow(
+                        item.prepared.compiled,
+                        recipe: item.prepared.recipe,
+                        sourceDisposition: decision.sourceDisposition,
+                        expectedSourceRevision: item.prepared.expectedSourceRevision,
+                        in: item.asset,
+                        destinationURL: destinationURL
+                    )
+                    queued += 1
+                } catch is CancellationError {
+                    break
+                } catch {
+                    failed += 1
+                }
+            }
+            progress?.finish()
+            batchProgressWindowController = nil
+            batchTask = nil
+            refresh()
+            refreshOpenQueue()
+            statusLabel.stringValue =
+                "Workflow batch queued: \(queued) ready, \(failed) failed, \(skipped) skipped."
+            AccessibleStatusPresentation.present(
+                statusLabel.stringValue,
+                in: statusLabel,
+                returningFocusTo: queueButton
+            )
+            let queuedModel = model
+            Task { await queuedModel.runAutomaticQueueCycleIfEligible() }
+        }
+        batchTask = task
+        progress.onCancel = { [weak self] in self?.batchTask?.cancel() }
     }
 
     private func presentSavedWorkflowReview(
@@ -1533,7 +1803,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func removeSelectedAsset() {
-        removeAsset(at: tableView.selectedRow)
+        let selectedRows = tableView.selectedRowIndexes.filter(model.assets.indices.contains)
+        guard !selectedRows.isEmpty, !isMediaWorkBusy else { return }
+        let ids = Set(selectedRows.map { model.assets[$0].id })
+        let firstRow = selectedRows.first ?? 0
+        let remaining = model.assets.filter { !ids.contains($0.id) }
+        preferredSelectionURL =
+            remaining.indices.contains(firstRow)
+            ? remaining[firstRow].sourceURL : remaining.last?.sourceURL
+        clearPendingChange()
+        model.removeAssets(withIDs: ids)
     }
 
     private func removeAsset(at row: Int) {
@@ -1566,6 +1845,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             || verifiedRunTask != nil
             || trimTask != nil
             || losslessJoinTask != nil
+            || batchTask != nil
             || isPreparingVideoProcessing
     }
 
@@ -1753,6 +2033,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     @objc private func cleanSubtitle() {
+        if selectedAssets.count > 1 {
+            prepareBatchSubtitleCleanup(selectedAssets)
+            return
+        }
         guard let asset = selectedAsset, Self.canCleanSubtitle(asset),
             let parentWindow = view.window
         else { return }
@@ -1839,6 +2123,188 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 clearPendingChange()
             }
         }
+    }
+
+    private func prepareBatchSubtitleCleanup(_ assets: [MediaAsset]) {
+        guard let parentWindow = view.window,
+            assets.count > 1,
+            assets.allSatisfy(Self.isStandaloneTextSubtitle)
+        else { return }
+        clearPendingChange()
+        let activityID = beginInterfaceActivity(
+            "Preparing \(assets.count) subtitle cleanups…"
+        )
+        cleanSubtitleButton.isEnabled = false
+        Task { [weak self, weak parentWindow] in
+            guard let self else { return }
+            defer { endInterfaceActivity(activityID) }
+            var prepared = [PreparedBatchSubtitleCleanupItem]()
+            var presentations = [BatchReviewItemPresentation]()
+            for (index, asset) in assets.enumerated() {
+                statusLabel.stringValue =
+                    "Reviewing subtitle \(index + 1) of \(assets.count)…"
+                do {
+                    let candidate: SubtitleCleanupCandidate
+                    switch asset.sourceURL.pathExtension.lowercased() {
+                    case "srt":
+                        candidate = .subRip(
+                            try await model.previewSubtitleCleanup(at: asset.sourceURL)
+                        )
+                    case "ass", "ssa":
+                        candidate = .advanced(
+                            try await model.previewAdvancedSubtitleCleanup(
+                                at: asset.sourceURL
+                            )
+                        )
+                    default:
+                        continue
+                    }
+                    let item = PreparedBatchSubtitleCleanupItem(
+                        asset: asset,
+                        candidate: candidate
+                    )
+                    if candidate.hasRemainingText(restoringIDs: []) {
+                        prepared.append(item)
+                        presentations.append(item.presentation)
+                    } else {
+                        presentations.append(
+                            BatchReviewItemPresentation(
+                                id: asset.id,
+                                inputName: asset.sourceURL.lastPathComponent,
+                                outputName: OutputNamingPolicy.cleanedSubtitleFilename(
+                                    for: asset.sourceURL
+                                ),
+                                status: .blocked,
+                                detail: "Default cleanup would remove every subtitle event"
+                            )
+                        )
+                    }
+                } catch {
+                    presentations.append(
+                        BatchReviewItemPresentation(
+                            id: asset.id,
+                            inputName: asset.sourceURL.lastPathComponent,
+                            outputName: OutputNamingPolicy.cleanedSubtitleFilename(
+                                for: asset.sourceURL
+                            ),
+                            status: .blocked,
+                            detail: UserFacingErrorPresentation.shortReason(error)
+                        )
+                    )
+                }
+            }
+            guard let parentWindow, view.window === parentWindow else {
+                cleanSubtitleButton.isEnabled = true
+                return
+            }
+            let controller = BatchReviewWindowController(
+                title: "Review Subtitle Batch",
+                explanation:
+                    "Each ready subtitle becomes one independently verified output. Already-clean and blocked files are skipped; one failure never removes another successful output.",
+                items: presentations,
+                actionTitle: "Clean Ready Files",
+                offersSourceDisposition: false
+            )
+            batchReviewWindowController = controller
+            controller.beginSheet(for: parentWindow) { [weak self] decision in
+                guard let self else { return }
+                self.batchReviewWindowController = nil
+                guard let decision else {
+                    self.refresh()
+                    return
+                }
+                let readyIDs = Set(
+                    presentations.filter { $0.status == .ready }.map(\.id)
+                )
+                self.runBatchSubtitleCleanup(
+                    prepared.filter { readyIDs.contains($0.asset.id) },
+                    decision: decision,
+                    parentWindow: parentWindow
+                )
+            }
+        }
+    }
+
+    private func runBatchSubtitleCleanup(
+        _ items: [PreparedBatchSubtitleCleanupItem],
+        decision: BatchReviewDecision,
+        parentWindow: NSWindow
+    ) {
+        guard !items.isEmpty else {
+            refresh()
+            statusLabel.stringValue = "No subtitle cleanup outputs were needed."
+            return
+        }
+        disableEditingControls()
+        let progress = VerifiedOutputProgressWindowController.verifiedChange(
+            title: "Cleaning Subtitles",
+            initialMessage: "Preparing the first of \(items.count) verified subtitle outputs…"
+        )
+        batchProgressWindowController = progress
+        progress.beginSheet(for: parentWindow)
+        let task = Task { [weak self, weak progress] in
+            guard let self else { return }
+            var succeeded = 0
+            var failed = 0
+            var skipped = 0
+            for (index, item) in items.enumerated() {
+                do {
+                    try Task.checkCancellation()
+                    progress?.update(
+                        message:
+                            "Cleaning \(index + 1) of \(items.count): \(item.asset.sourceURL.lastPathComponent)"
+                    )
+                    let directory =
+                        decision.commonDestinationDirectory
+                        ?? OutputDestinationPolicy.defaultDirectory(
+                            for: item.asset.sourceURL
+                        )
+                    let destinationURL = directory.appendingPathComponent(
+                        OutputNamingPolicy.cleanedSubtitleFilename(
+                            for: item.asset.sourceURL
+                        ),
+                        isDirectory: false
+                    )
+                    guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
+                        skipped += 1
+                        continue
+                    }
+                    switch item.candidate {
+                    case .subRip(let preview):
+                        _ = try await model.cleanSubtitle(
+                            preview: preview,
+                            restoringCueIDs: [],
+                            destinationURL: destinationURL
+                        )
+                    case .advanced(let preview):
+                        _ = try await model.cleanAdvancedSubtitle(
+                            preview: preview,
+                            restoringEventIDs: [],
+                            destinationURL: destinationURL
+                        )
+                    }
+                    preferredSelectionURL = destinationURL
+                    succeeded += 1
+                } catch is CancellationError {
+                    break
+                } catch {
+                    failed += 1
+                }
+            }
+            progress?.finish()
+            batchProgressWindowController = nil
+            batchTask = nil
+            refresh()
+            statusLabel.stringValue =
+                "Subtitle batch finished: \(succeeded) succeeded, \(failed) failed, \(skipped) skipped."
+            AccessibleStatusPresentation.present(
+                statusLabel.stringValue,
+                in: statusLabel,
+                returningFocusTo: cleanSubtitleButton
+            )
+        }
+        batchTask = task
+        progress.onCancel = { [weak self] in self?.batchTask?.cancel() }
     }
 
     private func presentEmbeddedSubtitleCleanup(asset: MediaAsset, parentWindow: NSWindow) {
@@ -2961,6 +3427,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private func disableEditingControls() {
+        segmentTitleField.isEnabled = false
         previewButton.isEnabled = false
         editTrackButton.isEnabled = false
         cleanMKVButton.isEnabled = false
@@ -3081,7 +3548,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             verifiedRunProgressWindowController?.update(message: progressMessage)
         }
         updateActivityIndicator()
-        chooseFilesButton.isEnabled = !model.state.showsProgressIndicator
+        chooseFilesButton.isEnabled = !isMediaWorkBusy
         if tableView.selectedRow >= model.assets.count {
             tableView.deselectAll(nil)
         }
@@ -3098,6 +3565,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         renderInspector()
         joinButton.isEnabled = model.assets.filter { MatroskaEditingPolicy.supports($0) }.count >= 2
         if isMediaWorkBusy {
+            segmentTitleField.isEnabled = false
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
@@ -3120,16 +3588,25 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private var selectedAsset: MediaAsset? {
-        guard tableView.selectedRow >= 0, tableView.selectedRow < model.assets.count else {
-            return nil
+        let assets = selectedAssets
+        return assets.count == 1 ? assets[0] : nil
+    }
+
+    private var selectedAssets: [MediaAsset] {
+        tableView.selectedRowIndexes.compactMap { row in
+            model.assets.indices.contains(row) ? model.assets[row] : nil
         }
-        return model.assets[tableView.selectedRow]
     }
 
     private func renderInspector() {
+        if selectedAssets.count > 1 {
+            renderBatchInspector(selectedAssets)
+            return
+        }
         guard let asset = selectedAsset else {
             inspectorText.string = "Select an inspected file to see its tracks."
             segmentTitleField.stringValue = ""
+            segmentTitleField.isEnabled = false
             previewButton.isEnabled = false
             editTrackButton.isEnabled = false
             cleanMKVButton.isEnabled = false
@@ -3147,6 +3624,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             convertButton.isEnabled = false
             return
         }
+        segmentTitleField.isEnabled = true
         var lines = [
             asset.sourceURL.lastPathComponent,
             "",
@@ -3278,6 +3756,41 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             convertButton.isEnabled
             ? "Convert the complete MKV, MP4, M4V, MOV, or WebM video once to AV1, HEVC, H.264, or ProRes and create a verified MKV."
             : "Conversion needs one supported video input whose tracks, metadata, and chapters can be preserved safely."
+    }
+
+    private func renderBatchInspector(_ assets: [MediaAsset]) {
+        let subtitleCount = assets.filter(Self.isStandaloneTextSubtitle).count
+        let matroskaCount = assets.filter(MatroskaEditingPolicy.supports).count
+        inspectorText.string = [
+            "\(assets.count) files selected",
+            "",
+            "BATCH",
+            "Standalone subtitles  \(subtitleCount)",
+            "Matroska files        \(matroskaCount)",
+            "Other media           \(assets.count - subtitleCount - matroskaCount)",
+            "",
+            "Clean Subtitle applies one reviewed, independently verified job to each selected SRT, ASS, or SSA file.",
+            "",
+            "Workflows compiles the portable recipe separately for every selected file and explains any skipped or blocked item before queueing.",
+        ].joined(separator: "\n")
+        segmentTitleField.stringValue = ""
+        segmentTitleField.isEnabled = false
+        for button in [
+            previewButton, editTrackButton, cleanMKVButton, removeTracksButton,
+            removeAttachmentsButton, extractSubtitleButton, convertTimedTextButton,
+            addSubtitleButton, chaptersButton, attachmentsButton, tagsButton,
+            trimButton, remuxButton, convertButton,
+        ] {
+            button.isEnabled = false
+        }
+        cleanSubtitleButton.isEnabled =
+            subtitleCount == assets.count && !isMediaWorkBusy
+        cleanSubtitleButton.toolTip =
+            cleanSubtitleButton.isEnabled
+            ? "Review and clean every selected text subtitle as an independent verified job."
+            : "Batch subtitle cleanup requires every selected item to be an SRT, ASS, or SSA file."
+        runButton.isEnabled = false
+        queueButton.isEnabled = false
     }
 
     private func formatTrack(_ track: MediaTrack) -> String {
@@ -3454,7 +3967,7 @@ enum SourceDispositionPresentation {
                 lessThanOrEqualTo: container.bottomAnchor,
                 constant: -2
             ),
-            detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: detail),
         ])
         return (container, checkbox)
     }

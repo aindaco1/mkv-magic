@@ -188,9 +188,9 @@ final class TrackRemovalViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
-            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: buttons),
         ])
         view = root
     }

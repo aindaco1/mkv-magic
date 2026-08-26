@@ -183,7 +183,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 250),
         ])
         return container
@@ -276,11 +276,11 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            nameField.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: nameField),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
-            stepButtons.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: stepButtons),
+            stack.contentWidthConstraint(for: actions),
         ])
         return container
     }

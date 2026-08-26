@@ -11,6 +11,10 @@ enum UserFacingErrorPresentation {
         "\(failure) \(recovery) Details: \(boundedDetail(error.localizedDescription))"
     }
 
+    static func shortReason(_ error: Error) -> String {
+        boundedDetail(error.localizedDescription)
+    }
+
     private static func boundedDetail(_ rawDetail: String) -> String {
         var result = ""
         result.reserveCapacity(maximumDetailCharacters)

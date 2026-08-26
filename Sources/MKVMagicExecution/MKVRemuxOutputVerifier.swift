@@ -99,16 +99,24 @@ public struct MKVRemuxOutputVerifier: Sendable {
         guard expected.count == actual.count else { return false }
         return zip(expected, actual).allSatisfy { expectedChapter, actualChapter in
             expectedChapter.title == actualChapter.title
-                && expectedChapter.start == actualChapter.start
+                // MP4 chapter time bases are converted to Matroska nanoseconds.
+                // Treat the same bounded rounding tolerance used for duration and
+                // chapter ends as semantically identical instead of requiring an
+                // impossible bit-for-bit time representation across containers.
+                && timesMatch(expectedChapter.start, actualChapter.start)
                 && optionalTimesMatch(expectedChapter.end, actualChapter.end)
                 && chaptersMatch(expectedChapter.children, actualChapter.children)
         }
     }
 
-    private func optionalTimesMatch(_ expected: MediaTime?, _ actual: MediaTime?) -> Bool {
-        guard let expected, let actual else { return expected == nil && actual == nil }
+    private func timesMatch(_ expected: MediaTime, _ actual: MediaTime) -> Bool {
         let difference = actual.nanoseconds.subtractingReportingOverflow(expected.nanoseconds)
         return !difference.overflow && difference.partialValue.magnitude <= 100_000_000
+    }
+
+    private func optionalTimesMatch(_ expected: MediaTime?, _ actual: MediaTime?) -> Bool {
+        guard let expected, let actual else { return expected == nil && actual == nil }
+        return timesMatch(expected, actual)
     }
 
 }

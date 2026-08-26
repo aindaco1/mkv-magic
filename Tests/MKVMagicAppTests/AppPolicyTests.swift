@@ -2379,15 +2379,21 @@ final class AppPolicyTests: XCTestCase {
 
     @MainActor
     func testHistoryWindowUsesCompactNativeLayout() throws {
-        let controller = HistoryWindowController(records: [])
+        let record = try makeHistoryRecord(
+            id: UUID(uuidString: "12340BF5-62EE-4BDF-8736-917CE71B1D56")!,
+            createdAt: Date(timeIntervalSince1970: 1_800_000_000)
+        )
+        let controller = HistoryWindowController(records: [record])
         let window = try XCTUnwrap(controller.window)
         let contentView = try XCTUnwrap(window.contentView)
+        contentView.appearance = try XCTUnwrap(NSAppearance(named: .darkAqua))
+        contentView.layoutSubtreeIfNeeded()
 
         XCTAssertTrue(window.contentViewController is HistoryViewController)
-        XCTAssertEqual(contentView.frame.size.width, 760, accuracy: 1)
-        XCTAssertEqual(contentView.frame.size.height, 560, accuracy: 1)
-        XCTAssertEqual(window.minSize.width, 620)
-        XCTAssertEqual(window.minSize.height, 420)
+        XCTAssertEqual(contentView.frame.size.width, 820, accuracy: 1)
+        XCTAssertEqual(contentView.frame.size.height, 620, accuracy: 1)
+        XCTAssertEqual(window.minSize.width, 680)
+        XCTAssertEqual(window.minSize.height, 480)
         let table = try XCTUnwrap(
             descendants(in: contentView).compactMap { $0 as? NSTableView }.first
         )
@@ -2396,7 +2402,82 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertEqual(table.accessibilityLabel(), "Verified job history")
         XCTAssertEqual(detail.accessibilityLabel(), "Selected job progress")
+        XCTAssertEqual(detail.textColor, .labelColor)
+        XCTAssertEqual(detail.backgroundColor, .textBackgroundColor)
+        XCTAssertTrue(detail.string.contains("Verified output committed and reopened."))
+        XCTAssertGreaterThan(detail.enclosingScrollView?.frame.height ?? 0, 120)
         XCTAssertTrue(window.initialFirstResponder === table)
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_HISTORY_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            try captureWindow(window: window, content: contentView, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testBatchReviewExplainsReadyCleanAndBlockedFilesAtMinimumSize() throws {
+        let items = [
+            BatchReviewItemPresentation(
+                id: UUID(),
+                inputName: "One.srt",
+                outputName: "One — Clean.srt",
+                status: .ready,
+                detail: "Apply 3 deterministic suggestions"
+            ),
+            BatchReviewItemPresentation(
+                id: UUID(),
+                inputName: "Two.srt",
+                outputName: "—",
+                status: .noChanges,
+                detail: "No output needed"
+            ),
+            BatchReviewItemPresentation(
+                id: UUID(),
+                inputName: "Three.srt",
+                outputName: "—",
+                status: .blocked,
+                detail: "Could not parse this subtitle"
+            ),
+        ]
+        let controller = BatchReviewWindowController(
+            title: "Review Subtitle Batch",
+            explanation: "Each file is independently verified.",
+            items: items,
+            actionTitle: "Clean Ready Files",
+            offersSourceDisposition: false
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            BatchReviewPresentation.summary(items: items),
+            "1 ready • 1 no changes • 1 blocked"
+        )
+        let table = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first
+        )
+        XCTAssertEqual(table.numberOfRows, 3)
+        XCTAssertEqual(table.accessibilityLabel(), "Batch workflow review")
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Choose Output Folder…" })
+        XCTAssertTrue(
+            try XCTUnwrap(buttons(in: content).first { $0.title == "Clean Ready Files" })
+                .isEnabled
+        )
+        XCTAssertGreaterThan(table.enclosingScrollView?.frame.height ?? 0, 200)
+        XCTAssertGreaterThanOrEqual(
+            try XCTUnwrap(
+                table.tableColumns.first { $0.identifier.rawValue == "detail" }
+            ).width,
+            200
+        )
+        assertButtonsFit(buttons(in: content), in: content)
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_BATCH_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            try captureWindow(window: window, content: content, at: capturePath)
+        }
     }
 
     @MainActor
@@ -2592,12 +2673,27 @@ final class AppPolicyTests: XCTestCase {
         let progress = try XCTUnwrap(
             descendants(in: cancellableContent).compactMap { $0 as? NSProgressIndicator }.first
         )
+        cancellableContent.layoutSubtreeIfNeeded()
+        let progressFrame = progress.convert(progress.bounds, to: cancellableContent)
+        let cancelFrame = cancel.convert(cancel.bounds, to: cancellableContent)
 
         XCTAssertTrue(cancellableWindow.initialFirstResponder === cancel)
         XCTAssertEqual(cancel.keyEquivalent, "\u{1b}")
         XCTAssertTrue(cancel.accessibilityHelp()?.contains("original remains unchanged") == true)
         XCTAssertEqual(progress.accessibilityLabel(), "Verified output progress")
         XCTAssertTrue(progress.isIndeterminate)
+        XCTAssertGreaterThanOrEqual(progressFrame.minX, 23)
+        XCTAssertLessThanOrEqual(progressFrame.maxX, cancellableContent.bounds.maxX - 23)
+        XCTAssertLessThanOrEqual(cancelFrame.maxX, cancellableContent.bounds.maxX - 23)
+        if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_PROGRESS_CAPTURE"],
+            capturePath.hasPrefix("/")
+        {
+            try captureWindow(
+                window: cancellableWindow,
+                content: cancellableContent,
+                at: capturePath
+            )
+        }
         cancel.performClick(nil)
         XCTAssertTrue(didCancel)
         XCTAssertFalse(cancel.isEnabled)
@@ -3883,6 +3979,18 @@ final class AppPolicyTests: XCTestCase {
                 button.title == "Verify & Run" && !button.isEnabled
             }
         )
+        let sidebarLabels = descendants(in: controller.view).compactMap {
+            ($0 as? NSTextField)?.stringValue
+        }
+        XCTAssertTrue(sidebarLabels.contains("Activity"))
+        XCTAssertEqual(buttons(in: controller.view).count { $0.title == "Queue" }, 1)
+        XCTAssertFalse(
+            try XCTUnwrap(
+                descendants(in: controller.view).compactMap { $0 as? NSTextField }.first {
+                    $0.accessibilityLabel() == "Segment title" && $0.isEditable
+                }
+            ).isEnabled
+        )
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_MAIN_CAPTURE"],
             capturePath.hasPrefix("/")
         {
@@ -3929,6 +4037,71 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(model.assets.isEmpty)
         XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
         XCTAssertTrue(remove.accessibilityHelp()?.contains("without deleting") == true)
+    }
+
+    @MainActor
+    func testMainFileListSupportsBatchSelectionCleanupAndKeyboardRemoval() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-batch-list-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let urls = ["One.srt", "Two.srt"].map { root.appendingPathComponent($0) }
+        for url in urls {
+            try Data("1\n00:00:00,000 --> 00:00:01,000\nHello\n".utf8).write(to: url)
+        }
+        let model = AppModel(
+            initialAssets: urls.map {
+                MediaAsset(
+                    sourceURL: $0,
+                    container: "textSubtitle",
+                    tracks: [MediaTrack(id: 0, kind: .subtitle, codec: "subrip")]
+                )
+            }
+        )
+        let controller = MainViewController(model: model)
+        let window = NSWindow(contentViewController: controller)
+        defer { window.close() }
+        window.setContentSize(NSSize(width: 1_080, height: 680))
+        controller.view.layoutSubtreeIfNeeded()
+        let table = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTableView }.first {
+                $0.accessibilityLabel() == "Inspected media files"
+            }
+        )
+
+        XCTAssertTrue(table.allowsMultipleSelection)
+        table.selectRowIndexes(IndexSet(integersIn: 0..<2), byExtendingSelection: false)
+        controller.view.layoutSubtreeIfNeeded()
+        XCTAssertEqual(table.selectedRowIndexes.count, 2)
+        XCTAssertTrue(
+            try XCTUnwrap(buttons(in: controller.view).first { $0.title == "Clean Subtitle…" })
+                .isEnabled
+        )
+        let delete = try XCTUnwrap(
+            NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: 0,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: "\u{8}",
+                charactersIgnoringModifiers: "\u{8}",
+                isARepeat: false,
+                keyCode: 51
+            )
+        )
+        table.keyDown(with: delete)
+
+        XCTAssertTrue(model.assets.isEmpty)
+        for url in urls {
+            XCTAssertEqual(
+                try String(contentsOf: url, encoding: .utf8),
+                "1\n00:00:00,000 --> 00:00:01,000\nHello\n"
+            )
+        }
     }
 
     @MainActor

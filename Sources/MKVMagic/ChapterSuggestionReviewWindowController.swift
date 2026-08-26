@@ -166,10 +166,10 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 160),
-            selectionTools.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: selectionTools),
+            stack.contentWidthConstraint(for: footer),
         ])
         view = root
         updateSelectionState()

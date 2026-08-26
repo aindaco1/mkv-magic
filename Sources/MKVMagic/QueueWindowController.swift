@@ -181,11 +181,11 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            help.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: help),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
-            statusRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            controls.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: statusRow),
+            stack.contentWidthConstraint(for: controls),
         ])
         view = root
         refreshSelection()

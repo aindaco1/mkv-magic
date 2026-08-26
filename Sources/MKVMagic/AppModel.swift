@@ -3288,6 +3288,41 @@ final class AppModel {
     }
 
     private static func sanitizedFailureMessage(for error: Error) -> String {
+        if let verificationError = error as? MKVRemuxVerificationError {
+            return switch verificationError {
+            case .emptyOutput: "Verification failed: the temporary MKV was empty."
+            case .wrongContainer:
+                "Verification failed: the output container did not match Matroska."
+            case .wrongDuration:
+                "Verification failed: the output duration did not match the source."
+            case .tracksChanged:
+                "Verification failed: copied track structure did not match the source."
+            case .trackMetadataChanged:
+                "Verification failed: copied track metadata did not match the source."
+            case .chaptersChanged:
+                "Verification failed: chapter timing or titles did not match the source."
+            case .titleChanged:
+                "Verification failed: the segment title did not match the source."
+            case .unexpectedAttachment:
+                "Verification failed: the attachment set did not match the reviewed plan."
+            case .invalidSegmentIdentity:
+                "Verification failed: the new segment identity was invalid."
+            }
+        }
+        if let executionError = error as? MKVRemuxExecutionError {
+            return switch executionError {
+            case .unsupportedDestination:
+                "Execution stopped: the output container did not match Matroska."
+            case .unsafeSource, .staleSource:
+                "Execution stopped because the source changed or became unavailable."
+            case .toolFailed:
+                "Execution stopped: mkvmerge could not create the temporary MKV."
+            case .copiedTrackVerificationFailed:
+                "Verification failed: the packet-copy audit did not match the source."
+            case .committedOutputAuditFailed:
+                "Output committed, but its final reopen audit failed."
+            }
+        }
         if let executionError = error as? MatroskaMetadataExecutionError,
             case .committedOutputAuditFailed = executionError
         {

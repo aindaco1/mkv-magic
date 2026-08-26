@@ -169,9 +169,9 @@ final class TrackEditorViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            fields.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            flagGrid.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: fields),
+            stack.contentWidthConstraint(for: flagGrid),
+            stack.contentWidthConstraint(for: buttons),
         ])
         view = root
         populateFields()

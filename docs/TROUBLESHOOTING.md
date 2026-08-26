@@ -48,6 +48,22 @@ control. The most common prerequisites are:
   preserved, extracted, removed, or muxed unchanged, but image-to-text OCR is
   not in v1.
 
+## Process more than one file
+
+- Command-click or Shift-click rows in the inspected-media list to select a
+  batch. Press Delete to remove all selected rows from the list; source files
+  remain untouched.
+- **Clean Subtitle…** is available when every selected item is a standalone
+  SRT, ASS, or SSA file. Review the ready, no-change, and blocked results before
+  creating one independently verified output per ready file.
+- Open Workflows with multiple rows selected to compile a portable saved recipe
+  separately for each source. Workflows that require choosing an external
+  subtitle remain single-file operations because that pairing needs individual
+  review.
+- Batch output stays beside each source by default. The review sheet can choose
+  one alternate folder for every ready output. Existing destinations are never
+  overwritten and are reported as skipped.
+
 ## MKV Magic refuses an output
 
 - Reinspect the source and review the plan again. A file changed after review
@@ -127,7 +143,8 @@ Jellyfin/Plex playback checks.
 3. Choose **Export Privacy-Safe Report…** and save the JSON locally.
 4. Open the report yourself before sharing it.
 
-The report is bounded and omits filenames, paths, media/track/chapter titles,
+The report is bounded and includes a fixed privacy-safe failure category for
+failed jobs. It omits filenames, paths, media/track/chapter titles,
 subtitle text, custom workflow names, raw tool output, security bookmarks,
 credentials, persistent identifiers, and exact timestamps. It is never
 uploaded automatically.

@@ -5,6 +5,25 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.6 - 2026-08-25
+
+- Apply shared native spacing and content-width rules across every AppKit
+  workflow surface, including properly inset progress sheets, a wider Inspector,
+  readable History details in Dark Mode, and an uncluttered Activity section.
+- Add true multi-selection to the inspected-media list. Delete removes every
+  selected item from the app without touching source files, while standalone
+  SRT/ASS/SSA cleanup and portable saved workflows can review and process a
+  selected batch as independent, collision-safe jobs.
+- Keep batch outputs beside each source by default, allow one alternate output
+  folder, show per-file ready/no-change/blocked results, and keep each original
+  unless the workflow explicitly opts into Trash after verified success.
+- Export privacy-safe failure categories in support-report schema v2 and make
+  the selected History lifecycle visibly readable without exposing raw tool
+  output, paths, or media names in the report.
+- Accept the same bounded 100 ms cross-container time-base rounding for chapter
+  starts already allowed for duration and chapter ends, while retaining strict
+  packet-copy, track, metadata, title, attachment, and segment-identity audits.
+
 ## 0.1.5 - 2026-08-25
 
 - Add an editable first-run **Clean MKV** workflow modeled on the legacy Python

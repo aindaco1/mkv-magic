@@ -53,8 +53,8 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         let stack = NSStackView(views: [statusLabel, progress, buttons])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 16
-        stack.edgeInsets = NSEdgeInsets(top: 24, left: 24, bottom: 20, right: 24)
+        stack.spacing = MKVMagicLayoutMetrics.largeSectionGap
+        stack.edgeInsets = MKVMagicLayoutMetrics.windowInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         progress.translatesAutoresizingMaskIntoConstraints = false
         buttons.translatesAutoresizingMaskIntoConstraints = false
@@ -64,8 +64,8 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
             stack.trailingAnchor.constraint(equalTo: content.view.trailingAnchor),
             stack.topAnchor.constraint(equalTo: content.view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: content.view.bottomAnchor),
-            progress.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: progress),
+            stack.contentWidthConstraint(for: buttons),
         ])
         window.configureMKVMagicKeyboardNavigation(startingAt: cancelButton)
     }

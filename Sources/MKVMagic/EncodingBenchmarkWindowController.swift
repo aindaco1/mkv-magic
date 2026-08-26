@@ -181,11 +181,11 @@ final class EncodingBenchmarkViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            explanation.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            timing.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            resultsScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: explanation),
+            stack.contentWidthConstraint(for: timing),
+            stack.contentWidthConstraint(for: resultsScroll),
             resultsScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 190),
-            controls.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: controls),
         ])
         view = root
     }

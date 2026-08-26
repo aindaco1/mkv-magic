@@ -177,9 +177,9 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            tableScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: tableScroll),
             tableScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
         refreshStatus()

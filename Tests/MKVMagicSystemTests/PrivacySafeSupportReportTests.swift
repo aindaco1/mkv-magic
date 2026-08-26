@@ -86,12 +86,13 @@ final class PrivacySafeSupportReportTests: XCTestCase {
         XCTAssertEqual(job.result, .failed)
         XCTAssertEqual(job.lastActiveStage, .verifying)
         XCTAssertEqual(job.elapsedTime, .from1To10Minutes)
+        XCTAssertEqual(job.failureCategory, .verificationFailed)
         XCTAssertEqual(job.plan?.videoEncodeGenerations, 1)
         let firstInput = try XCTUnwrap(job.inputs.first)
         XCTAssertEqual(try XCTUnwrap(firstInput).codecs, [.aac, .av1])
         XCTAssertEqual(report.application.version, "unknown")
         XCTAssertEqual(report.application.build, "unknown")
-        XCTAssertTrue(text.contains("mkv-magic-privacy-safe-support-v1"))
+        XCTAssertTrue(text.contains("mkv-magic-privacy-safe-support-v2"))
         XCTAssertTrue(text.contains("av1"))
 
         for secret in [
@@ -159,6 +160,75 @@ final class PrivacySafeSupportReportTests: XCTestCase {
                 .unsafeDestination
             )
         }
+    }
+
+    func testReportExportsAStableFailureCategoryWithoutTheFailureMessage() throws {
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        var record = MediaJobRecord(
+            createdAt: created,
+            workflowID: BuiltInWorkflowCatalog.remuxToMKV,
+            workflowName: "Private remux name",
+            inputs: [MediaJobInput(displayName: "Private Movie.mp4")]
+        )
+        for state in [
+            MediaJobState.inspecting, .planned, .ready, .running, .verifying, .failed,
+        ] {
+            try record.transition(
+                to: state,
+                at: created,
+                message: state == .failed
+                    ? "Verification failed: chapter timing or titles did not match the source."
+                    : nil
+            )
+        }
+        let report = PrivacySafeSupportReport.make(
+            applicationVersion: "1.0",
+            applicationBuild: "1",
+            operatingSystem: "macOS test",
+            catalog: try ToolCatalog(
+                rootURL: toolRootURL,
+                architecture: .arm64,
+                verifyHashes: false
+            ),
+            records: [record]
+        )
+        let text = try XCTUnwrap(String(data: report.encoded(), encoding: .utf8))
+
+        XCTAssertEqual(report.history.jobs.first?.failureCategory, .chapterMismatch)
+        XCTAssertTrue(text.contains("chapterMismatch"))
+        XCTAssertFalse(text.contains("chapter timing or titles"))
+        XCTAssertFalse(text.contains("Private Movie.mp4"))
+    }
+
+    func testVersionOneReportWithoutFailureCategoryStillDecodes() throws {
+        let report = PrivacySafeSupportReport.make(
+            applicationVersion: "0.1.5",
+            applicationBuild: "1",
+            operatingSystem: "macOS test",
+            catalog: try ToolCatalog(
+                rootURL: toolRootURL,
+                architecture: .arm64,
+                verifyHashes: false
+            ),
+            records: [try sensitiveRecord()]
+        )
+        var document = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: report.encoded()) as? [String: Any]
+        )
+        document["schema"] = "mkv-magic-privacy-safe-support-v1"
+        var history = try XCTUnwrap(document["history"] as? [String: Any])
+        var jobs = try XCTUnwrap(history["jobs"] as? [[String: Any]])
+        jobs[0].removeValue(forKey: "failureCategory")
+        history["jobs"] = jobs
+        document["history"] = history
+
+        let decoded = try JSONDecoder().decode(
+            PrivacySafeSupportReport.self,
+            from: JSONSerialization.data(withJSONObject: document)
+        )
+
+        XCTAssertEqual(decoded.schema, "mkv-magic-privacy-safe-support-v1")
+        XCTAssertNil(decoded.history.jobs.first?.failureCategory)
     }
 
     func testReportBoundsHistoryToNewestFiveHundredJobs() throws {

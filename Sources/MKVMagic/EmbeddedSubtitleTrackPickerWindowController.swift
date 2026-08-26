@@ -242,9 +242,9 @@ final class EmbeddedSubtitleTrackPickerViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            selector.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            note.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: selector),
+            stack.contentWidthConstraint(for: note),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
     }

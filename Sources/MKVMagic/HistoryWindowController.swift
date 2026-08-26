@@ -11,8 +11,8 @@ final class HistoryWindowController: NSWindowController {
         let content = HistoryViewController(records: records, onExport: onExport)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic History"
-        window.setContentSize(NSSize(width: 760, height: 560))
-        window.minSize = NSSize(width: 620, height: 420)
+        window.setContentSize(NSSize(width: 820, height: 620))
+        window.minSize = NSSize(width: 680, height: 480)
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: content.preferredInitialFirstResponder
@@ -70,7 +70,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         help.textColor = .secondaryLabelColor
         let exportHelp = NSTextField(
             wrappingLabelWithString:
-                "The optional report contains coarse media facts, encode counts, lifecycle states, "
+                "The optional report contains coarse media facts, encode counts, lifecycle states, privacy-safe failure categories, "
                 + "and app/tool versions. It excludes filenames, paths, titles, subtitle text, "
                 + "custom workflow names, raw tool output, and exact timestamps."
         )
@@ -101,9 +101,13 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         tableScroll.hasVerticalScroller = true
         tableScroll.borderType = .bezelBorder
 
+        let detailHeading = NSTextField(labelWithString: "Selected Job Details")
+        detailHeading.font = .systemFont(ofSize: 13, weight: .semibold)
         detailText.isEditable = false
         detailText.isSelectable = true
-        detailText.drawsBackground = false
+        detailText.drawsBackground = true
+        detailText.backgroundColor = .textBackgroundColor
+        detailText.textColor = .labelColor
         detailText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
         detailText.textContainerInset = NSSize(width: 8, height: 8)
         detailText.string = HistoryPresentation.emptyDetail
@@ -132,12 +136,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         exportRow.alignment = .centerY
 
         let stack = NSStackView(views: [
-            heading, help, tableScroll, detailScroll, exportHelp, exportRow,
+            heading, help, tableScroll, detailHeading, detailScroll, exportHelp, exportRow,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 10
-        stack.edgeInsets = NSEdgeInsets(top: 20, left: 20, bottom: 20, right: 20)
+        stack.spacing = MKVMagicLayoutMetrics.controlGap
+        stack.edgeInsets = MKVMagicLayoutMetrics.compactWindowInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         tableScroll.translatesAutoresizingMaskIntoConstraints = false
         detailScroll.translatesAutoresizingMaskIntoConstraints = false
@@ -147,12 +151,12 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            tableScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: tableScroll),
             tableScroll.heightAnchor.constraint(equalToConstant: 160),
-            detailScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: detailScroll),
             detailScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 140),
-            exportHelp.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            exportRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: exportHelp),
+            stack.contentWidthConstraint(for: exportRow),
         ])
         view = root
 

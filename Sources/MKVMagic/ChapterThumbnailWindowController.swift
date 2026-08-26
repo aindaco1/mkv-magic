@@ -134,9 +134,9 @@ private final class ChapterThumbnailViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            cardRow.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: cardRow),
             cardRow.heightAnchor.constraint(greaterThanOrEqualToConstant: 175),
-            footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: footer),
         ])
         view = root
     }

@@ -817,12 +817,12 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            tableScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: tableScroll),
             tableScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
-            reviewScroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: reviewScroll),
             reviewScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
-            orderButtons.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: orderButtons),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
         if !options.isEmpty {

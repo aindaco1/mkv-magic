@@ -949,12 +949,12 @@ private final class CommonFormatJoinViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            targets.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: targets),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(
                 greaterThanOrEqualToConstant: videoControls.isEmpty ? 210 : 130
             ),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
     }

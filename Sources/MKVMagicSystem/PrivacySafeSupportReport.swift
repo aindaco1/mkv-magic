@@ -109,6 +109,62 @@ public enum SupportElapsedTimeBucket: String, Codable, CaseIterable, Hashable, S
     }
 }
 
+public enum SupportFailureCategory: String, Codable, CaseIterable, Hashable, Sendable {
+    case sourceChanged
+    case toolFailed
+    case emptyOutput
+    case containerMismatch
+    case durationMismatch
+    case trackMismatch
+    case trackMetadataMismatch
+    case chapterMismatch
+    case titleMismatch
+    case attachmentMismatch
+    case segmentIdentityMismatch
+    case packetCopyMismatch
+    case committedOutputAuditFailed
+    case verificationFailed
+    case executionFailed
+
+    init?(record: MediaJobRecord) {
+        guard record.state == .failed else { return nil }
+        let message = record.events.last?.message?.lowercased() ?? ""
+        if message.contains("source changed") {
+            self = .sourceChanged
+        } else if message.contains("tool could not") || message.contains("mkvmerge could not") {
+            self = .toolFailed
+        } else if message.contains("output was empty") || message.contains("mkv is empty") {
+            self = .emptyOutput
+        } else if message.contains("container did not match")
+            || message.contains("did not create a matroska")
+        {
+            self = .containerMismatch
+        } else if message.contains("duration did not match") {
+            self = .durationMismatch
+        } else if message.contains("track metadata did not match") {
+            self = .trackMetadataMismatch
+        } else if message.contains("track structure did not match") {
+            self = .trackMismatch
+        } else if message.contains("chapter timing or titles did not match") {
+            self = .chapterMismatch
+        } else if message.contains("segment title did not match") {
+            self = .titleMismatch
+        } else if message.contains("attachment set did not match") {
+            self = .attachmentMismatch
+        } else if message.contains("segment identity was invalid") {
+            self = .segmentIdentityMismatch
+        } else if message.contains("packet-copy audit did not match") {
+            self = .packetCopyMismatch
+        } else if message.contains("final reopen audit failed") {
+            self = .committedOutputAuditFailed
+        } else if record.events.dropLast().last?.state == .verifying {
+            self = .verificationFailed
+        } else {
+            self = .executionFailed
+        }
+    }
+}
+
 public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
     public let caseNumber: Int
     public let workflow: SupportWorkflowKind
@@ -118,6 +174,7 @@ public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
     public let lifecycle: [MediaJobState]
     public let inputs: [MediaJobInputFacts?]
     public let plan: MediaJobPlanFacts?
+    public let failureCategory: SupportFailureCategory?
 
     init(caseNumber: Int, record: MediaJobRecord) {
         self.caseNumber = caseNumber
@@ -133,6 +190,7 @@ public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
         lifecycle = record.events.map(\.state)
         inputs = record.inputs.map(\.privacySafeFacts)
         plan = record.privacySafePlan
+        failureCategory = SupportFailureCategory(record: record)
     }
 }
 
@@ -144,7 +202,7 @@ public struct PrivacySafeSupportHistory: Codable, Hashable, Sendable {
 }
 
 public struct PrivacySafeSupportReport: Codable, Hashable, Sendable {
-    public static let currentSchema = "mkv-magic-privacy-safe-support-v1"
+    public static let currentSchema = "mkv-magic-privacy-safe-support-v2"
     public static let maximumIncludedJobs = 500
 
     public let schema: String

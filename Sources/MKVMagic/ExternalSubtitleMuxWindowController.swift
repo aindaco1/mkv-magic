@@ -222,11 +222,11 @@ final class ExternalSubtitleMuxViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            files.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            divider.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fields.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            warningLabel.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: files),
+            stack.contentWidthConstraint(for: divider),
+            stack.contentWidthConstraint(for: fields),
+            stack.contentWidthConstraint(for: warningLabel),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
     }

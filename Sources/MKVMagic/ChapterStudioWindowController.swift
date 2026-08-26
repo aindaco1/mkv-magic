@@ -213,9 +213,9 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            content.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: content),
             content.heightAnchor.constraint(greaterThanOrEqualToConstant: 440),
-            footer.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: footer),
         ])
         view = root
         reloadOutline(
@@ -321,10 +321,10 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
             stack.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            firstTools.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            secondTools.widthAnchor.constraint(equalTo: stack.widthAnchor),
-            fileTools.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
+            stack.contentWidthConstraint(for: firstTools),
+            stack.contentWidthConstraint(for: secondTools),
+            stack.contentWidthConstraint(for: fileTools),
         ])
         return container
     }
@@ -402,7 +402,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             stack.leadingAnchor.constraint(equalTo: container.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: container.trailingAnchor),
             stack.topAnchor.constraint(equalTo: container.topAnchor),
-            grid.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: grid),
         ])
         setChapterControlsEnabled(false)
         setEditionControlsEnabled(false)

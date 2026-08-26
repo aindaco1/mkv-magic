@@ -565,6 +565,14 @@ reintroduced. This is a source-level and automated-UI pass, not observed
 VoiceOver, localization, or real-failure acceptance. See
 [docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md](docs/releases/M8_ACTIONABLE_ERROR_LANGUAGE_PASS.md).
 
+The batch UX and diagnostics continuation applies one shared inset/content-width
+contract across the native windows, adds reviewed multi-file subtitle cleanup
+and saved-workflow admission, makes Dark Mode History details visible, and
+exports fixed privacy-safe failure categories. Remux verification now tolerates
+only bounded chapter time-base rounding while preserving its strict packet-copy
+audits. See
+[docs/releases/M8_BATCH_UX_DIAGNOSTICS_SLICE.md](docs/releases/M8_BATCH_UX_DIAGNOSTICS_SLICE.md).
+
 The accessible-failure continuation routes dynamic AppKit failures through one
 presenter that updates visible text, posts a native value-change notification,
 and returns focus to an enabled recovery control when the failure has one.

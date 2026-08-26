@@ -100,10 +100,10 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
             stack.trailingAnchor.constraint(equalTo: content.view.trailingAnchor),
             stack.topAnchor.constraint(equalTo: content.view.topAnchor),
             stack.bottomAnchor.constraint(equalTo: content.view.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: scroll),
             scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 230),
             outcomeStack.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
+            stack.contentWidthConstraint(for: buttons),
         ])
         panel.configureMKVMagicKeyboardNavigation(startingAt: primary)
     }
