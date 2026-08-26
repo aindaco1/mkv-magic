@@ -464,13 +464,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await EmbeddedSubtitleCleanupExecutor(
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -486,13 +480,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await ChapterEditExecutor(
             mkvextractURL: try catalog.url(for: .mkvextract),
             mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -517,13 +505,7 @@ final class AppModel {
         state = .executing("Reading exact nested chapters for the join review…")
         didChange?()
         do {
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let executor = ChapterEditExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -613,13 +595,7 @@ final class AppModel {
                 throw LosslessJoinExecutionError.requiresReview(currentReport.disposition)
             }
 
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let chapterExecutor = ChapterEditExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -710,13 +686,7 @@ final class AppModel {
                 aacAvailable: candidate.capabilities.aac == .verified,
                 availableAudioPresets: Set(candidate.capabilities.availableAudioPresets)
             )
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let chapterExecutor = ChapterEditExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -795,13 +765,7 @@ final class AppModel {
                     "Creating one private verified normalized stream bundle before final assembly."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let output = try await CommonFormatJoinExecutor(
                 ffmpegURL: try catalog.url(for: .ffmpeg),
                 ffprobeURL: try catalog.url(for: .ffprobe),
@@ -896,13 +860,7 @@ final class AppModel {
                     "Appending complete MKV files to one temporary output with reviewed chapters."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let executor = LosslessJoinExecutor(
                 ffmpegURL: try catalog.url(for: .ffmpeg),
                 ffprobeURL: try catalog.url(for: .ffprobe),
@@ -960,13 +918,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try MKVRemuxExecutor(
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             ffmpegURL: try catalog.url(for: .ffmpeg),
@@ -999,13 +951,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await MatroskaTextSubtitleExtractionExecutor(
             mkvextractURL: try catalog.url(for: .mkvextract),
             runner: runner,
@@ -1021,13 +967,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await MatroskaAttachmentExtractionExecutor(
             mkvextractURL: try catalog.url(for: .mkvextract),
             runner: runner,
@@ -1070,13 +1010,7 @@ final class AppModel {
                     "Repeating the reviewed attachment extraction with bundled mkvextract in a private workspace."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let result = try await MatroskaAttachmentExtractionExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
@@ -1126,13 +1060,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await MatroskaAttachmentRemovalExecutor(
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             runner: runner,
@@ -1177,13 +1105,7 @@ final class AppModel {
                     "Creating one temporary MKV with only the reviewed retained attachments."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let result = try await MatroskaAttachmentRemovalExecutor(
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 runner: runner,
@@ -1231,13 +1153,7 @@ final class AppModel {
         defer {
             if accessed { source.sourceURL.stopAccessingSecurityScopedResource() }
         }
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
         return try await MatroskaTagExecutor(
             mkvextractURL: try catalog.url(for: .mkvextract),
             mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -1282,13 +1198,7 @@ final class AppModel {
                     "Repeating the reviewed tag extraction with bundled mkvextract in a private workspace."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let result = try await MatroskaTagExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -1367,13 +1277,7 @@ final class AppModel {
                     "Clearing all tags with bundled mkvpropedit on one temporary MKV clone."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let result = try await MatroskaTagExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 mkvpropeditURL: try catalog.url(for: .mkvpropedit),
@@ -1452,13 +1356,7 @@ final class AppModel {
                     "Repeating the reviewed subtitle extraction with bundled mkvextract in a private workspace."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let result = try await MatroskaTextSubtitleExtractionExecutor(
                 mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
@@ -1614,13 +1512,7 @@ final class AppModel {
                 runningMessage: "Creating one temporary MKV with the reviewed stream order."
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let output = try await MKVRemuxExecutor(
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 ffmpegURL: try catalog.url(for: .ffmpeg),
@@ -1756,13 +1648,7 @@ final class AppModel {
                 runningMessage: runningMessage
             )
             historyExecution = execution
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let output: MediaAsset
             switch preview {
             case .fast(let fast):
@@ -1884,13 +1770,7 @@ final class AppModel {
         )
         didChange?()
         do {
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let preview: TrimExecutionPreview
             switch request.mode {
             case .fast:
@@ -2485,13 +2365,7 @@ final class AppModel {
             )
             historyExecution = execution
 
-            let catalog = try makeToolCatalog()
-            let runner = FoundationCommandRunner()
-            let inspector = UnifiedMediaInspector(
-                ffprobeURL: try catalog.url(for: .ffprobe),
-                mkvmergeURL: try catalog.url(for: .mkvmerge),
-                runner: runner
-            )
+            let (catalog, runner, inspector) = try makeToolExecutionContext()
             let output: MediaAsset
             switch edit {
             case .metadata(let metadataEdit, _, _):
@@ -3061,13 +2935,7 @@ final class AppModel {
             return .needsReview
         }
 
-        let catalog = try makeToolCatalog()
-        let runner = FoundationCommandRunner()
-        let inspector = UnifiedMediaInspector(
-            ffprobeURL: try catalog.url(for: .ffprobe),
-            mkvmergeURL: try catalog.url(for: .mkvmerge),
-            runner: runner
-        )
+        let (_, _, inspector) = try makeToolExecutionContext()
         let asset = try await inspector.inspect(sourceURL)
         let resolvedExternalSubtitle:
             (
@@ -3459,6 +3327,24 @@ final class AppModel {
 
     private func makeToolCatalog() throws -> ToolCatalog {
         try ToolCatalog(rootURL: resolveToolRootURL())
+    }
+
+    private func makeToolExecutionContext() throws -> (
+        catalog: ToolCatalog,
+        runner: FoundationCommandRunner,
+        inspector: UnifiedMediaInspector<FoundationCommandRunner>
+    ) {
+        let catalog = try makeToolCatalog()
+        let runner = FoundationCommandRunner()
+        return (
+            catalog,
+            runner,
+            UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+        )
     }
 
     private func encodingBenchmarkEnvironment(

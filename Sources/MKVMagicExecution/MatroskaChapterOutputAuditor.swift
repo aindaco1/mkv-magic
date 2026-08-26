@@ -37,7 +37,7 @@ struct MatroskaChapterDocumentExtractor<Runner: CommandRunning>: Sendable {
             guard result.exitCode == 0 else {
                 throw MatroskaChapterOutputAuditError.toolFailed(
                     exitCode: result.exitCode,
-                    message: conciseMessage(result)
+                    message: result.conciseFailureMessage
                 )
             }
             let codec = MatroskaChapterXMLCodec()
@@ -74,13 +74,6 @@ struct MatroskaChapterDocumentExtractor<Runner: CommandRunning>: Sendable {
         )
     }
 
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
-    }
 }
 
 /// Re-extracts chapters from a completed Matroska file and compares canonical

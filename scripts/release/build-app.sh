@@ -9,6 +9,7 @@ build_number="${MKV_MAGIC_BUILD_NUMBER:-1}"
 bundle_identifier="${MKV_MAGIC_BUNDLE_IDENTIFIER:-com.dustwave.mkvmagic}"
 tool_source_root="${MKV_MAGIC_TOOL_SOURCE_ROOT:-}"
 require_tools="${MKV_MAGIC_REQUIRE_TOOLS:-0}"
+icon_path="$repo_root/Assets/AppIcon/MKVMagic.icns"
 
 if [[ "$release_root" != /* || "$release_root" == / || -L "$release_root" ]]; then
     echo "unsafe release root: $release_root" >&2
@@ -40,6 +41,7 @@ if [[ "$require_tools" != 0 && "$require_tools" != 1 ]]; then
     echo "MKV_MAGIC_REQUIRE_TOOLS must be 0 or 1" >&2
     exit 64
 fi
+"$repo_root/scripts/ci/check-app-icon.sh" "$icon_path"
 
 mkdir -p "$(dirname "$release_root")"
 mkdir "$release_root"
@@ -66,6 +68,7 @@ install -m 0755 "$binary_path" "$app_path/Contents/MacOS/MKVMagic"
 ditto --norsrc --noextattr "$sparkle_framework" \
     "$app_path/Contents/Frameworks/Sparkle.framework"
 install -m 0644 Sources/MKVMagic/Info.plist "$app_path/Contents/Info.plist"
+install -m 0644 "$icon_path" "$app_path/Contents/Resources/MKVMagic.icns"
 install -m 0644 THIRD_PARTY_NOTICES.md \
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
 install -m 0644 docs/SUPPORTED_SYSTEMS.md \

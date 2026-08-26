@@ -224,7 +224,7 @@ public struct JoinFinalAssemblyExecutor<
                     guard result.exitCode == 0 else {
                         throw JoinFinalAssemblyExecutionError.toolFailed(
                             exitCode: result.exitCode,
-                            message: conciseMessage(result)
+                            message: result.conciseFailureMessage
                         )
                     }
                 }
@@ -367,11 +367,4 @@ public struct JoinFinalAssemblyExecutor<
         )
     }
 
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
-    }
 }

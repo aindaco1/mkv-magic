@@ -6,6 +6,8 @@
     <string>MKVMagic</string>
     <key>CFBundleDisplayName</key>
     <string>MKV Magic</string>
+    <key>CFBundleIconFile</key>
+    <string>MKVMagic.icns</string>
     <key>CFBundleDocumentTypes</key>
     <array>
         <dict>

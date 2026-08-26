@@ -40,6 +40,27 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertGreaterThan(result.duration, 0)
     }
 
+    func testConciseFailureMessagePrefersStderrFallsBackAndStaysBounded() {
+        XCTAssertEqual(
+            commandResult(stdout: " stdout detail \n", stderr: " stderr detail \n")
+                .conciseFailureMessage,
+            "stderr detail"
+        )
+        XCTAssertEqual(
+            commandResult(stdout: " stdout detail \n", stderr: " \n")
+                .conciseFailureMessage,
+            "stdout detail"
+        )
+        XCTAssertEqual(
+            commandResult(stdout: "", stderr: "").conciseFailureMessage,
+            "Unknown tool error")
+        XCTAssertEqual(
+            commandResult(stdout: "", stderr: String(repeating: "x", count: 300))
+                .conciseFailureMessage.count,
+            240
+        )
+    }
+
     func testRetainsBoundedTailAndReportsTruncation() async throws {
         let output = String(repeating: "a", count: 1_200) + String(repeating: "z", count: 1_200)
         let result = try await FoundationCommandRunner().run(
@@ -362,4 +383,12 @@ final class CommandRunnerTests: XCTestCase {
             XCTAssertEqual(error as? CommandRunnerError, .unsafeExecutable)
         }
     }
+}
+
+private func commandResult(stdout: String, stderr: String) -> CommandResult {
+    CommandResult(
+        exitCode: 1,
+        standardOutput: CommandOutput(data: Data(stdout.utf8), wasTruncated: false),
+        standardError: CommandOutput(data: Data(stderr.utf8), wasTruncated: false)
+    )
 }

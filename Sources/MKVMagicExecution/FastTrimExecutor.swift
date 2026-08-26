@@ -308,17 +308,9 @@ public struct FastTrimExecutor<Runner: CommandRunning, Inspector: MediaInspectin
             throw FastTrimExecutionError.toolFailed(
                 tool: tool,
                 exitCode: result.exitCode,
-                message: conciseMessage(result)
+                message: result.conciseFailureMessage
             )
         }
-    }
-
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
     }
 
     private func digest(_ data: Data) -> Data {

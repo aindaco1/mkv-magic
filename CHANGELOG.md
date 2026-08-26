@@ -5,6 +5,17 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.8 - 2026-08-26
+
+- Add a custom black-and-white Nested Container app icon, install it in every
+  assembled macOS bundle, and verify its complete 16 px through 1024 px ICNS
+  representation set during source and package validation.
+- Recognize MKVToolNix 101 track-statistics tags when they are flattened into
+  per-track identification properties, and use exact extracted Matroska XML as
+  the authority when reviewing and verifying removal.
+- Consolidate repeated bundled-tool construction and bounded tool-error
+  formatting behind shared helpers without changing any workflow behavior.
+
 ## 0.1.7 - 2026-08-26
 
 - Let a lossless join continue when `mkvmerge` completes with warnings, while

@@ -100,7 +100,7 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
             throw LosslessJoinExecutionError.toolFailed(
                 tool: "mkvmerge",
                 exitCode: result.exitCode,
-                message: Self.conciseMessage(result)
+                message: result.conciseFailureMessage
             )
         }
     }
@@ -175,13 +175,6 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
         return arguments
     }
 
-    private static func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
-    }
 }
 
 public struct LosslessJoinExecutor<

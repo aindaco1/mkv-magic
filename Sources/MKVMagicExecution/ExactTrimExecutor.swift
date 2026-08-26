@@ -369,7 +369,7 @@ public struct ExactTrimExecutor<
             throw ExactTrimExecutionError.toolFailed(
                 tool: tool,
                 exitCode: result.exitCode,
-                message: conciseMessage(result)
+                message: result.conciseFailureMessage
             )
         }
     }
@@ -443,14 +443,6 @@ public struct ExactTrimExecutor<
         case .packetPayloadChanged:
             return "a copied packet payload changed"
         }
-    }
-
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
     }
 
     private func digest(_ data: Data) -> Data {

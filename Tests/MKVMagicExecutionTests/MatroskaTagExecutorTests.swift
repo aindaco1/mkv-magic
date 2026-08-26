@@ -166,6 +166,26 @@ final class MatroskaTagExecutorTests: XCTestCase {
         )
     }
 
+    func testPreviewUsesExactXMLWhenInspectionUndercountsFlattenedTrackTags() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.root) }
+        let undercounted = tagAssetCopy(
+            fixture.source,
+            sourceURL: fixture.source.sourceURL,
+            trackTagCount: 0
+        )
+        let runner = TagToolRunner(originalXML: fixture.tagXML)
+        let executor = makeExecutor(
+            runner: runner,
+            source: undercounted,
+            output: fixture.output
+        )
+
+        let preview = try await executor.preview(source: undercounted)
+
+        XCTAssertEqual(preview.document.counts, MatroskaTagCounts(global: 1, track: 1))
+    }
+
     func testStaleInspectionFailsBeforeTagExtraction() async throws {
         let fixture = try makeFixture()
         defer { try? FileManager.default.removeItem(at: fixture.root) }
@@ -383,7 +403,8 @@ private func tagAssetCopy(
     _ asset: MediaAsset,
     sourceURL: URL,
     metadata: [String: String]? = nil,
-    globalTagCount: Int? = nil
+    globalTagCount: Int? = nil,
+    trackTagCount: Int? = nil
 ) -> MediaAsset {
     MediaAsset(
         id: asset.id,
@@ -399,7 +420,7 @@ private func tagAssetCopy(
         metadata: metadata ?? asset.metadata,
         chapterEntryCount: asset.chapterEntryCount,
         globalTagCount: globalTagCount ?? asset.globalTagCount,
-        trackTagCount: asset.trackTagCount,
+        trackTagCount: trackTagCount ?? asset.trackTagCount,
         segmentUID: asset.segmentUID,
         muxingApplication: asset.muxingApplication,
         writingApplication: asset.writingApplication,

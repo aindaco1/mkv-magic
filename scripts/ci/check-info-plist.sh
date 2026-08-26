@@ -23,6 +23,7 @@ assert_value() {
 
 assert_value CFBundleDisplayName "MKV Magic"
 assert_value CFBundleExecutable MKVMagic
+assert_value CFBundleIconFile MKVMagic.icns
 assert_value CFBundleIdentifier "$expected_bundle_identifier"
 assert_value CFBundlePackageType APPL
 assert_value LSMinimumSystemVersion 13.0

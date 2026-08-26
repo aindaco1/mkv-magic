@@ -239,14 +239,9 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
             )
         )
         guard result.exitCode == 0 else {
-            let combined =
-                [result.standardError.text, result.standardOutput.text]
-                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                ?? "Unknown tool error"
             throw ExternalSubtitleMuxError.toolFailed(
                 exitCode: result.exitCode,
-                message: String(
-                    combined.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+                message: result.conciseFailureMessage
             )
         }
     }

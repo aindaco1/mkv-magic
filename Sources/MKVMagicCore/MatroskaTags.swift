@@ -43,7 +43,19 @@ public enum MatroskaTagPolicy {
         else {
             throw MatroskaTagPolicyError.unavailableCounts
         }
-        let counts = MatroskaTagCounts(global: global, track: track)
+        // MKVToolNix 101 may flatten generated track-statistics Tag elements
+        // into ffprobe's per-track metadata while reporting no top-level
+        // `track_tags` entries. Recognize that narrow signature for offering and
+        // compiling tag removal, while exact mkvextract XML remains authoritative.
+        let flattenedStatisticsCount = asset.tracks.count { track in
+            track.tags.keys.contains { key in
+                key.lowercased().hasPrefix("_statistics_")
+            }
+        }
+        let counts = MatroskaTagCounts(
+            global: global,
+            track: max(track, flattenedStatisticsCount)
+        )
         guard counts.total > 0 else { throw MatroskaTagPolicyError.noTags }
         return counts
     }

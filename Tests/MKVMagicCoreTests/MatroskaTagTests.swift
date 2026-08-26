@@ -24,6 +24,35 @@ final class MatroskaTagTests: XCTestCase {
         }
     }
 
+    func testPolicyRecognizesMKVToolNix101FlattenedTrackStatistics() throws {
+        let statistics = [
+            "BPS": "548260",
+            "_STATISTICS_WRITING_APP": "mkvmerge v101.0",
+            "_STATISTICS_TAGS": "BPS DURATION NUMBER_OF_FRAMES NUMBER_OF_BYTES",
+        ]
+        let supported = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.mkv"),
+            container: "matroska,webm",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "av1", tags: statistics),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", tags: statistics),
+                MediaTrack(
+                    id: 2,
+                    kind: .subtitle,
+                    codec: "subrip",
+                    tags: ["language": "eng"]
+                ),
+            ],
+            globalTagCount: 1,
+            trackTagCount: 0
+        )
+
+        XCTAssertEqual(
+            try MatroskaTagPolicy.counts(in: supported),
+            MatroskaTagCounts(global: 1, track: 2)
+        )
+    }
+
     func testTagDocumentPreservesExactBytesAndClassifiesTrackTargets() throws {
         let data = tagXML(globalValue: "Film", trackValue: "Lead")
         let document = try MatroskaTagXMLDocument(

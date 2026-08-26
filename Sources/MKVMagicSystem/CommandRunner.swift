@@ -70,6 +70,17 @@ public struct CommandResult: Sendable, Equatable {
         self.standardError = standardError
         self.duration = duration
     }
+
+    /// A bounded, normalized diagnostic suitable for user-facing tool failures.
+    /// stderr wins when it contains a message; otherwise stdout is used because
+    /// several bundled media tools report failures there.
+    public var conciseFailureMessage: String {
+        let message =
+            [standardError.text, standardOutput.text]
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            ?? "Unknown tool error"
+        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+    }
 }
 
 public enum CommandRunnerError: Error, Equatable, Sendable {

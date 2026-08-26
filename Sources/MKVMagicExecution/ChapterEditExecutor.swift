@@ -280,14 +280,10 @@ public struct ChapterEditExecutor<Runner: CommandRunning, Inspector: MediaInspec
             )
         )
         guard result.exitCode == 0 else {
-            let message =
-                [result.standardError.text, result.standardOutput.text]
-                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                ?? "Unknown tool error"
             throw ChapterEditExecutionError.toolFailed(
                 tool: tool,
                 exitCode: result.exitCode,
-                message: String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
+                message: result.conciseFailureMessage
             )
         }
     }

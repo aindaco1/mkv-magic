@@ -17,6 +17,7 @@ framework="$app_path/Contents/Frameworks/Sparkle.framework"
 required_files=(
     "$executable"
     "$app_path/Contents/Info.plist"
+    "$app_path/Contents/Resources/MKVMagic.icns"
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
     "$app_path/Contents/Resources/SUPPORTED_SYSTEMS.md"
     "$app_path/Contents/Resources/TROUBLESHOOTING.md"
@@ -35,6 +36,8 @@ if [[ ! -x "$executable" || ! -d "$framework" || -L "$framework" ]]; then
 fi
 
 "$repo_root/scripts/ci/check-info-plist.sh" "$app_path/Contents/Info.plist"
+"$repo_root/scripts/ci/check-app-icon.sh" \
+    "$app_path/Contents/Resources/MKVMagic.icns"
 architectures="$(lipo -archs "$executable")"
 if [[ "$architectures" != "x86_64 arm64" && "$architectures" != "arm64 x86_64" ]]; then
     echo "expected Universal app executable, found: $architectures" >&2

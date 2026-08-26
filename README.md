@@ -759,6 +759,10 @@ Build and launch the Swift executable during development:
 swift run MKVMagic
 ```
 
+The production app icon source, standard macOS iconset, and compiled ICNS live
+in `Assets/AppIcon`. The release builder copies `MKVMagic.icns` into the app
+bundle and `Info.plist` declares it through `CFBundleIconFile`.
+
 Media tools are resolved only from an explicit development tool root or from
 the packaged app. The runtime never silently uses `/opt/homebrew`,
 `/usr/local`, or the process `PATH`.

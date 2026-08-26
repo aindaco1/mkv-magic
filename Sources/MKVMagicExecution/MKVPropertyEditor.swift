@@ -198,14 +198,9 @@ public struct MKVPropertyEditor<Runner: CommandRunning>: Sendable {
             !result.standardOutput.wasTruncated,
             !result.standardError.wasTruncated
         else {
-            let combined =
-                [result.standardError.text, result.standardOutput.text]
-                .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                ?? "Unknown tool error"
-            let message = combined.trimmingCharacters(in: .whitespacesAndNewlines)
             throw MKVPropertyEditError.toolFailed(
                 exitCode: result.exitCode,
-                message: String(message.prefix(240))
+                message: result.conciseFailureMessage
             )
         }
     }

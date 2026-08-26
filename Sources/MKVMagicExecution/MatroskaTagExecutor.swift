@@ -65,7 +65,7 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
 
     func extract(
         from sourceURL: URL,
-        expectedCounts: MatroskaTagCounts
+        expectedCounts: MatroskaTagCounts? = nil
     ) async throws -> MatroskaTagXMLDocument {
         try await PrivateTemporaryDirectory.withDirectory(prefix: "mkv-magic-tag-extract") {
             directory in
@@ -81,7 +81,7 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
     func extract(
         from sourceURL: URL,
         to outputURL: URL,
-        expectedCounts: MatroskaTagCounts
+        expectedCounts: MatroskaTagCounts? = nil
     ) async throws -> MatroskaTagXMLDocument {
         let result = try await runner.run(
             CommandRequest(
@@ -104,11 +104,11 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
             throw MatroskaTagExecutionError.toolFailed(
                 tool: "mkvextract",
                 exitCode: result.exitCode,
-                message: conciseMessage(result)
+                message: result.conciseFailureMessage
             )
         }
         guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            guard expectedCounts.total == 0 else {
+            guard expectedCounts?.total ?? 0 == 0 else {
                 throw MatroskaTagExecutionError.unsafeExtractedDocument
             }
             return try emptyDocument()
@@ -126,7 +126,7 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
             throw MatroskaTagExecutionError.unsafeExtractedDocument
         }
         guard size > 0 else {
-            guard expectedCounts.total == 0 else {
+            guard expectedCounts?.total ?? 0 == 0 else {
                 throw MatroskaTagExecutionError.unsafeExtractedDocument
             }
             return try emptyDocument()
@@ -155,14 +155,6 @@ private struct MatroskaTagDocumentExtractor<Runner: CommandRunning>: Sendable {
             data: Data(contentsOf: outputURL, options: .mappedIfSafe),
             expectedCounts: expectedCounts
         )
-    }
-
-    private func conciseMessage(_ result: CommandResult) -> String {
-        let message =
-            [result.standardError.text, result.standardOutput.text]
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            ?? "Unknown tool error"
-        return String(message.trimmingCharacters(in: .whitespacesAndNewlines).prefix(240))
     }
 
     private func emptyDocument() throws -> MatroskaTagXMLDocument {
@@ -198,11 +190,8 @@ public struct MatroskaTagExecutor<Runner: CommandRunning, Inspector: MediaInspec
         else {
             throw MatroskaTagExecutionError.staleSource
         }
-        let counts = try MatroskaTagPolicy.counts(in: current)
-        let document = try await extractor.extract(
-            from: current.sourceURL,
-            expectedCounts: counts
-        )
+        let document = try await extractor.extract(from: current.sourceURL)
+        guard document.counts.total > 0 else { throw MatroskaTagPolicyError.noTags }
         guard (try? MediaSourceRevision.read(source.sourceURL)) == revision else {
             throw MatroskaTagExecutionError.staleSource
         }
@@ -321,8 +310,7 @@ public struct MatroskaTagExecutor<Runner: CommandRunning, Inspector: MediaInspec
         else {
             throw MatroskaTagExecutionError.staleSource
         }
-        let counts = try MatroskaTagPolicy.counts(in: current)
-        let document = try await extractor.extract(from: current.sourceURL, expectedCounts: counts)
+        let document = try await extractor.extract(from: current.sourceURL)
         try requireExact(document, preview: preview)
         guard (try? MediaSourceRevision.read(current.sourceURL)) == preview.sourceRevision else {
             throw MatroskaTagExecutionError.staleSource

@@ -50,3 +50,6 @@ fi
 "$repo_root/scripts/ci/check-helper-entitlements.sh" \
     "$repo_root/Configuration/Helper.entitlements"
 "$repo_root/scripts/ci/check-info-plist.sh"
+"$repo_root/scripts/ci/check-app-icon.sh" \
+    "$repo_root/Assets/AppIcon/MKVMagic.icns" \
+    "$repo_root/Assets/AppIcon/MKVMagic-master-1024.png"
