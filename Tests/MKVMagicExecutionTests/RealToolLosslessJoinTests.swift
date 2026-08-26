@@ -227,4 +227,124 @@ final class RealToolLosslessJoinTests: XCTestCase {
             sourceDigests
         )
     }
+
+    func testBundledToolsJoinThreeH264AACSubRipMKVs() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("Bundled H.264 VideoToolbox did not verify on this Mac")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-lossless-three-lane-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let bytesPerFrame = 80 * 64 * 3 / 2
+        var sourceURLs = [URL]()
+        for (index, fill) in [UInt8(16), UInt8(32), UInt8(48)].enumerated() {
+            let rawVideo = root.appendingPathComponent("part-\(index + 1).yuv")
+            let rawAudio = root.appendingPathComponent("part-\(index + 1).pcm")
+            let subtitle = root.appendingPathComponent("part-\(index + 1).srt")
+            let source = root.appendingPathComponent("part-\(index + 1).mkv")
+            try Data(repeating: fill, count: bytesPerFrame * 24).write(to: rawVideo)
+            try Data(repeating: fill, count: 48_000 * 2 * 2).write(to: rawAudio)
+            try Data(
+                "1\n00:00:00,050 --> 00:00:00,850\nPart \(index + 1)\n".utf8
+            ).write(to: subtitle)
+            let encode = try await runner.run(
+                CommandRequest(
+                    executableURL: ffmpegURL,
+                    arguments: [
+                        "-hide_banner", "-loglevel", "error",
+                        "-f", "rawvideo", "-pixel_format", "yuv420p",
+                        "-video_size", "80x64", "-framerate", "24",
+                        "-i", rawVideo.path,
+                        "-f", "s16le", "-ar", "48000", "-ac", "2",
+                        "-i", rawAudio.path,
+                        "-f", "srt", "-i", subtitle.path,
+                        "-map", "0:v:0", "-map", "1:a:0", "-map", "2:s:0",
+                        "-frames:v", "24", "-t", "1",
+                        "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                        "-pix_fmt", "yuv420p", "-b:v", "500k",
+                        "-c:a", "aac", "-b:a", "128k", "-c:s", "srt",
+                        "-metadata", "title=Three Lane Fixture",
+                        "-metadata:s:a:0", "language=eng",
+                        "-metadata:s:s:0", "language=eng",
+                        source.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+            sourceURLs.append(source)
+        }
+
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        var sources = [MediaAsset]()
+        for sourceURL in sourceURLs {
+            try await sources.append(inspector.inspect(sourceURL))
+        }
+        XCTAssertEqual(
+            sources.map { $0.tracks.map(\.kind) },
+            [
+                [.video, .audio, .subtitle],
+                [.video, .audio, .subtitle],
+                [.video, .audio, .subtitle],
+            ])
+        let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+        XCTAssertEqual(
+            try JoinCompatibilityAnalyzer().analyze(sources: sources, mapping: mapping)
+                .disposition,
+            .losslessCandidate
+        )
+        let chapters = try JoinedChapterComposer().compose(
+            sources.enumerated().map { index, source in
+                let duration = try XCTUnwrap(source.duration)
+                return JoinedChapterSource(
+                    title: "Part \(index + 1)",
+                    duration: duration,
+                    retainedStart: .zero,
+                    retainedEnd: duration,
+                    selectedEditionChapters: []
+                )
+            }
+        )
+        let executor = LosslessJoinExecutor(
+            ffmpegURL: ffmpegURL,
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            runner: runner,
+            inspector: inspector
+        )
+        let preview = try executor.preview(
+            sources: sources,
+            mapping: mapping,
+            chapters: chapters
+        )
+
+        let output = try await executor.execute(
+            preview: preview,
+            destinationURL: root.appendingPathComponent("joined-three-lane.mkv")
+        )
+
+        XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+        XCTAssertEqual(output.chapterEntryCount, 3)
+    }
 }

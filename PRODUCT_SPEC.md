@@ -853,6 +853,15 @@ For one final output:
 8. If replacement is enabled, move the source to macOS Trash using a recoverable API.
 9. Never permanently delete a source as part of normal operation.
 
+The default destination mode saves a collision-safe output beside each source
+without opening a save panel. Settings may instead retain one app-scoped,
+read/write directory bookmark and save there automatically, or require a save
+panel for every output. Automatic naming never overwrites: if the proposed name
+exists, MKV Magic adds the first available numeric suffix. Batch review uses the
+same default directory policy while retaining its per-file verification and
+failure isolation. Export-only documents such as support reports, workflow
+recipes, and manually exported chapter XML remain explicit save operations.
+
 Because `mkvpropedit` edits a file in place, safe metadata-only jobs operate on an APFS clone when available, then verify and commit the clone. On filesystems without clone support, MKV Magic creates a normal temporary copy or asks the user to choose an explicitly less-safe direct-edit mode. The default never edits the only source copy before verification.
 
 Default non-replacement naming is `Original Name — MKV Magic.mkv`. Replacement gives the verified result the source's final filename only after the source is safely in Trash.

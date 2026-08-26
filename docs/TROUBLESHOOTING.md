@@ -60,9 +60,11 @@ control. The most common prerequisites are:
   separately for each source. Workflows that require choosing an external
   subtitle remain single-file operations because that pairing needs individual
   review.
-- Batch output stays beside each source by default. The review sheet can choose
-  one alternate folder for every ready output. Existing destinations are never
-  overwritten and are reported as skipped.
+- Output saves automatically beside each source by default. Use **MKV Magic →
+  Settings…** to remember one default output folder or ask where to save every
+  time. A batch review can still choose one folder for its ready outputs.
+  Existing destinations are never overwritten; MKV Magic adds a numeric suffix
+  to the new output name.
 
 ## MKV Magic refuses an output
 

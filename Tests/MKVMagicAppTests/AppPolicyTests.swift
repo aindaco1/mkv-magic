@@ -125,6 +125,21 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(openItem.action, #selector(MainViewController.chooseFiles))
         XCTAssertTrue(openItem.target === window.contentViewController)
         let appMenu = try XCTUnwrap(NSApp.mainMenu?.item(at: 0)?.submenu)
+        let settingsItem = try XCTUnwrap(appMenu.item(withTitle: "Settings…"))
+        XCTAssertEqual(settingsItem.keyEquivalent, ",")
+        XCTAssertTrue(settingsItem.target === delegate)
+        XCTAssertTrue(
+            NSApp.sendAction(
+                try XCTUnwrap(settingsItem.action),
+                to: settingsItem.target,
+                from: settingsItem
+            )
+        )
+        let settingsWindow = try XCTUnwrap(
+            NSApp.windows.first { $0.title == "MKV Magic Settings" }
+        )
+        defer { settingsWindow.close() }
+        XCTAssertTrue(settingsWindow.isVisible)
         let servicesItem = try XCTUnwrap(appMenu.item(withTitle: "Services"))
         XCTAssertTrue(NSApp.servicesMenu === servicesItem.submenu)
         let hideOthers = try XCTUnwrap(appMenu.item(withTitle: "Hide Others"))
@@ -135,6 +150,12 @@ final class AppPolicyTests: XCTestCase {
             appMenu.item(withTitle: "Show All")?.action,
             #selector(NSApplication.unhideAllApplications(_:))
         )
+        let editMenu = try XCTUnwrap(
+            NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Edit" }
+        )
+        let removeSelected = try XCTUnwrap(editMenu.item(withTitle: "Remove Selected Files"))
+        XCTAssertEqual(removeSelected.action, #selector(MainViewController.removeSelectedAssets))
+        XCTAssertTrue(removeSelected.target === window.contentViewController)
         let helpMenu = try XCTUnwrap(
             NSApp.mainMenu?.items.compactMap(\.submenu).first { $0.title == "Help" }
         )
@@ -446,7 +467,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertNil(AppModel.State.failed("Failed").progressMessage)
     }
 
-    func testOutputDestinationDefaultsBesideSourceAndExplainsAlternateFolder() {
+    func testOutputDestinationDefaultsBesideSourceAndExplainsSettings() {
         let source = URL(fileURLWithPath: "/Media/Features/Movie.mkv")
 
         XCTAssertEqual(
@@ -454,9 +475,137 @@ final class AppPolicyTests: XCTestCase {
             "/Media/Features"
         )
         let message = OutputDestinationPolicy.savePanelMessage(detail: "Verified after writing.")
-        XCTAssertTrue(message.contains("selected by default"))
-        XCTAssertTrue(message.contains("Choose another folder"))
+        XCTAssertTrue(message.contains("Choose the output location"))
+        XCTAssertTrue(message.contains("Settings"))
         XCTAssertTrue(message.contains("Verified after writing."))
+    }
+
+    @MainActor
+    func testAutomaticOutputDestinationDefaultsBesideSourceAndNumbersCollisions() throws {
+        let suite = "mkv-magic-output-policy-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = OutputDestinationPreferences(defaults: defaults)
+        let source = URL(fileURLWithPath: "/Media/Features/Movie.mkv")
+        let occupied = Set([
+            "/Media/Features/Movie — Edited.mkv",
+            "/Media/Features/Movie — Edited 2.mkv",
+        ])
+
+        XCTAssertEqual(preferences.mode, .besideSource)
+        let resolution = try OutputDestinationPolicy.resolve(
+            sourceURL: source,
+            suggestedFilename: "Movie — Edited.mkv",
+            preferences: preferences,
+            fileExists: { occupied.contains($0) }
+        )
+
+        guard case .automatic(let destination) = resolution else {
+            return XCTFail("The default output mode must not show a save panel")
+        }
+        XCTAssertEqual(destination.url.path, "/Media/Features/Movie — Edited 3.mkv")
+    }
+
+    @MainActor
+    func testOutputDestinationCanAskEveryTimeOrRememberAChosenFolder() throws {
+        let suite = "mkv-magic-output-preferences-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = OutputDestinationPreferences(defaults: defaults)
+        let source = URL(fileURLWithPath: "/Media/Movie.mkv")
+
+        preferences.mode = .askEveryTime
+        guard
+            case .askEveryTime = try OutputDestinationPolicy.resolve(
+                sourceURL: source,
+                suggestedFilename: "Movie — Edited.mkv",
+                preferences: preferences
+            )
+        else {
+            return XCTFail("Ask-every-time mode must request a save panel")
+        }
+
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-output-folder-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        try preferences.chooseFolder(folder)
+
+        XCTAssertEqual(preferences.mode, .chosenFolder)
+        XCTAssertEqual(preferences.chosenFolderDisplayName, folder.lastPathComponent)
+        guard
+            case .automatic(let destination) = try OutputDestinationPolicy.resolve(
+                sourceURL: source,
+                suggestedFilename: "Movie — Edited.mkv",
+                preferences: preferences,
+                fileExists: { _ in false }
+            )
+        else {
+            return XCTFail("A chosen default folder must not show a save panel")
+        }
+        XCTAssertEqual(
+            destination.url.deletingLastPathComponent().standardizedFileURL,
+            folder.standardizedFileURL
+        )
+    }
+
+    @MainActor
+    func testSettingsWindowExposesAllOutputModesAtItsMinimumSize() throws {
+        let suite = "mkv-magic-settings-window-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let controller = SettingsWindowController(
+            preferences: OutputDestinationPreferences(defaults: defaults)
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        let popup = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first)
+        XCTAssertEqual(popup.itemTitles, OutputDestinationMode.allCases.map(\.title))
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Choose Folder…" })
+        XCTAssertEqual(window.initialFirstResponder, popup)
+        assertButtonsFit(buttons(in: content), in: content)
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_SETTINGS_CAPTURE"
+        ] {
+            try captureWindow(window: window, content: content, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testLosslessJoinFailuresProduceUsefulPrivacySafeCategories() {
+        XCTAssertTrue(
+            AppModel.sanitizedFailureMessage(for: LosslessJoinExecutionError.staleSource)
+                .contains("source changed")
+        )
+        XCTAssertTrue(
+            AppModel.sanitizedFailureMessage(
+                for: LosslessJoinExecutionError.toolFailed(
+                    tool: "mkvmerge",
+                    exitCode: 2,
+                    message: "private raw output"
+                )
+            ).contains("mkvmerge could not")
+        )
+        XCTAssertFalse(
+            AppModel.sanitizedFailureMessage(
+                for: LosslessJoinExecutionError.toolFailed(
+                    tool: "mkvmerge",
+                    exitCode: 2,
+                    message: "private raw output"
+                )
+            ).contains("private raw output")
+        )
+        XCTAssertTrue(
+            AppModel.sanitizedFailureMessage(
+                for: LosslessJoinExecutionError.chapterVerificationFailed
+            ).contains("chapter timing or titles did not match")
+        )
     }
 
     func testEditedOutputNamePreservesContainerExtension() {
@@ -4093,7 +4242,9 @@ final class AppPolicyTests: XCTestCase {
                 keyCode: 51
             )
         )
-        table.keyDown(with: delete)
+        XCTAssertTrue(window.makeFirstResponder(table))
+        XCTAssertTrue(window.firstResponder === table)
+        window.sendEvent(delete)
 
         XCTAssertTrue(model.assets.isEmpty)
         for url in urls {

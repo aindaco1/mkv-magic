@@ -5,6 +5,20 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.1.7 - 2026-08-26
+
+- Let a lossless join continue when `mkvmerge` completes with warnings, while
+  preserving the complete source-revision, track, packet, chapter, metadata,
+  and final-reopen verification contract before commit.
+- Add output-location Settings: save automatically beside each source by
+  default, save automatically in one remembered security-scoped folder, or ask
+  where to save every time. Automatic outputs use numbered collision-safe names
+  and never overwrite an existing file.
+- Route Delete and Forward Delete through the native media-table responder so
+  every selected row can be removed together without touching source files.
+- Export more specific privacy-safe categories for future lossless-join failures
+  without including filenames, paths, or raw tool output.
+
 ## 0.1.6 - 2026-08-25
 
 - Apply shared native spacing and content-width rules across every AppKit

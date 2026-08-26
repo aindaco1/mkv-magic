@@ -99,7 +99,7 @@ final class HelpViewController: NSViewController {
         4. Save or queue the reviewed job. MKV is the default output container.
 
         OUTPUT SAFETY
-        MKV Magic creates and verifies a separate output before it reports success. Originals remain unchanged by default. Moving originals to Trash is explicit, optional, and happens only after verified success.
+        MKV Magic creates and verifies a separate output before it reports success. By default, it saves automatically beside the source without opening a save panel. In MKV Magic > Settings, you can instead remember one output folder or ask where to save every time. Existing files are never overwritten; automatic outputs receive a number when needed. Originals remain unchanged by default. Moving originals to Trash is explicit, optional, and happens only after verified success.
 
         WHEN MKV MAGIC ENCODES
         Metadata edits use MKVToolNix without encoding. Track removal, subtitle muxing, and compatible joins remux or copy streams. If a workflow truly needs video encoding, its video work is fused into one final pass. AV1 is preferred when its encoder is locally verified; compatible HEVC or H.264 choices remain available.
@@ -114,7 +114,9 @@ final class HelpViewController: NSViewController {
         Command-2: queue
         Command-3: history
         Command-4: encoding test
+        Command-Comma: output-location settings
         Command-S: save in the workflow editor
+        Delete or Forward Delete: remove every selected file from the main list without deleting the source files
         Escape: cancel or close reviews where it is safe to do so
 
         PRIVACY

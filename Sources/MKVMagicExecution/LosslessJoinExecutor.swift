@@ -93,7 +93,10 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
                 outputLimit: 1_048_576
             )
         )
-        guard result.exitCode == 0 else {
+        // mkvmerge uses exit code 1 for a completed file that emitted warnings.
+        // The executor still subjects that file to the full track, chapter,
+        // packet, source-revision, and reopen audits before it can be committed.
+        guard result.exitCode == 0 || result.exitCode == 1 else {
             throw LosslessJoinExecutionError.toolFailed(
                 tool: "mkvmerge",
                 exitCode: result.exitCode,
@@ -125,7 +128,6 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
 
         var arguments = [
             "--output", outputURL.standardizedFileURL.path,
-            "--abort-on-warnings",
             "--flush-on-close",
             "--normalize-language-ietf", "canonical",
             "--disable-track-statistics-tags",

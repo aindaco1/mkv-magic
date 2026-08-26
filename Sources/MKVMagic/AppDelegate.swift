@@ -4,24 +4,31 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model: AppModel
     private let updateController: UpdateChecking
+    private let outputDestinationPreferences: OutputDestinationPreferences
     private var windowController: NSWindowController?
+    private var settingsWindowController: SettingsWindowController?
     private var helpWindowController: HelpWindowController?
     private var thirdPartySoftwareWindowController: ThirdPartySoftwareWindowController?
     private var automaticQueueTask: Task<Void, Never>?
 
     init(
         model: AppModel = AppModel(),
-        updateController: UpdateChecking = AppUpdateController()
+        updateController: UpdateChecking = AppUpdateController(),
+        outputDestinationPreferences: OutputDestinationPreferences = OutputDestinationPreferences()
     ) {
         self.model = model
         self.updateController = updateController
+        self.outputDestinationPreferences = outputDestinationPreferences
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
 
-        let content = MainViewController(model: model)
+        let content = MainViewController(
+            model: model,
+            outputDestinationPreferences: outputDestinationPreferences
+        )
         NSApp.mainMenu = makeMainMenu(openTarget: content)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic"
@@ -63,6 +70,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateController.checkForUpdates()
     }
 
+    @objc private func showSettings() {
+        let controller =
+            settingsWindowController
+            ?? SettingsWindowController(preferences: outputDestinationPreferences)
+        settingsWindowController = controller
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
     @objc func showHelp() {
         let controller = helpWindowController ?? HelpWindowController()
         helpWindowController = controller
@@ -94,6 +111,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         update.target = self
         appMenu.addItem(update)
+        appMenu.addItem(.separator())
+        let settings = NSMenuItem(
+            title: "Settings…",
+            action: #selector(showSettings),
+            keyEquivalent: ","
+        )
+        settings.target = self
+        appMenu.addItem(settings)
         appMenu.addItem(.separator())
         let services = NSMenuItem(title: "Services", action: nil, keyEquivalent: "")
         let servicesMenu = NSMenu(title: "Services")
@@ -148,6 +173,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         editMenu.addItem(
             withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(.separator())
+        let deleteSelected = NSMenuItem(
+            title: "Remove Selected Files",
+            action: #selector(MainViewController.removeSelectedAssets),
+            keyEquivalent: ""
+        )
+        deleteSelected.target = openTarget
+        editMenu.addItem(deleteSelected)
         editItem.submenu = editMenu
 
         let windowItem = NSMenuItem()

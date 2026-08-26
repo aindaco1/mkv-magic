@@ -26,7 +26,7 @@ private actor LosslessJoinToolRunner: CommandRunning, CommandLineDigesting {
         requests.append(request)
         switch request.executableURL.lastPathComponent {
         case "mkvmerge":
-            guard toolExitCode == 0,
+            guard toolExitCode <= 1,
                 let outputIndex = request.arguments.firstIndex(of: "--output"),
                 request.arguments.indices.contains(outputIndex + 1),
                 let chapterIndex = request.arguments.firstIndex(of: "--chapters"),
@@ -46,7 +46,7 @@ private actor LosslessJoinToolRunner: CommandRunning, CommandLineDigesting {
                     options: .atomic
                 )
             }
-            return result(exitCode: 0)
+            return result(exitCode: toolExitCode)
         case "mkvextract":
             guard request.arguments.count == 3, let expectedChapterData else {
                 return result(exitCode: 2)
@@ -167,7 +167,6 @@ final class LosslessJoinExecutorTests: XCTestCase {
             arguments,
             [
                 "--output", "/private/output.mkv",
-                "--abort-on-warnings",
                 "--flush-on-close",
                 "--normalize-language-ietf", "canonical",
                 "--disable-track-statistics-tags",
@@ -238,6 +237,71 @@ final class LosslessJoinExecutorTests: XCTestCase {
             requests.filter { $0.executableURL.lastPathComponent == "mkvextract" }.count,
             2
         )
+    }
+
+    func testWarningCompletionStillPassesEveryVerificationBeforeCommit() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let runner = LosslessJoinToolRunner(toolExitCode: 1)
+        let executor = makeExecutor(
+            runner: runner,
+            sources: fixture.sources,
+            chapters: fixture.chapters
+        )
+        let preview = try executor.preview(
+            sources: fixture.sources,
+            mapping: fixture.mapping,
+            chapters: fixture.chapters
+        )
+        let destination = fixture.directory.appendingPathComponent("joined-with-warning.mkv")
+
+        let output = try await executor.execute(
+            preview: preview,
+            destinationURL: destination
+        )
+
+        XCTAssertEqual(output.sourceURL, destination)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: destination.path))
+        let requests = await runner.capturedRequests()
+        XCTAssertEqual(
+            requests.filter { $0.executableURL.lastPathComponent == "mkvextract" }.count,
+            2
+        )
+        XCTAssertEqual(
+            requests.filter { $0.executableURL.lastPathComponent == "ffmpeg" }.count,
+            2
+        )
+    }
+
+    func testWarningCompletionCannotBypassChapterVerification() async throws {
+        let fixture = try makeFixture()
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let runner = LosslessJoinToolRunner(wrongChapters: true, toolExitCode: 1)
+        let executor = makeExecutor(
+            runner: runner,
+            sources: fixture.sources,
+            chapters: fixture.chapters
+        )
+        let preview = try executor.preview(
+            sources: fixture.sources,
+            mapping: fixture.mapping,
+            chapters: fixture.chapters
+        )
+        let destination = fixture.directory.appendingPathComponent("unsafe-warning.mkv")
+
+        do {
+            _ = try await executor.execute(
+                preview: preview,
+                destinationURL: destination
+            )
+            XCTFail("A warning result must still pass chapter verification")
+        } catch {
+            XCTAssertEqual(
+                error as? LosslessJoinExecutionError,
+                .chapterVerificationFailed
+            )
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
     }
 
     func testChangedSourceAfterPreviewFailsBeforeMkvmerge() async throws {

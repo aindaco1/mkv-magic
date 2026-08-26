@@ -9,9 +9,19 @@ import UniformTypeIdentifiers
 private final class MediaAssetTableView: NSTableView {
     var onDeleteSelection: (() -> Void)?
 
+    @objc override func deleteBackward(_ sender: Any?) {
+        onDeleteSelection?()
+    }
+
+    @objc override func deleteForward(_ sender: Any?) {
+        onDeleteSelection?()
+    }
+
     override func keyDown(with event: NSEvent) {
-        if event.keyCode == 51 || event.keyCode == 117 {
-            onDeleteSelection?()
+        if event.keyCode == 51 {
+            deleteBackward(self)
+        } else if event.keyCode == 117 {
+            deleteForward(self)
         } else {
             super.keyDown(with: event)
         }
@@ -89,6 +99,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private struct DestinationSelection {
         let url: URL
         let sourceDisposition: MediaQueueSourceDisposition
+        let directoryAccess: OutputDirectorySecurityScope?
     }
 
     private enum PendingChange {
@@ -247,6 +258,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     }
 
     private let model: AppModel
+    private let outputDestinationPreferences: OutputDestinationPreferences
     private let tableView = MediaAssetTableView()
     private let inspectorText = NSTextView()
     private let segmentTitleField = NSTextField()
@@ -314,8 +326,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     var preferredInitialFirstResponder: NSView { chooseFilesButton }
 
-    init(model: AppModel) {
+    init(
+        model: AppModel,
+        outputDestinationPreferences: OutputDestinationPreferences = OutputDestinationPreferences()
+    ) {
         self.model = model
+        self.outputDestinationPreferences = outputDestinationPreferences
         super.init(nibName: nil, bundle: nil)
         model.didChange = { [weak self] in self?.refresh() }
         model.queueDidChange = { [weak self] in self?.refreshOpenQueue() }
@@ -471,7 +487,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         tableView.rowHeight = 32
         tableView.allowsEmptySelection = true
         tableView.allowsMultipleSelection = true
-        tableView.onDeleteSelection = { [weak self] in self?.removeSelectedAsset() }
+        tableView.onDeleteSelection = { [weak self] in self?.removeSelectedAssets() }
         tableView.setAccessibilityLabel("Inspected media files")
         tableView.setAccessibilityHelp(
             "Choose a file to inspect its tracks and enable applicable actions. Use its remove button or press Delete to remove it from this list without deleting the source file."
@@ -1015,6 +1031,30 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         _ preview: TrimExecutionPreview,
         parentWindow: NSWindow
     ) {
+        let suggestedFilename =
+            preview.operation == .transcode
+            ? OutputNamingPolicy.convertedFilename(for: preview.source.sourceURL)
+            : OutputNamingPolicy.trimmedFilename(for: preview.source.sourceURL)
+        do {
+            switch try OutputDestinationPolicy.resolve(
+                sourceURL: preview.source.sourceURL,
+                suggestedFilename: suggestedFilename,
+                preferences: outputDestinationPreferences
+            ) {
+            case .automatic(let destination):
+                runVideoProcessing(
+                    preview,
+                    destination: destination,
+                    parentWindow: parentWindow
+                )
+                return
+            case .askEveryTime:
+                break
+            }
+        } catch {
+            presentOutputDestinationError(error)
+            return
+        }
         let panel = NSSavePanel()
         panel.title =
             preview.operation == .transcode
@@ -1022,10 +1062,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         panel.prompt = preview.operation == .transcode ? "Convert & Save" : "Trim & Save"
         panel.message = OutputDestinationPolicy.savePanelMessage()
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue =
-            preview.operation == .transcode
-            ? OutputNamingPolicy.convertedFilename(for: preview.source.sourceURL)
-            : OutputNamingPolicy.trimmedFilename(for: preview.source.sourceURL)
+        panel.nameFieldStringValue = suggestedFilename
         panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
             for: preview.source.sourceURL
         )
@@ -1039,7 +1076,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             }
             self.runVideoProcessing(
                 preview,
-                destinationURL: destinationURL,
+                destination: ResolvedOutputDestination(
+                    url: destinationURL,
+                    directoryAccess: nil
+                ),
                 parentWindow: parentWindow
             )
         }
@@ -1047,7 +1087,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func runVideoProcessing(
         _ preview: TrimExecutionPreview,
-        destinationURL: URL,
+        destination: ResolvedOutputDestination,
         parentWindow: NSWindow
     ) {
         let progress: VerifiedOutputProgressWindowController
@@ -1065,10 +1105,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         progress.beginSheet(for: parentWindow)
         let task = Task { [weak self, weak progress] in
             guard let self else { return }
+            defer { _ = destination.directoryAccess }
             do {
                 let output = try await model.executeTrim(
                     preview: preview,
-                    destinationURL: destinationURL,
+                    destinationURL: destination.url,
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1213,6 +1254,27 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         parentWindow: NSWindow
     ) {
         guard let firstSource = preview.candidate.sources.first else { return }
+        let suggestedFilename = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        do {
+            switch try OutputDestinationPolicy.resolve(
+                sourceURL: firstSource.sourceURL,
+                suggestedFilename: suggestedFilename,
+                preferences: outputDestinationPreferences
+            ) {
+            case .automatic(let destination):
+                runCommonFormatJoin(
+                    preview,
+                    destination: destination,
+                    parentWindow: parentWindow
+                )
+                return
+            case .askEveryTime:
+                break
+            }
+        } catch {
+            presentOutputDestinationError(error)
+            return
+        }
         let panel = NSSavePanel()
         panel.title = "Save Verified Joined MKV"
         panel.prompt = "Normalize, Join & Save"
@@ -1221,7 +1283,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 "Incompatible lanes will be normalized once in private temporary storage; the final MKV is saved only after verification."
         )
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        panel.nameFieldStringValue = suggestedFilename
         panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
             for: firstSource.sourceURL
         )
@@ -1235,7 +1297,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             }
             self.runCommonFormatJoin(
                 preview,
-                destinationURL: destinationURL,
+                destination: ResolvedOutputDestination(
+                    url: destinationURL,
+                    directoryAccess: nil
+                ),
                 parentWindow: parentWindow
             )
         }
@@ -1243,7 +1308,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func runCommonFormatJoin(
         _ preview: CommonFormatJoinPreview,
-        destinationURL: URL,
+        destination: ResolvedOutputDestination,
         parentWindow: NSWindow
     ) {
         let progress = VerifiedOutputProgressWindowController.commonFormatJoin()
@@ -1251,10 +1316,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         progress.beginSheet(for: parentWindow)
         let task = Task { [weak self, weak progress] in
             guard let self else { return }
+            defer { _ = destination.directoryAccess }
             do {
                 let output = try await model.executeCommonFormatJoin(
                     preview: preview,
-                    destinationURL: destinationURL,
+                    destinationURL: destination.url,
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1306,12 +1372,33 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         parentWindow: NSWindow
     ) {
         guard let firstSource = preview.sources.first else { return }
+        let suggestedFilename = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        do {
+            switch try OutputDestinationPolicy.resolve(
+                sourceURL: firstSource.sourceURL,
+                suggestedFilename: suggestedFilename,
+                preferences: outputDestinationPreferences
+            ) {
+            case .automatic(let destination):
+                runLosslessJoin(
+                    preview,
+                    destination: destination,
+                    parentWindow: parentWindow
+                )
+                return
+            case .askEveryTime:
+                break
+            }
+        } catch {
+            presentOutputDestinationError(error)
+            return
+        }
         let panel = NSSavePanel()
         panel.title = "Save Verified Joined MKV"
         panel.prompt = "Join & Save"
         panel.message = OutputDestinationPolicy.savePanelMessage()
         panel.canCreateDirectories = true
-        panel.nameFieldStringValue = OutputNamingPolicy.joinedFilename(for: firstSource.sourceURL)
+        panel.nameFieldStringValue = suggestedFilename
         panel.directoryURL = OutputDestinationPolicy.defaultDirectory(
             for: firstSource.sourceURL
         )
@@ -1325,7 +1412,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             }
             self.runLosslessJoin(
                 preview,
-                destinationURL: destinationURL,
+                destination: ResolvedOutputDestination(
+                    url: destinationURL,
+                    directoryAccess: nil
+                ),
                 parentWindow: parentWindow
             )
         }
@@ -1333,7 +1423,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
 
     private func runLosslessJoin(
         _ preview: LosslessJoinPreview,
-        destinationURL: URL,
+        destination: ResolvedOutputDestination,
         parentWindow: NSWindow
     ) {
         let progress = VerifiedOutputProgressWindowController.losslessJoin()
@@ -1341,10 +1431,11 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         progress.beginSheet(for: parentWindow)
         let task = Task { [weak self, weak progress] in
             guard let self else { return }
+            defer { _ = destination.directoryAccess }
             do {
                 let output = try await model.executeLosslessJoin(
                     preview: preview,
-                    destinationURL: destinationURL,
+                    destinationURL: destination.url,
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1530,13 +1621,22 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 }
             }
             guard let parentWindow, view.window === parentWindow else { return }
+            let batchDestination: (directory: URL, access: OutputDirectorySecurityScope?)?
+            do {
+                batchDestination = try defaultBatchOutputDirectory()
+            } catch {
+                presentOutputDestinationError(error)
+                return
+            }
             let controller = BatchReviewWindowController(
                 title: "Review \(workflow.name) Batch",
                 explanation:
                     "MKV Magic compiled this portable workflow independently for every selected file. Ready files become separate queue jobs; already-satisfied and blocked files are skipped.",
                 items: presentations,
                 actionTitle: "Add Ready Jobs to Queue",
-                offersSourceDisposition: true
+                offersSourceDisposition: true,
+                initialDestinationDirectory: batchDestination?.directory,
+                initialDirectoryAccess: batchDestination?.access
             )
             batchReviewWindowController = controller
             controller.beginSheet(for: parentWindow) { [weak self] decision in
@@ -1575,7 +1675,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             guard let self else { return }
             var queued = 0
             var failed = 0
-            var skipped = 0
+            var reservedOutputPaths = Set<String>()
             for (index, item) in items.enumerated() {
                 do {
                     try Task.checkCancellation()
@@ -1588,14 +1688,18 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         ?? OutputDestinationPolicy.defaultDirectory(
                             for: item.asset.sourceURL
                         )
-                    let destinationURL = directory.appendingPathComponent(
-                        item.outputFilename,
-                        isDirectory: false
+                    let directoryAccess =
+                        decision.directoryAccess
+                        ?? OutputDirectorySecurityScope(directoryURL: directory)
+                    let destinationURL = try OutputDestinationPolicy.availableOutputURL(
+                        filename: item.outputFilename,
+                        directoryURL: directory,
+                        fileExists: {
+                            reservedOutputPaths.contains($0)
+                                || FileManager.default.fileExists(atPath: $0)
+                        }
                     )
-                    guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
-                        skipped += 1
-                        continue
-                    }
+                    reservedOutputPaths.insert(destinationURL.path)
                     _ = try await model.enqueueSavedWorkflow(
                         item.prepared.compiled,
                         recipe: item.prepared.recipe,
@@ -1604,6 +1708,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         in: item.asset,
                         destinationURL: destinationURL
                     )
+                    _ = directoryAccess
                     queued += 1
                 } catch is CancellationError {
                     break
@@ -1617,7 +1722,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             refresh()
             refreshOpenQueue()
             statusLabel.stringValue =
-                "Workflow batch queued: \(queued) ready, \(failed) failed, \(skipped) skipped."
+                "Workflow batch queued: \(queued) ready, \(failed) failed."
             AccessibleStatusPresentation.present(
                 statusLabel.stringValue,
                 in: statusLabel,
@@ -1802,7 +1907,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         removeAsset(at: sender.tag)
     }
 
-    private func removeSelectedAsset() {
+    @objc func removeSelectedAssets() {
         let selectedRows = tableView.selectedRowIndexes.filter(model.assets.indices.contains)
         guard !selectedRows.isEmpty, !isMediaWorkBusy else { return }
         let ids = Set(selectedRows.map { model.assets[$0].id })
@@ -2197,13 +2302,22 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 cleanSubtitleButton.isEnabled = true
                 return
             }
+            let batchDestination: (directory: URL, access: OutputDirectorySecurityScope?)?
+            do {
+                batchDestination = try defaultBatchOutputDirectory()
+            } catch {
+                presentOutputDestinationError(error)
+                return
+            }
             let controller = BatchReviewWindowController(
                 title: "Review Subtitle Batch",
                 explanation:
                     "Each ready subtitle becomes one independently verified output. Already-clean and blocked files are skipped; one failure never removes another successful output.",
                 items: presentations,
                 actionTitle: "Clean Ready Files",
-                offersSourceDisposition: false
+                offersSourceDisposition: false,
+                initialDestinationDirectory: batchDestination?.directory,
+                initialDirectoryAccess: batchDestination?.access
             )
             batchReviewWindowController = controller
             controller.beginSheet(for: parentWindow) { [weak self] decision in
@@ -2246,7 +2360,6 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             guard let self else { return }
             var succeeded = 0
             var failed = 0
-            var skipped = 0
             for (index, item) in items.enumerated() {
                 do {
                     try Task.checkCancellation()
@@ -2259,16 +2372,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         ?? OutputDestinationPolicy.defaultDirectory(
                             for: item.asset.sourceURL
                         )
-                    let destinationURL = directory.appendingPathComponent(
-                        OutputNamingPolicy.cleanedSubtitleFilename(
+                    let directoryAccess =
+                        decision.directoryAccess
+                        ?? OutputDirectorySecurityScope(directoryURL: directory)
+                    let destinationURL = try OutputDestinationPolicy.availableOutputURL(
+                        filename: OutputNamingPolicy.cleanedSubtitleFilename(
                             for: item.asset.sourceURL
                         ),
-                        isDirectory: false
+                        directoryURL: directory,
+                        fileExists: { FileManager.default.fileExists(atPath: $0) }
                     )
-                    guard !FileManager.default.fileExists(atPath: destinationURL.path) else {
-                        skipped += 1
-                        continue
-                    }
                     switch item.candidate {
                     case .subRip(let preview):
                         _ = try await model.cleanSubtitle(
@@ -2283,6 +2396,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                             destinationURL: destinationURL
                         )
                     }
+                    _ = directoryAccess
                     preferredSelectionURL = destinationURL
                     succeeded += 1
                 } catch is CancellationError {
@@ -2296,7 +2410,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             batchTask = nil
             refresh()
             statusLabel.stringValue =
-                "Subtitle batch finished: \(succeeded) succeeded, \(failed) failed, \(skipped) skipped."
+                "Subtitle batch finished: \(succeeded) succeeded, \(failed) failed."
             AccessibleStatusPresentation.present(
                 statusLabel.stringValue,
                 in: statusLabel,
@@ -3084,6 +3198,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         let task = Task { [weak self, weak progress] in
             guard let self else { return }
             defer {
+                _ = destination.directoryAccess
                 progress?.finish()
                 self.verifiedRunProgressWindowController = nil
                 self.verifiedRunTask = nil
@@ -3230,6 +3345,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         verifiedRunTask = Task { [weak self] in
             guard let self else { return }
             defer {
+                _ = destination.directoryAccess
                 self.verifiedRunTask = nil
                 self.refresh()
             }
@@ -3384,6 +3500,31 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         } else {
             panel.nameFieldStringValue = OutputNamingPolicy.suggestedFilename(for: asset.sourceURL)
         }
+        let automaticSourceDisposition: MediaQueueSourceDisposition
+        if case .savedWorkflow(let prepared) = pendingChange {
+            automaticSourceDisposition = prepared.sourceDisposition
+        } else {
+            automaticSourceDisposition = .keepOriginal
+        }
+        do {
+            switch try OutputDestinationPolicy.resolve(
+                sourceURL: asset.sourceURL,
+                suggestedFilename: panel.nameFieldStringValue,
+                preferences: outputDestinationPreferences
+            ) {
+            case .automatic(let destination):
+                return DestinationSelection(
+                    url: destination.url,
+                    sourceDisposition: automaticSourceDisposition,
+                    directoryAccess: destination.directoryAccess
+                )
+            case .askEveryTime:
+                break
+            }
+        } catch {
+            presentOutputDestinationError(error)
+            return nil
+        }
         panel.directoryURL = OutputDestinationPolicy.defaultDirectory(for: asset.sourceURL)
         let outputExtension: String
         if case .attachmentExtraction(let preview) = pendingChange {
@@ -3422,7 +3563,32 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             url: destinationURL,
             sourceDisposition: SourceDispositionPresentation.disposition(
                 for: sourceDispositionCheckbox
-            )
+            ),
+            directoryAccess: nil
+        )
+    }
+
+    private func presentOutputDestinationError(_ error: Error) {
+        AccessibleStatusPresentation.present(
+            UserFacingErrorPresentation.message(
+                failure: "Could not prepare the output location.",
+                recovery:
+                    "No output was created. Open MKV Magic Settings to choose a valid folder or ask where to save each time.",
+                error: error
+            ),
+            in: statusLabel
+        )
+        refresh()
+    }
+
+    private func defaultBatchOutputDirectory() throws
+        -> (directory: URL, access: OutputDirectorySecurityScope?)?
+    {
+        guard outputDestinationPreferences.mode == .chosenFolder else { return nil }
+        let directory = try outputDestinationPreferences.resolveChosenFolder()
+        return (
+            directory.standardizedFileURL,
+            OutputDirectorySecurityScope(directoryURL: directory)
         )
     }
 
@@ -3990,19 +4156,6 @@ enum InspectorPresentationPolicy {
 
     static func displayedBitDepth(for track: MediaTrack) -> Int? {
         track.kind == .video ? track.bitDepth : nil
-    }
-}
-
-enum OutputDestinationPolicy {
-    static func defaultDirectory(for sourceURL: URL) -> URL {
-        sourceURL.standardizedFileURL.deletingLastPathComponent()
-    }
-
-    static func savePanelMessage(detail: String? = nil) -> String {
-        let location =
-            "The original file’s folder is selected by default. Choose another folder here if you prefer."
-        guard let detail, !detail.isEmpty else { return location }
-        return "\(location) \(detail)"
     }
 }
 

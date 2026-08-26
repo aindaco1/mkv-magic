@@ -3287,7 +3287,7 @@ final class AppModel {
         error is CancellationError || (error as? CommandRunnerError) == .cancelled
     }
 
-    private static func sanitizedFailureMessage(for error: Error) -> String {
+    static func sanitizedFailureMessage(for error: Error) -> String {
         if let verificationError = error as? MKVRemuxVerificationError {
             return switch verificationError {
             case .emptyOutput: "Verification failed: the temporary MKV was empty."
@@ -3383,10 +3383,20 @@ final class AppModel {
         {
             return "Output committed, but its final reopen audit failed."
         }
-        if let executionError = error as? LosslessJoinExecutionError,
-            case .committedOutputAuditFailed = executionError
-        {
-            return "Output committed, but its final reopen audit failed."
+        if let executionError = error as? LosslessJoinExecutionError {
+            return switch executionError {
+            case .staleSource:
+                "Execution stopped because a source changed after review."
+            case .toolFailed:
+                "Execution stopped: mkvmerge could not create the temporary joined MKV."
+            case .unsafeChapterOutput, .chapterVerificationFailed:
+                "Verification failed: chapter timing or titles did not match the reviewed join."
+            case .committedOutputAuditFailed:
+                "Output committed, but its final reopen audit failed."
+            case .unsupportedDestination, .invalidPath, .requiresReview,
+                .invalidChapterTimeline, .missingStableTrackIdentity:
+                "Execution stopped because the reviewed lossless join was no longer valid."
+            }
         }
         if let executionError = error as? JoinFinalAssemblyExecutionError,
             case .committedOutputAuditFailed = executionError

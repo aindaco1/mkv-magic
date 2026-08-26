@@ -19,6 +19,7 @@ struct BatchReviewDecision: Sendable {
     /// `nil` means each output stays beside its source.
     let commonDestinationDirectory: URL?
     let sourceDisposition: MediaQueueSourceDisposition
+    let directoryAccess: OutputDirectorySecurityScope?
 }
 
 @MainActor
@@ -30,14 +31,18 @@ final class BatchReviewWindowController: NSWindowController {
         explanation: String,
         items: [BatchReviewItemPresentation],
         actionTitle: String,
-        offersSourceDisposition: Bool
+        offersSourceDisposition: Bool,
+        initialDestinationDirectory: URL? = nil,
+        initialDirectoryAccess: OutputDirectorySecurityScope? = nil
     ) {
         content = BatchReviewViewController(
             title: title,
             explanation: explanation,
             items: items,
             actionTitle: actionTitle,
-            offersSourceDisposition: offersSourceDisposition
+            offersSourceDisposition: offersSourceDisposition,
+            initialDestinationDirectory: initialDestinationDirectory,
+            initialDirectoryAccess: initialDirectoryAccess
         )
         let window = NSWindow(contentViewController: content)
         window.title = title
@@ -96,6 +101,7 @@ private final class BatchReviewViewController: NSViewController,
     )
     private let actionButton: NSButton
     private var commonDestinationDirectory: URL?
+    private var directoryAccess: OutputDirectorySecurityScope?
 
     var onFinish: (@MainActor (BatchReviewDecision?) -> Void)?
     var preferredInitialFirstResponder: NSView { tableView }
@@ -105,12 +111,16 @@ private final class BatchReviewViewController: NSViewController,
         explanation: String,
         items: [BatchReviewItemPresentation],
         actionTitle: String,
-        offersSourceDisposition: Bool
+        offersSourceDisposition: Bool,
+        initialDestinationDirectory: URL?,
+        initialDirectoryAccess: OutputDirectorySecurityScope?
     ) {
         heading = title
         self.explanation = explanation
         self.items = items
         self.offersSourceDisposition = offersSourceDisposition
+        commonDestinationDirectory = initialDestinationDirectory?.standardizedFileURL
+        directoryAccess = initialDirectoryAccess
         actionButton = NSButton(title: actionTitle, target: nil, action: nil)
         super.init(nibName: nil, bundle: nil)
     }
@@ -221,6 +231,9 @@ private final class BatchReviewViewController: NSViewController,
             stack.contentWidthConstraint(for: actions),
         ])
         view = root
+        if let commonDestinationDirectory {
+            destinationLabel.stringValue = commonDestinationDirectory.path(percentEncoded: false)
+        }
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { items.count }
@@ -261,6 +274,7 @@ private final class BatchReviewViewController: NSViewController,
         panel.beginSheetModal(for: window) { [weak self] response in
             guard response == .OK, let self, let directory = panel.url else { return }
             self.commonDestinationDirectory = directory.standardizedFileURL
+            self.directoryAccess = OutputDirectorySecurityScope(directoryURL: directory)
             self.destinationLabel.stringValue = directory.path(percentEncoded: false)
         }
     }
@@ -274,7 +288,8 @@ private final class BatchReviewViewController: NSViewController,
             BatchReviewDecision(
                 commonDestinationDirectory: commonDestinationDirectory,
                 sourceDisposition: offersSourceDisposition && trashCheckbox.state == .on
-                    ? .trashAfterVerifiedSuccess : .keepOriginal
+                    ? .trashAfterVerifiedSuccess : .keepOriginal,
+                directoryAccess: directoryAccess
             )
         )
     }
