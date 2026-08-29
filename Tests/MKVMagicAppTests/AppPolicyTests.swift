@@ -457,10 +457,15 @@ final class AppPolicyTests: XCTestCase {
     func testBusyModelStatesOwnVisibleProgressMessages() {
         XCTAssertTrue(AppModel.State.discovering.showsProgressIndicator)
         XCTAssertEqual(AppModel.State.discovering.progressMessage, "Finding media files…")
-        XCTAssertTrue(AppModel.State.inspecting("Movie.mkv").showsProgressIndicator)
+        let inspecting = AppModel.State.inspecting(
+            filename: "Movie.mkv",
+            completedUnitCount: 1,
+            totalUnitCount: 3
+        )
+        XCTAssertTrue(inspecting.showsProgressIndicator)
         XCTAssertEqual(
-            AppModel.State.inspecting("Movie.mkv").progressMessage,
-            "Inspecting Movie.mkv…"
+            inspecting.progressMessage,
+            "Inspecting 2 of 3: Movie.mkv…"
         )
         XCTAssertTrue(AppModel.State.executing("Verifying…").showsProgressIndicator)
         XCTAssertFalse(AppModel.State.completed("Done").showsProgressIndicator)
@@ -2829,8 +2834,17 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(cancellableWindow.initialFirstResponder === cancel)
         XCTAssertEqual(cancel.keyEquivalent, "\u{1b}")
         XCTAssertTrue(cancel.accessibilityHelp()?.contains("original remains unchanged") == true)
-        XCTAssertEqual(progress.accessibilityLabel(), "Verified output progress")
-        XCTAssertTrue(progress.isIndeterminate)
+        XCTAssertEqual(progress.accessibilityLabel(), "Operation progress")
+        XCTAssertFalse(progress.isIndeterminate)
+        XCTAssertEqual(progress.minValue, 0)
+        XCTAssertEqual(
+            progress.maxValue,
+            Double(VerifiedOutputExecutionStage.totalUnitCount)
+        )
+        XCTAssertEqual(progress.doubleValue, 0)
+        XCTAssertTrue(
+            progress.accessibilityHelp()?.contains("machine-reported percentage") == true
+        )
         XCTAssertGreaterThanOrEqual(progressFrame.minX, 23)
         XCTAssertLessThanOrEqual(progressFrame.maxX, cancellableContent.bounds.maxX - 23)
         XCTAssertLessThanOrEqual(cancelFrame.maxX, cancellableContent.bounds.maxX - 23)
@@ -2863,6 +2877,10 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(commitCancel.isEnabled)
         XCTAssertTrue(commitStatus.stringValue.contains("Verification passed"))
         XCTAssertTrue(commitCancel.accessibilityHelp()?.contains("committed atomically") == true)
+        let commitProgress = try XCTUnwrap(
+            descendants(in: committingContent).compactMap { $0 as? NSProgressIndicator }.first
+        )
+        XCTAssertEqual(commitProgress.doubleValue, 2)
 
         let generic = VerifiedOutputProgressWindowController.verifiedChange(
             title: "Cleaning Subtitle",
@@ -2876,6 +2894,57 @@ final class AppPolicyTests: XCTestCase {
         )
         generic.update(message: "Reopening and verifying…")
         XCTAssertEqual(genericStatus.stringValue, "Reopening and verifying…")
+    }
+
+    @MainActor
+    func testProgressSurfacesMeasureCommonJoinStagesAndBatchItems() throws {
+        let join = VerifiedOutputProgressWindowController.commonFormatJoin()
+        let joinContent = try XCTUnwrap(join.window?.contentView)
+        let joinProgress = try XCTUnwrap(
+            descendants(in: joinContent).compactMap { $0 as? NSProgressIndicator }.first
+        )
+        let joinSummary = try XCTUnwrap(
+            descendants(in: joinContent).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Progress summary"
+            }
+        )
+        XCTAssertEqual(joinProgress.maxValue, 4)
+        XCTAssertEqual(joinProgress.doubleValue, 0)
+        join.update(stage: .assembling)
+        XCTAssertEqual(joinProgress.doubleValue, 1)
+        XCTAssertEqual(joinSummary.stringValue, "1 of 4 stages complete")
+        join.update(
+            toolProgress: VerifiedOutputToolProgress(
+                phase: .multiplexing,
+                percentage: 42
+            ),
+            completedStageCount: 1
+        )
+        XCTAssertEqual(joinProgress.doubleValue, 1.42, accuracy: 0.001)
+        XCTAssertEqual(
+            joinSummary.stringValue,
+            "42% of current MKV assembly • 1 of 4 stages complete"
+        )
+        join.update(stage: CommonFormatJoinExecutionStage.verifying)
+        XCTAssertEqual(joinProgress.doubleValue, 2)
+
+        let batch = VerifiedOutputProgressWindowController.batch(
+            title: "Batch",
+            initialMessage: "Preparing…",
+            itemCount: 3
+        )
+        let batchContent = try XCTUnwrap(batch.window?.contentView)
+        let batchProgress = try XCTUnwrap(
+            descendants(in: batchContent).compactMap { $0 as? NSProgressIndicator }.first
+        )
+        let batchSummary = try XCTUnwrap(
+            descendants(in: batchContent).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Progress summary"
+            }
+        )
+        batch.update(completedUnitCount: 2, message: "Finished two items")
+        XCTAssertEqual(batchProgress.doubleValue, 2)
+        XCTAssertEqual(batchSummary.stringValue, "2 of 3 items complete")
     }
 
     @MainActor

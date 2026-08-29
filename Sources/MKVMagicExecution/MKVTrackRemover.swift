@@ -43,7 +43,8 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
         from source: MediaAsset,
         removal: TrackRemoval,
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
-        outputURL: URL
+        outputURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let arguments = try Self.arguments(
             source: source,
@@ -52,11 +53,11 @@ public struct MKVTrackRemover<Runner: CommandRunning>: Sendable {
             outputURL: outputURL
         )
         let result = try await runner.run(
-            CommandRequest(
+            MKVToolNixProgress.request(
                 executableURL: executableURL,
                 arguments: arguments,
                 timeout: 24 * 60 * 60,
-                outputLimit: 1_048_576
+                onProgress: onProgress
             )
         )
         guard result.exitCode == 0 else {

@@ -5,6 +5,25 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.2.0 - 2026-08-29
+
+- Replace the verified-output progress sheet's bouncing bar with determinate,
+  accessible stage counts for bounded execution pipelines and item counts for
+  batch workflow queueing and subtitle cleanup. Multi-file inspection also
+  reports the current file and total.
+- Stream MKVToolNix 101's stable `--gui-mode` progress records for `mkvmerge`
+  rendering and selected `mkvextract tracks` work, and show that percentage
+  within the current bounded stage without presenting it as whole-job time.
+- Keep discovery, tool probes, workflow persistence, history export, thumbnail
+  generation, queue work, and encoding benchmarks indeterminate where no honest
+  duration, byte, frame, or item denominator is available yet.
+- Centralize verified-output stage persistence in the history-execution context
+  so every execution route uses one fail-closed recording boundary.
+- Add a named common-user-flow regression suite covering intake and safe removal,
+  metadata and track edits, subtitle cleanup, output naming, lossless join,
+  one-generation planning, saved workflows and queue admission, History,
+  destination collisions, progress, Help, and manual-only updates.
+
 ## 0.1.8 - 2026-08-26
 
 - Add a custom black-and-white Nested Container app icon, install it in every

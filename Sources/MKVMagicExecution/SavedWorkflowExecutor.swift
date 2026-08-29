@@ -73,6 +73,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
         createsUnchangedCopy: Bool = false,
         expectedSourceRevision: MediaFileRevision? = nil,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
@@ -116,6 +117,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                 removesSegmentTitle: removesSegmentTitle,
                 clearsAllTags: clearsAllTags,
                 destinationURL: destinationURL,
+                onProgress: onProgress,
                 onStage: onStage
             )
         }
@@ -139,13 +141,15 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
                         from: source,
                         removal: trackRemoval,
                         attachmentRemoval: attachmentRemoval,
-                        outputURL: outputURL
+                        outputURL: outputURL,
+                        onProgress: onProgress
                     )
                 } else if let attachmentRemoval {
                     try await attachmentRemover.removeAttachments(
                         from: source,
                         removal: attachmentRemoval,
-                        outputURL: outputURL
+                        outputURL: outputURL,
+                        onProgress: onProgress
                     )
                 }
                 if !trackMetadataEdits.isEmpty {

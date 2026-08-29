@@ -539,10 +539,20 @@ explicit VoiceOver names and concise help. The saved-workflow editor also begins
 in its workflow list, names its builder controls, uses Command-S to save, and
 explains why preview is disabled when no inspected media is selected.
 Verified-output progress sheets focus Cancel, use Escape for safe cancellation,
-name their status/progress, and explain why cancellation closes at atomic
-commit. These native AppKit regressions are a baseline, not a claimed manual
-keyboard-only or VoiceOver walkthrough. See
+name their status/progress, count completed bounded execution stages, and
+explain why cancellation closes at atomic commit. Batch workflow queueing and
+subtitle cleanup count completed items; multi-file inspection names the current
+file and total. Bundled MKVToolNix rendering and selected track extraction use
+its stable machine-reported percentage within the current stage. Activity
+spinners remain indeterminate when discovery or an external tool exposes no
+honest denominator. These native AppKit regressions
+are a baseline, not a claimed manual keyboard-only or VoiceOver walkthrough. See
 [docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md](docs/releases/M8_KEYBOARD_VOICEOVER_BASELINE_SLICE.md).
+
+The common-user-flow regression matrix is maintained in
+[docs/testing/COMMON_USER_FLOWS.md](docs/testing/COMMON_USER_FLOWS.md). It links
+the high-level safety and planning journeys to their executable regressions and
+the deeper focused suites that remain authoritative for each subsystem.
 
 The follow-on every-window foundation now gives all 20 implemented AppKit
 window-controller surfaces intentional first focus and explicit assistive

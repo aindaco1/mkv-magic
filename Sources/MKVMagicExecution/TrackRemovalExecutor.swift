@@ -36,6 +36,7 @@ public struct TrackRemovalExecutor<Runner: CommandRunning, Inspector: MediaInspe
         source: MediaAsset,
         removal: TrackRemoval,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (TrackRemovalExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
@@ -49,7 +50,8 @@ public struct TrackRemovalExecutor<Runner: CommandRunning, Inspector: MediaInspe
                 try await remover.removeTracks(
                     from: source,
                     removal: removal,
-                    outputURL: outputURL
+                    outputURL: outputURL,
+                    onProgress: onProgress
                 )
             },
             verify: { output in

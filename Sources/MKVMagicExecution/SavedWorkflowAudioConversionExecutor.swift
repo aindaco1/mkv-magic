@@ -67,6 +67,7 @@ public struct SavedWorkflowAudioConversionExecutor<
         capabilities: FFmpegEncodingCapabilities,
         expectedSourceRevision: MediaFileRevision? = nil,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard workflow.videoConversionChoice == nil else {
@@ -97,7 +98,8 @@ public struct SavedWorkflowAudioConversionExecutor<
                     externalSubtitlePayload: externalSubtitlePayload,
                     createsUnchangedCopy: false,
                     expectedSourceRevision: expectedSourceRevision,
-                    destinationURL: intermediateURL
+                    destinationURL: intermediateURL,
+                    onProgress: onProgress
                 )
                 let preview = try await audioConversionExecutor.preview(
                     source: prepared,

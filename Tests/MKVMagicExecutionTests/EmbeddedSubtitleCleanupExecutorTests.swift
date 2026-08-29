@@ -39,13 +39,16 @@ private actor EmbeddedSubtitleRecordingRunner: CommandRunning {
 
     func run(_ request: CommandRequest) async throws -> CommandResult {
         requests.append(request)
-        if request.arguments.first == "tracks", request.arguments.count == 3,
-            let separator = request.arguments[2].firstIndex(of: ":")
+        let arguments =
+            request.arguments.first == "--gui-mode"
+            ? Array(request.arguments.dropFirst()) : request.arguments
+        if arguments.first == "tracks", arguments.count == 3,
+            let separator = arguments[2].firstIndex(of: ":")
         {
             let outputPath = String(
-                request.arguments[2][request.arguments[2].index(after: separator)...]
+                arguments[2][arguments[2].index(after: separator)...]
             )
-            let inputURL = URL(fileURLWithPath: request.arguments[1])
+            let inputURL = URL(fileURLWithPath: arguments[1])
             let data =
                 inputURL.standardizedFileURL == sourceURL.standardizedFileURL
                 ? sourceSubtitle
@@ -67,13 +70,13 @@ private actor EmbeddedSubtitleRecordingRunner: CommandRunning {
             }
             return Self.success(standardOutput: data)
         }
-        if request.arguments.first == "--output", request.arguments.count > 1 {
-            if let inputPath = request.arguments.first(where: {
+        if arguments.first == "--output", arguments.count > 1 {
+            if let inputPath = arguments.first(where: {
                 ["srt", "ass", "ssa"].contains(URL(fileURLWithPath: $0).pathExtension)
             }) {
                 cleanedInputs.append(try Data(contentsOf: URL(fileURLWithPath: inputPath)))
             }
-            if let timestampArgument = request.arguments.first(where: {
+            if let timestampArgument = arguments.first(where: {
                 $0.hasPrefix("0:")
                     && URL(fileURLWithPath: String($0.dropFirst(2)))
                         .lastPathComponent == "embedded-subtitle-timestamps.txt"
@@ -84,7 +87,7 @@ private actor EmbeddedSubtitleRecordingRunner: CommandRunning {
                 )
             }
             try Data("remuxed".utf8).write(
-                to: URL(fileURLWithPath: request.arguments[1]),
+                to: URL(fileURLWithPath: arguments[1]),
                 options: .withoutOverwriting
             )
             return Self.success()

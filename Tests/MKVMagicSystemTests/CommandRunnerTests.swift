@@ -75,6 +75,39 @@ final class CommandRunnerTests: XCTestCase {
         XCTAssertTrue(result.standardOutput.text.allSatisfy { $0 == "z" })
     }
 
+    func testStreamsBoundedMKVToolNixGUIProgressWithoutParsingOtherOutput() async throws {
+        let collector = CommandProgressCollector()
+        let output = """
+            #GUI#progress 0%
+            #GUI#warning translated diagnostic
+            #GUI#progress 17%\r
+            #GUI#progress 17%
+            #GUI#progress 101%
+            #GUI#progress nope%
+            #GUI#progress 100%
+            """
+        let result = try await FoundationCommandRunner().run(
+            CommandRequest(
+                executableURL: URL(fileURLWithPath: "/usr/bin/printf"),
+                arguments: ["%s", output],
+                progressReporting: CommandProgressReporting(format: .mkvToolNixGUI) {
+                    await collector.append($0)
+                }
+            )
+        )
+
+        XCTAssertEqual(result.standardOutput.text, output)
+        let updates = await collector.snapshot()
+        XCTAssertEqual(
+            updates,
+            [
+                CommandProgressUpdate(completedUnitCount: 0, totalUnitCount: 100),
+                CommandProgressUpdate(completedUnitCount: 17, totalUnitCount: 100),
+                CommandProgressUpdate(completedUnitCount: 100, totalUnitCount: 100),
+            ]
+        )
+    }
+
     func testStreamsAndCanonicalizesDigestLinesAcrossCommandsWithoutOutputLimit() async throws {
         let firstHash = String(repeating: "a", count: 64)
         let secondHash = String(repeating: "B", count: 64)
@@ -382,6 +415,18 @@ final class CommandRunnerTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? CommandRunnerError, .unsafeExecutable)
         }
+    }
+}
+
+private actor CommandProgressCollector {
+    private var updates = [CommandProgressUpdate]()
+
+    func append(_ update: CommandProgressUpdate) {
+        updates.append(update)
+    }
+
+    func snapshot() -> [CommandProgressUpdate] {
+        updates
     }
 }
 

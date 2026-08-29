@@ -82,6 +82,7 @@ public struct MKVRemuxExecutor<
     public func execute(
         preview: MKVRemuxPreview,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
             _ in
         }
@@ -106,11 +107,11 @@ public struct MKVRemuxExecutor<
                     outputURL: outputURL
                 )
                 let result = try await runner.run(
-                    CommandRequest(
+                    MKVToolNixProgress.request(
                         executableURL: mkvmergeURL,
                         arguments: arguments,
                         timeout: 24 * 60 * 60,
-                        outputLimit: 1_048_576
+                        onProgress: onProgress
                     )
                 )
                 guard result.exitCode == 0,

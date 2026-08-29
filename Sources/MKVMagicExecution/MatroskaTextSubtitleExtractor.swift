@@ -16,7 +16,8 @@ struct MatroskaTextSubtitleExtractor<Runner: CommandRunning>: Sendable {
     func extract(
         sourceURL: URL,
         trackID: Int,
-        format: ExternalTextSubtitleFormat
+        format: ExternalTextSubtitleFormat,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws -> Data {
         guard trackID >= 0, Self.safeAbsoluteFilePath(sourceURL) else {
             throw MatroskaTextSubtitleExtractorError.unsafeRequest
@@ -28,11 +29,12 @@ struct MatroskaTextSubtitleExtractor<Runner: CommandRunning>: Sendable {
                 "embedded-subtitle.\(format.filenameExtension)"
             )
             let result = try await runner.run(
-                CommandRequest(
+                MKVToolNixProgress.request(
                     executableURL: mkvextractURL,
                     arguments: ["tracks", sourceURL.path, "\(trackID):\(outputURL.path)"],
                     timeout: 120,
-                    outputLimit: 1_048_576
+                    phase: .extractingTrack,
+                    onProgress: onProgress
                 )
             )
             guard result.exitCode == 0,

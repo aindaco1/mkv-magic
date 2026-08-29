@@ -7,6 +7,13 @@ import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
+private actor RealToolProgressRecorder {
+    private var updates = [VerifiedOutputToolProgress]()
+
+    func append(_ update: VerifiedOutputToolProgress) { updates.append(update) }
+    func snapshot() -> [VerifiedOutputToolProgress] { updates }
+}
+
 final class RealToolMKVRemuxTests: XCTestCase {
     func testBundledToolsPacketCopyChapteredMP4IntoVerifiedMKV() async throws {
         let (catalog, runner, _) = try await requiredTools()
@@ -42,10 +49,16 @@ final class RealToolMKVRemuxTests: XCTestCase {
             XCTAssertEqual(preview.plan.videoEncodeCount, 0)
             XCTAssertEqual(preview.plan.audioEncodeCount, 0)
             XCTAssertEqual(preview.plan.chapterCarrierTrackIDs.count, 1)
+            let progress = RealToolProgressRecorder()
             let output = try await executor.execute(
                 preview: preview,
-                destinationURL: destinationURL
+                destinationURL: destinationURL,
+                onProgress: { await progress.append($0) }
             )
+            let progressUpdates = await progress.snapshot()
+            XCTAssertFalse(progressUpdates.isEmpty)
+            XCTAssertEqual(progressUpdates.last?.phase, .multiplexing)
+            XCTAssertEqual(progressUpdates.last?.percentage, 100)
 
             XCTAssertTrue(output.container.localizedCaseInsensitiveContains("matroska"))
             XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])

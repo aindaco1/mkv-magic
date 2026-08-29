@@ -8,6 +8,7 @@ public struct CommandRequest: Sendable {
     public let currentDirectoryURL: URL?
     public let timeout: TimeInterval
     public let outputLimit: Int
+    public let progressReporting: CommandProgressReporting?
 
     public init(
         executableURL: URL,
@@ -15,7 +16,8 @@ public struct CommandRequest: Sendable {
         environment: [String: String] = CommandRequest.defaultEnvironment,
         currentDirectoryURL: URL? = nil,
         timeout: TimeInterval = 120,
-        outputLimit: Int = 1_048_576
+        outputLimit: Int = 1_048_576,
+        progressReporting: CommandProgressReporting? = nil
     ) {
         self.executableURL = executableURL
         self.arguments = arguments
@@ -23,6 +25,7 @@ public struct CommandRequest: Sendable {
         self.currentDirectoryURL = currentDirectoryURL
         self.timeout = timeout
         self.outputLimit = outputLimit
+        self.progressReporting = progressReporting
     }
 
     public static var defaultEnvironment: [String: String] {
@@ -36,6 +39,38 @@ public struct CommandRequest: Sendable {
             result["TMPDIR"] = temporaryDirectory
         }
         return result
+    }
+}
+
+public struct CommandProgressUpdate: Equatable, Sendable {
+    public let completedUnitCount: Int
+    public let totalUnitCount: Int
+
+    public init(completedUnitCount: Int, totalUnitCount: Int) {
+        self.completedUnitCount = completedUnitCount
+        self.totalUnitCount = totalUnitCount
+    }
+
+    public var fractionCompleted: Double {
+        guard totalUnitCount > 0 else { return 0 }
+        return Double(completedUnitCount) / Double(totalUnitCount)
+    }
+}
+
+public enum CommandProgressFormat: Equatable, Sendable {
+    case mkvToolNixGUI
+}
+
+public struct CommandProgressReporting: Sendable {
+    public let format: CommandProgressFormat
+    public let handler: @Sendable (CommandProgressUpdate) async -> Void
+
+    public init(
+        format: CommandProgressFormat,
+        handler: @escaping @Sendable (CommandProgressUpdate) async -> Void
+    ) {
+        self.format = format
+        self.handler = handler
     }
 }
 
@@ -586,9 +621,10 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
     let launched = try launch(request)
 
     let outputTask = Task.detached {
-        try readBounded(
+        try await readBoundedReportingProgress(
             launched.standardOutput.fileHandleForReading,
-            limit: request.outputLimit
+            limit: request.outputLimit,
+            reporting: request.progressReporting
         )
     }
     let errorTask = Task.detached {
@@ -614,6 +650,94 @@ private func execute(_ request: CommandRequest) async throws -> CommandResult {
         standardError: errorTask.value,
         duration: max(0, ProcessInfo.processInfo.systemUptime - startedAt)
     )
+}
+
+private func readBoundedReportingProgress(
+    _ handle: FileHandle,
+    limit: Int,
+    reporting: CommandProgressReporting?
+) async throws -> CommandOutput {
+    guard let reporting else { return try readBounded(handle, limit: limit) }
+
+    var retained = Data()
+    var wasTruncated = false
+    var parser = CommandProgressParser(format: reporting.format)
+    while let chunk = try handle.read(upToCount: 65_536), !chunk.isEmpty {
+        retained.append(chunk)
+        if retained.count > limit {
+            wasTruncated = true
+            retained.removeFirst(retained.count - limit)
+        }
+        for update in parser.consume(chunk) {
+            await reporting.handler(update)
+        }
+    }
+    if let finalUpdate = parser.finish() {
+        await reporting.handler(finalUpdate)
+    }
+    return CommandOutput(data: retained, wasTruncated: wasTruncated)
+}
+
+private struct CommandProgressParser {
+    private static let maximumLineByteCount = 4_096
+
+    private let format: CommandProgressFormat
+    private var pending = Data()
+    private var discardingOversizedLine = false
+    private var lastCompletedUnitCount = -1
+
+    init(format: CommandProgressFormat) {
+        self.format = format
+    }
+
+    mutating func consume(_ chunk: Data) -> [CommandProgressUpdate] {
+        pending.append(chunk)
+        var updates = [CommandProgressUpdate]()
+        while let newline = pending.firstIndex(of: 10) {
+            let line = Data(pending[..<newline])
+            pending.removeSubrange(...newline)
+            if discardingOversizedLine {
+                discardingOversizedLine = false
+                continue
+            }
+            if let update = parse(line) { updates.append(update) }
+        }
+        if pending.count > Self.maximumLineByteCount {
+            pending.removeAll(keepingCapacity: false)
+            discardingOversizedLine = true
+        }
+        return updates
+    }
+
+    mutating func finish() -> CommandProgressUpdate? {
+        guard !discardingOversizedLine, !pending.isEmpty else { return nil }
+        defer { pending.removeAll(keepingCapacity: false) }
+        return parse(pending)
+    }
+
+    private mutating func parse(_ rawLine: Data) -> CommandProgressUpdate? {
+        switch format {
+        case .mkvToolNixGUI:
+            return parseMKVToolNixGUI(rawLine)
+        }
+    }
+
+    private mutating func parseMKVToolNixGUI(
+        _ rawLine: Data
+    ) -> CommandProgressUpdate? {
+        var line = rawLine
+        if line.last == 13 { line.removeLast() }
+        let prefix = Data("#GUI#progress ".utf8)
+        guard line.starts(with: prefix), line.last == 37 else { return nil }
+        let valueBytes = line.dropFirst(prefix.count).dropLast()
+        guard !valueBytes.isEmpty, valueBytes.count <= 3,
+            valueBytes.allSatisfy({ (48...57).contains($0) }),
+            let value = Int(String(decoding: valueBytes, as: UTF8.self)),
+            (0...100).contains(value), value > lastCompletedUnitCount
+        else { return nil }
+        lastCompletedUnitCount = value
+        return CommandProgressUpdate(completedUnitCount: value, totalUnitCount: 100)
+    }
 }
 
 private func executeStreamingDigest(

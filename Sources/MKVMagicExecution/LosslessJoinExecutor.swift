@@ -77,7 +77,8 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         chaptersURL: URL,
-        outputURL: URL
+        outputURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let arguments = try Self.arguments(
             sources: sources,
@@ -86,11 +87,11 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
             outputURL: outputURL
         )
         let result = try await runner.run(
-            CommandRequest(
+            MKVToolNixProgress.request(
                 executableURL: executableURL,
                 arguments: arguments,
                 timeout: 24 * 60 * 60,
-                outputLimit: 1_048_576
+                onProgress: onProgress
             )
         )
         // mkvmerge uses exit code 1 for a completed file that emitted warnings.
@@ -243,6 +244,7 @@ public struct LosslessJoinExecutor<
     public func execute(
         preview: LosslessJoinPreview,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard destinationURL.pathExtension.lowercased() == "mkv" else {
@@ -273,7 +275,8 @@ public struct LosslessJoinExecutor<
                     sources: preview.sources,
                     mapping: preview.mapping,
                     chaptersURL: chaptersURL,
-                    outputURL: temporaryOutput
+                    outputURL: temporaryOutput,
+                    onProgress: onProgress
                 )
                 try Task.checkCancellation()
                 try validateCurrent(preview)

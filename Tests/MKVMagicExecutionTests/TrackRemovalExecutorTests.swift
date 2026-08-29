@@ -8,11 +8,20 @@ import XCTest
 
 private struct CreatingRemuxRunner: CommandRunning {
     func run(_ request: CommandRequest) async throws -> CommandResult {
-        guard request.arguments.first == "--output", request.arguments.count > 1 else {
+        let arguments = Array(request.arguments.dropFirst())
+        guard request.arguments.first == "--gui-mode",
+            arguments.first == "--output", arguments.count > 1
+        else {
             throw CocoaError(.fileWriteUnknown)
         }
+        await request.progressReporting?.handler(
+            CommandProgressUpdate(completedUnitCount: 33, totalUnitCount: 100)
+        )
+        await request.progressReporting?.handler(
+            CommandProgressUpdate(completedUnitCount: 100, totalUnitCount: 100)
+        )
         try Data("remuxed".utf8).write(
-            to: URL(fileURLWithPath: request.arguments[1]),
+            to: URL(fileURLWithPath: arguments[1]),
             options: .withoutOverwriting
         )
         return CommandResult(
@@ -21,6 +30,13 @@ private struct CreatingRemuxRunner: CommandRunning {
             standardError: CommandOutput(data: Data(), wasTruncated: false)
         )
     }
+}
+
+private actor RemovalProgressRecorder {
+    private var updates = [VerifiedOutputToolProgress]()
+
+    func append(_ update: VerifiedOutputToolProgress) { updates.append(update) }
+    func snapshot() -> [VerifiedOutputToolProgress] { updates }
 }
 
 private struct MutatingRemovalInspector: MediaInspecting {
@@ -62,12 +78,14 @@ final class TrackRemovalExecutorTests: XCTestCase {
             runner: CreatingRemuxRunner(),
             inspector: MutatingRemovalInspector()
         )
+        let progress = RemovalProgressRecorder()
 
         do {
             _ = try await executor.execute(
                 source: source,
                 removal: TrackRemoval(trackUIDs: [20]),
-                destinationURL: destinationURL
+                destinationURL: destinationURL,
+                onProgress: { await progress.append($0) }
             )
             XCTFail("Expected retained-track verification failure")
         } catch {
@@ -76,5 +94,13 @@ final class TrackRemovalExecutorTests: XCTestCase {
 
         XCTAssertEqual(try Data(contentsOf: sourceURL), sourceBytes)
         XCTAssertFalse(FileManager.default.fileExists(atPath: destinationURL.path))
+        let progressUpdates = await progress.snapshot()
+        XCTAssertEqual(
+            progressUpdates,
+            [
+                VerifiedOutputToolProgress(phase: .multiplexing, percentage: 33),
+                VerifiedOutputToolProgress(phase: .multiplexing, percentage: 100),
+            ]
+        )
     }
 }

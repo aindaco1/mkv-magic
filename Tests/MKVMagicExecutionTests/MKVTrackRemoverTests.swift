@@ -56,6 +56,7 @@ final class MKVTrackRemoverTests: XCTestCase {
         XCTAssertEqual(
             request.arguments,
             [
+                "--gui-mode",
                 "--output", output.path,
                 "--abort-on-warnings",
                 "--normalize-language-ietf", "canonical",

@@ -220,7 +220,8 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         metadata: ExternalSubtitleTrackMetadata,
         trackRemoval: TrackRemoval? = nil,
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
-        outputURL: URL
+        outputURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let arguments = try Self.arguments(
             source: source,
@@ -231,11 +232,11 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
             outputURL: outputURL
         )
         let result = try await runner.run(
-            CommandRequest(
+            MKVToolNixProgress.request(
                 executableURL: executableURL,
                 arguments: arguments,
                 timeout: 24 * 60 * 60,
-                outputLimit: 1_048_576
+                onProgress: onProgress
             )
         )
         guard result.exitCode == 0 else {
@@ -330,6 +331,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         subtitlePreview: SubtitleCleanupFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
         }
@@ -339,6 +341,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             subtitlePreview: .subRip(subtitlePreview),
             metadata: metadata,
             destinationURL: destinationURL,
+            onProgress: onProgress,
             onStage: onStage
         )
     }
@@ -348,6 +351,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         subtitlePreview: AdvancedSubtitleCleanupFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
         }
@@ -357,6 +361,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             subtitlePreview: .advanced(subtitlePreview),
             metadata: metadata,
             destinationURL: destinationURL,
+            onProgress: onProgress,
             onStage: onStage
         )
     }
@@ -371,6 +376,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         removesSegmentTitle: Bool = false,
         clearsAllTags: Bool = false,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
         }
@@ -385,6 +391,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
             removesSegmentTitle: removesSegmentTitle,
             clearsAllTags: clearsAllTags,
             destinationURL: destinationURL,
+            onProgress: onProgress,
             onStage: onStage
         )
     }
@@ -399,6 +406,7 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         removesSegmentTitle: Bool = false,
         clearsAllTags: Bool = false,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (ExternalSubtitleMuxExecutionStage) async throws -> Void = {
             _ in
         }
@@ -440,7 +448,8 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
                     metadata: metadata,
                     trackRemoval: trackRemoval,
                     attachmentRemoval: attachmentRemoval,
-                    outputURL: outputURL
+                    outputURL: outputURL,
+                    onProgress: onProgress
                 )
                 if removesSegmentTitle || clearsAllTags || !trackMetadataEdits.isEmpty {
                     guard let propertyEditor else {

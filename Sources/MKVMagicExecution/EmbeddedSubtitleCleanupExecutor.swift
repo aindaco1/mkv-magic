@@ -233,7 +233,8 @@ public struct MKVEmbeddedSubtitleReplacer<Runner: CommandRunning>: Sendable {
         trackUID: UInt64,
         cleanedSubtitleURL: URL,
         timestampsV2URL: URL?,
-        outputURL: URL
+        outputURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let muxArguments = try Self.muxArguments(
             source: source,
@@ -242,7 +243,12 @@ public struct MKVEmbeddedSubtitleReplacer<Runner: CommandRunning>: Sendable {
             timestampsV2URL: timestampsV2URL,
             outputURL: outputURL
         )
-        try await run(tool: "mkvmerge", executableURL: mkvmergeURL, arguments: muxArguments)
+        try await run(
+            tool: "mkvmerge",
+            executableURL: mkvmergeURL,
+            arguments: muxArguments,
+            onProgress: onProgress
+        )
         let propertyArguments = try Self.trackUIDArguments(
             source: source,
             trackUID: trackUID,
@@ -340,14 +346,31 @@ public struct MKVEmbeddedSubtitleReplacer<Runner: CommandRunning>: Sendable {
         return target
     }
 
-    private func run(tool: String, executableURL: URL, arguments: [String]) async throws {
-        let result = try await runner.run(
-            CommandRequest(
+    private func run(
+        tool: String,
+        executableURL: URL,
+        arguments: [String],
+        onProgress: (@Sendable (VerifiedOutputToolProgress) async -> Void)? = nil
+    ) async throws {
+        let request: CommandRequest
+        if let onProgress {
+            request = MKVToolNixProgress.request(
+                executableURL: executableURL,
+                arguments: arguments,
+                timeout: 24 * 60 * 60,
+                onProgress: onProgress
+            )
+        } else {
+            request = CommandRequest(
                 executableURL: executableURL,
                 arguments: arguments,
                 timeout: 24 * 60 * 60,
                 outputLimit: 1_048_576
-            ))
+            )
+        }
+        let result = try await runner.run(
+            request
+        )
         guard result.exitCode == 0 else {
             let output =
                 result.standardError.text.isEmpty
@@ -436,6 +459,7 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         preview: EmbeddedSubtitleCleanupPreview,
         restoringIDs: Set<Int>,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard destinationURL.pathExtension.lowercased() == "mkv" else {
@@ -461,7 +485,8 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
         let extractedData = try await extract(
             sourceURL: current.sourceURL,
             trackID: currentTrack.id,
-            format: preview.format
+            format: preview.format,
+            onProgress: onProgress
         )
         let packetTimeline = try await probePacketTimeline(
             sourceURL: current.sourceURL,
@@ -516,7 +541,8 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
                     trackUID: try Self.trackUID(in: preview),
                     cleanedSubtitleURL: cleanedURL,
                     timestampsV2URL: timestampsV2URL,
-                    outputURL: outputURL
+                    outputURL: outputURL,
+                    onProgress: onProgress
                 )
                 try await verifyPayload(
                     outputURL: outputURL,
@@ -718,13 +744,15 @@ public struct EmbeddedSubtitleCleanupExecutor<Runner: CommandRunning, Inspector:
     private func extract(
         sourceURL: URL,
         trackID: Int,
-        format: ExternalTextSubtitleFormat
+        format: ExternalTextSubtitleFormat,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws -> Data {
         do {
             return try await subtitleExtractor.extract(
                 sourceURL: sourceURL,
                 trackID: trackID,
-                format: format
+                format: format,
+                onProgress: onProgress
             )
         } catch let error as MatroskaTextSubtitleExtractorError {
             switch error {

@@ -18,6 +18,25 @@ final class AppModel {
     private struct HistoryExecution: Sendable {
         let recorder: any JobHistoryRecording
         let jobID: UUID
+
+        func record(_ stage: VerifiedOutputExecutionStage) async throws {
+            switch stage {
+            case .verifying:
+                try await recorder.transition(
+                    jobID: jobID,
+                    to: .verifying,
+                    at: Date(),
+                    message: "Re-inspecting output and comparing preserved structure."
+                )
+            case .committing:
+                try await recorder.transition(
+                    jobID: jobID,
+                    to: .committing,
+                    at: Date(),
+                    message: "Verification passed; committing the new output."
+                )
+            }
+        }
     }
 
     private struct QueueExecution: Sendable {
@@ -164,7 +183,7 @@ final class AppModel {
     enum State: Equatable {
         case ready
         case discovering
-        case inspecting(String)
+        case inspecting(filename: String, completedUnitCount: Int, totalUnitCount: Int)
         case executing(String)
         case completed(String)
         case completedWithWarnings(String)
@@ -180,7 +199,8 @@ final class AppModel {
         var progressMessage: String? {
             switch self {
             case .discovering: "Finding media files…"
-            case .inspecting(let filename): "Inspecting \(filename)…"
+            case .inspecting(let filename, let completed, let total):
+                "Inspecting \(completed + 1) of \(total): \(filename)…"
             case .executing(let message): message
             case .ready, .completed, .completedWithWarnings, .failed: nil
             }
@@ -729,6 +749,9 @@ final class AppModel {
     func executeCommonFormatJoin(
         preview: CommonFormatJoinPreview,
         destinationURL: URL,
+        onAssemblyProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = {
+            _ in
+        },
         onStage: @escaping @MainActor @Sendable (CommonFormatJoinExecutionStage) -> Void = {
             _ in
         }
@@ -778,6 +801,9 @@ final class AppModel {
                 resolvedPlan: preview.resolvedPlan,
                 chapters: preview.candidate.chapters,
                 destinationURL: destinationURL,
+                onAssemblyProgress: { progress in
+                    await onAssemblyProgress(progress)
+                },
                 onStage: { stage in
                     await onStage(stage)
                     if stage == .assembling {
@@ -790,17 +816,9 @@ final class AppModel {
                     }
                     switch stage {
                     case .verifying:
-                        try await Self.record(
-                            .verifying,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        try await execution.record(.verifying)
                     case .committing:
-                        try await Self.record(
-                            .committing,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        try await execution.record(.committing)
                     case .normalizing, .assembling:
                         break
                     }
@@ -828,6 +846,7 @@ final class AppModel {
     func executeLosslessJoin(
         preview: LosslessJoinPreview,
         destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
         onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let scopedURLs = (preview.sources.map(\.sourceURL) + [destinationURL]).map {
@@ -872,6 +891,7 @@ final class AppModel {
             let output = try await executor.execute(
                 preview: preview,
                 destinationURL: destinationURL,
+                onProgress: { progress in await onProgress(progress) },
                 onStage: { [weak self] stage in
                     await onStage(stage)
                     await MainActor.run {
@@ -888,11 +908,7 @@ final class AppModel {
                         }
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             registerInspectedAsset(output)
@@ -978,7 +994,8 @@ final class AppModel {
     @discardableResult
     func executeMatroskaAttachmentExtraction(
         preview: MatroskaAttachmentExtractionPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MatroskaAttachmentExtractionResult {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1019,6 +1036,7 @@ final class AppModel {
                 preview: preview,
                 destinationURL: destinationURL,
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1028,11 +1046,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             await finishHistory(
@@ -1071,7 +1085,9 @@ final class AppModel {
     @discardableResult
     func executeMatroskaAttachmentRemoval(
         preview: MatroskaAttachmentRemovalPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1113,7 +1129,9 @@ final class AppModel {
             ).execute(
                 preview: preview,
                 destinationURL: destinationURL,
+                onProgress: { progress in await onProgress(progress) },
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1123,11 +1141,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             registerInspectedAsset(result)
@@ -1165,7 +1179,8 @@ final class AppModel {
     @discardableResult
     func executeMatroskaTagExport(
         preview: MatroskaTagPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MatroskaTagExportResult {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1208,6 +1223,7 @@ final class AppModel {
                 preview: preview,
                 destinationURL: destinationURL,
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1217,11 +1233,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             await finishHistory(
@@ -1244,7 +1256,8 @@ final class AppModel {
     @discardableResult
     func executeMatroskaTagRemoval(
         preview: MatroskaTagPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1287,6 +1300,7 @@ final class AppModel {
                 preview: preview,
                 destinationURL: destinationURL,
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1296,11 +1310,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             registerInspectedAsset(result)
@@ -1324,7 +1334,9 @@ final class AppModel {
     @discardableResult
     func executeMatroskaTextSubtitleExtraction(
         preview: MatroskaTextSubtitleExtractionPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MatroskaTextSubtitleExtractionResult {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1364,7 +1376,9 @@ final class AppModel {
             ).execute(
                 preview: preview,
                 destinationURL: destinationURL,
+                onProgress: { progress in await onProgress(progress) },
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1374,11 +1388,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             await finishHistory(
@@ -1401,7 +1411,8 @@ final class AppModel {
     @discardableResult
     func executeTimedTextSubtitleConversion(
         preview: TimedTextSubtitleConversionPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> TimedTextSubtitleConversionResult {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1441,6 +1452,7 @@ final class AppModel {
                 preview: preview,
                 destinationURL: destinationURL,
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1450,11 +1462,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             await finishHistory(
@@ -1477,7 +1485,9 @@ final class AppModel {
     @discardableResult
     func executeRemuxToMKV(
         preview: MKVRemuxPreview,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let source = preview.source
         let scopedURLs = [source.sourceURL, destinationURL].map {
@@ -1522,7 +1532,9 @@ final class AppModel {
             ).execute(
                 preview: preview,
                 destinationURL: destinationURL,
+                onProgress: { progress in await onProgress(progress) },
                 onStage: { [weak self] stage in
+                    await onStage(stage)
                     await MainActor.run {
                         guard let self else { return }
                         self.state = .executing(
@@ -1532,11 +1544,7 @@ final class AppModel {
                         )
                         self.didChange?()
                     }
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    try await execution.record(stage)
                 }
             )
             registerInspectedAsset(output)
@@ -1561,6 +1569,7 @@ final class AppModel {
     func executeTrim(
         preview: TrimExecutionPreview,
         destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
         onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let source = preview.source
@@ -1662,13 +1671,10 @@ final class AppModel {
                 ).execute(
                     preview: fast,
                     destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
                     onStage: { stage in
                         await onStage(stage)
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        try await execution.record(stage)
                     }
                 )
             case .exact(let exact):
@@ -1684,11 +1690,7 @@ final class AppModel {
                     destinationURL: destinationURL,
                     onStage: { stage in
                         await onStage(stage)
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        try await execution.record(stage)
                     }
                 )
             }
@@ -1887,8 +1889,12 @@ final class AppModel {
         }
 
         var failures = [String]()
-        for url in inputURLs {
-            state = .inspecting(url.lastPathComponent)
+        for (index, url) in inputURLs.enumerated() {
+            state = .inspecting(
+                filename: url.lastPathComponent,
+                completedUnitCount: index,
+                totalUnitCount: inputURLs.count
+            )
             didChange?()
             do {
                 let revision = try MediaFileRevisionReader().read(url)
@@ -1947,7 +1953,8 @@ final class AppModel {
     func editSegmentTitle(
         in asset: MediaAsset,
         title: String?,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
@@ -1956,7 +1963,8 @@ final class AppModel {
                 .segmentTitle(title),
                 workflowID: BuiltInWorkflowCatalog.segmentTitle,
                 workflowName: "Edit segment title"
-            )
+            ),
+            onStage: onStage
         )
     }
 
@@ -1964,7 +1972,8 @@ final class AppModel {
     func editTrackMetadata(
         in asset: MediaAsset,
         edit: TrackMetadataEdit,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
@@ -1973,7 +1982,8 @@ final class AppModel {
                 .track(edit),
                 workflowID: BuiltInWorkflowCatalog.trackMetadata,
                 workflowName: "Edit track metadata"
-            )
+            ),
+            onStage: onStage
         )
     }
 
@@ -1981,7 +1991,9 @@ final class AppModel {
     func removeTracks(
         in asset: MediaAsset,
         removal: TrackRemoval,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
@@ -1990,7 +2002,9 @@ final class AppModel {
                 removal,
                 workflowID: BuiltInWorkflowCatalog.trackRemoval,
                 workflowName: "Remove tracks"
-            )
+            ),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -1998,7 +2012,9 @@ final class AppModel {
     func cleanEnglishLibrary(
         in asset: MediaAsset,
         removal: TrackRemoval,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
@@ -2007,7 +2023,9 @@ final class AppModel {
                 removal,
                 workflowID: BuiltInWorkflowCatalog.englishLibraryCleanup,
                 workflowName: "English Library Cleanup"
-            )
+            ),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2016,12 +2034,19 @@ final class AppModel {
         _ workflow: CompiledSavedWorkflow,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
         in asset: MediaAsset,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .saved(workflow, externalSubtitlePreview.map(ExternalSubtitleMuxPayload.original))
+            edit: .saved(
+                workflow,
+                externalSubtitlePreview.map(ExternalSubtitleMuxPayload.original)
+            ),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2071,12 +2096,16 @@ final class AppModel {
         _ workflow: CompiledSavedWorkflow,
         externalSubtitlePayload: ExternalSubtitleMuxPayload?,
         in asset: MediaAsset,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .saved(workflow, externalSubtitlePayload)
+            edit: .saved(workflow, externalSubtitlePayload),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2089,7 +2118,9 @@ final class AppModel {
         retryingQueueJobID: UUID? = nil,
         expectedSourceRevision: MediaFileRevision? = nil,
         in asset: MediaAsset,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         let externalSubtitleReview = try queuedExternalSubtitleReview(
             workflow: workflow,
@@ -2110,7 +2141,9 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .saved(workflow, externalSubtitlePayload),
             queueExecution: queueExecution,
-            expectedSourceRevision: expectedSourceRevision
+            expectedSourceRevision: expectedSourceRevision,
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2156,13 +2189,17 @@ final class AppModel {
         in asset: MediaAsset,
         subtitlePreview: SubtitleCleanupFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await muxExternalSubtitle(
             in: asset,
             subtitlePreview: .subRip(subtitlePreview),
             metadata: metadata,
-            destinationURL: destinationURL
+            destinationURL: destinationURL,
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2171,13 +2208,17 @@ final class AppModel {
         in asset: MediaAsset,
         subtitlePreview: AdvancedSubtitleCleanupFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await muxExternalSubtitle(
             in: asset,
             subtitlePreview: .advanced(subtitlePreview),
             metadata: metadata,
-            destinationURL: destinationURL
+            destinationURL: destinationURL,
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2186,12 +2227,16 @@ final class AppModel {
         in asset: MediaAsset,
         subtitlePreview: ExternalSubtitleFilePreview,
         metadata: ExternalSubtitleTrackMetadata,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .externalSubtitle(subtitlePreview, metadata)
+            edit: .externalSubtitle(subtitlePreview, metadata),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2199,12 +2244,16 @@ final class AppModel {
     func cleanEmbeddedSubtitle(
         preview: EmbeddedSubtitleCleanupPreview,
         restoringIDs: Set<Int>,
-        destinationURL: URL
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: preview.source,
             destinationURL: destinationURL,
-            edit: .embeddedSubtitle(preview, restoringIDs: restoringIDs)
+            edit: .embeddedSubtitle(preview, restoringIDs: restoringIDs),
+            onProgress: onProgress,
+            onStage: onStage
         )
     }
 
@@ -2212,12 +2261,14 @@ final class AppModel {
     func editChapters(
         preview: ChapterEditPreview,
         desired: MatroskaChapterDocument,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         try await executeVerifiedEdit(
             in: preview.source,
             destinationURL: destinationURL,
-            edit: .chapters(preview, desired)
+            edit: .chapters(preview, desired),
+            onStage: onStage
         )
     }
 
@@ -2225,7 +2276,8 @@ final class AppModel {
     func cleanSubtitle(
         preview: SubtitleCleanupFilePreview,
         restoringCueIDs: Set<Int>,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> SubtitleCleanupResult {
         try await executeTextSubtitleCleanup(
             sourceURL: preview.sourceURL,
@@ -2239,11 +2291,8 @@ final class AppModel {
                 restoringCueIDs: restoringCueIDs,
                 destinationURL: destinationURL,
                 onStage: { stage in
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    await onStage(stage)
+                    try await execution.record(stage)
                 }
             )
         }
@@ -2253,7 +2302,8 @@ final class AppModel {
     func cleanAdvancedSubtitle(
         preview: AdvancedSubtitleCleanupFilePreview,
         restoringEventIDs: Set<Int>,
-        destinationURL: URL
+        destinationURL: URL,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> AdvancedSubtitleCleanupResult {
         try await executeTextSubtitleCleanup(
             sourceURL: preview.sourceURL,
@@ -2268,11 +2318,8 @@ final class AppModel {
                 restoringEventIDs: restoringEventIDs,
                 destinationURL: destinationURL,
                 onStage: { stage in
-                    try await Self.record(
-                        stage,
-                        jobID: execution.jobID,
-                        using: execution.recorder
-                    )
+                    await onStage(stage)
+                    try await execution.record(stage)
                 }
             )
         }
@@ -2331,7 +2378,9 @@ final class AppModel {
         destinationURL: URL,
         edit: VerifiedEdit,
         queueExecution: QueueExecution? = nil,
-        expectedSourceRevision: MediaFileRevision? = nil
+        expectedSourceRevision: MediaFileRevision? = nil,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
         if case .saved(let workflow, _) = edit,
             workflow.videoConversionChoice != nil || workflow.audioConversionPreset != nil,
@@ -2379,11 +2428,8 @@ final class AppModel {
                     edit: metadataEdit,
                     destinationURL: destinationURL,
                     onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        await onStage(stage)
+                        try await execution.record(stage)
                     }
                 )
             case .trackRemoval(let removal, _, _):
@@ -2396,12 +2442,10 @@ final class AppModel {
                     source: asset,
                     removal: removal,
                     destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
                     onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        await onStage(stage)
+                        try await execution.record(stage)
                     }
                 )
             case .saved(let workflow, let externalSubtitlePayload):
@@ -2422,12 +2466,10 @@ final class AppModel {
                             sourceRevision: sourceRevision
                         ),
                         destinationURL: destinationURL,
+                        onProgress: { progress in await onProgress(progress) },
                         onStage: { stage in
-                            try await Self.record(
-                                stage,
-                                jobID: execution.jobID,
-                                using: execution.recorder
-                            )
+                            await onStage(stage)
+                            try await execution.record(stage)
                         }
                     )
                 } else if workflow.videoConversionChoice != nil {
@@ -2447,12 +2489,10 @@ final class AppModel {
                         capabilities: cachedEncodingCapabilities ?? .unavailable,
                         expectedSourceRevision: expectedSourceRevision,
                         destinationURL: destinationURL,
+                        onProgress: { progress in await onProgress(progress) },
                         onStage: { stage in
-                            try await Self.record(
-                                stage,
-                                jobID: execution.jobID,
-                                using: execution.recorder
-                            )
+                            await onStage(stage)
+                            try await execution.record(stage)
                         }
                     )
                 } else if workflow.audioConversionPreset != nil {
@@ -2472,12 +2512,10 @@ final class AppModel {
                         capabilities: cachedEncodingCapabilities ?? .unavailable,
                         expectedSourceRevision: expectedSourceRevision,
                         destinationURL: destinationURL,
+                        onProgress: { progress in await onProgress(progress) },
                         onStage: { stage in
-                            try await Self.record(
-                                stage,
-                                jobID: execution.jobID,
-                                using: execution.recorder
-                            )
+                            await onStage(stage)
+                            try await execution.record(stage)
                         }
                     )
                 } else {
@@ -2500,12 +2538,10 @@ final class AppModel {
                         createsUnchangedCopy: workflow.createsUnchangedCopy,
                         expectedSourceRevision: expectedSourceRevision,
                         destinationURL: destinationURL,
+                        onProgress: { progress in await onProgress(progress) },
                         onStage: { stage in
-                            try await Self.record(
-                                stage,
-                                jobID: execution.jobID,
-                                using: execution.recorder
-                            )
+                            await onStage(stage)
+                            try await execution.record(stage)
                         }
                     )
                 }
@@ -2521,12 +2557,10 @@ final class AppModel {
                     subtitlePreview: subtitlePreview,
                     metadata: metadata,
                     destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
                     onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        await onStage(stage)
+                        try await execution.record(stage)
                     }
                 )
             case .embeddedSubtitle(let preview, let restoringIDs):
@@ -2542,12 +2576,10 @@ final class AppModel {
                     preview: preview,
                     restoringIDs: restoringIDs,
                     destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
                     onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        await onStage(stage)
+                        try await execution.record(stage)
                     }
                 )
             case .chapters(let preview, let desired):
@@ -2562,11 +2594,8 @@ final class AppModel {
                     desired: desired,
                     destinationURL: destinationURL,
                     onStage: { stage in
-                        try await Self.record(
-                            stage,
-                            jobID: execution.jobID,
-                            using: execution.recorder
-                        )
+                        await onStage(stage)
+                        try await execution.record(stage)
                     }
                 )
             }
@@ -3282,29 +3311,6 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         return "Edit stopped before a verified commit."
-    }
-
-    private static func record(
-        _ stage: VerifiedOutputExecutionStage,
-        jobID: UUID,
-        using recorder: any JobHistoryRecording
-    ) async throws {
-        switch stage {
-        case .verifying:
-            try await recorder.transition(
-                jobID: jobID,
-                to: .verifying,
-                at: Date(),
-                message: "Re-inspecting output and comparing preserved structure."
-            )
-        case .committing:
-            try await recorder.transition(
-                jobID: jobID,
-                to: .committing,
-                at: Date(),
-                message: "Verification passed; committing the new output."
-            )
-        }
     }
 
     nonisolated private static func historyInput(_ asset: MediaAsset) -> MediaJobInput {

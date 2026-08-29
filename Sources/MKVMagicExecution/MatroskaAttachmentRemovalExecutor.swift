@@ -56,7 +56,8 @@ public struct MKVAttachmentRemover<Runner: CommandRunning>: Sendable {
     public func removeAttachments(
         from source: MediaAsset,
         removal: MatroskaAttachmentRemoval,
-        outputURL: URL
+        outputURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let arguments = try Self.arguments(
             source: source,
@@ -64,11 +65,11 @@ public struct MKVAttachmentRemover<Runner: CommandRunning>: Sendable {
             outputURL: outputURL
         )
         let result = try await runner.run(
-            CommandRequest(
+            MKVToolNixProgress.request(
                 executableURL: executableURL,
                 arguments: arguments,
                 timeout: 24 * 60 * 60,
-                outputLimit: 1_048_576
+                onProgress: onProgress
             )
         )
         guard result.exitCode == 0,
@@ -164,6 +165,7 @@ public struct MatroskaAttachmentRemovalExecutor<
     public func execute(
         preview: MatroskaAttachmentRemovalPreview,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
             _ in
         }
@@ -194,7 +196,8 @@ public struct MatroskaAttachmentRemovalExecutor<
                 try await remover.removeAttachments(
                     from: current,
                     removal: preview.removal,
-                    outputURL: outputURL
+                    outputURL: outputURL,
+                    onProgress: onProgress
                 )
             },
             verify: { output in

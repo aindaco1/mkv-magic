@@ -20,14 +20,17 @@ private actor SavedWorkflowRecordingRunner: CommandRunning {
     func run(_ request: CommandRequest) async throws -> CommandResult {
         executableNames.append(request.executableURL.lastPathComponent)
         requests.append(request)
+        let arguments =
+            request.arguments.first == "--gui-mode"
+            ? Array(request.arguments.dropFirst()) : request.arguments
         if request.executableURL.lastPathComponent == "mkvextract",
-            request.arguments.first == "tracks",
-            request.arguments.count == 3,
-            let separator = request.arguments[2].firstIndex(of: ":"),
+            arguments.first == "tracks",
+            arguments.count == 3,
+            let separator = arguments[2].firstIndex(of: ":"),
             let subtitleData = subtitleInputs.last
         {
             let outputPath = String(
-                request.arguments[2][request.arguments[2].index(after: separator)...]
+                arguments[2][arguments[2].index(after: separator)...]
             )
             try subtitleData.write(
                 to: URL(fileURLWithPath: outputPath),
@@ -35,14 +38,14 @@ private actor SavedWorkflowRecordingRunner: CommandRunning {
             )
         }
         if request.executableURL.lastPathComponent == "mkvmerge" {
-            guard request.arguments.first == "--output", request.arguments.count > 1 else {
+            guard arguments.first == "--output", arguments.count > 1 else {
                 throw CocoaError(.fileWriteUnknown)
             }
             try Data("remuxed".utf8).write(
-                to: URL(fileURLWithPath: request.arguments[1]),
+                to: URL(fileURLWithPath: arguments[1]),
                 options: .withoutOverwriting
             )
-            if let subtitlePath = request.arguments.first(where: {
+            if let subtitlePath = arguments.first(where: {
                 URL(fileURLWithPath: $0).lastPathComponent.hasPrefix("external-subtitle.")
             }) {
                 subtitleInputs.append(try Data(contentsOf: URL(fileURLWithPath: subtitlePath)))

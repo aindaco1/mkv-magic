@@ -4,11 +4,22 @@ import MKVMagicMedia
 import MKVMagicPlanning
 import MKVMagicSystem
 
-public enum CommonFormatJoinExecutionStage: Equatable, Sendable {
+public enum CommonFormatJoinExecutionStage: Equatable, Sendable, BoundedExecutionStage {
     case normalizing
     case assembling
     case verifying
     case committing
+
+    public static let totalUnitCount = 4
+
+    public var completedUnitCount: Int {
+        switch self {
+        case .normalizing: 0
+        case .assembling: 1
+        case .verifying: 2
+        case .committing: 3
+        }
+    }
 }
 
 /// Runs the reviewed common-format join as one private pipeline. Encoded lanes
@@ -46,6 +57,9 @@ public struct CommonFormatJoinExecutor<
         resolvedPlan: ResolvedJoinNormalizationPlan,
         chapters: JoinedChapterComposition,
         destinationURL: URL,
+        onAssemblyProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = {
+            _ in
+        },
         onStage: @escaping @Sendable (CommonFormatJoinExecutionStage) async throws -> Void = {
             _ in
         }
@@ -87,6 +101,7 @@ public struct CommonFormatJoinExecutor<
             return try await finalExecutor.execute(
                 preview: finalPreview,
                 destinationURL: destinationURL,
+                onProgress: onAssemblyProgress,
                 onStage: { stage in
                     switch stage {
                     case .verifying: try await onStage(.verifying)

@@ -13,11 +13,6 @@ public enum MatroskaMetadataExecutionError: Error, Equatable, Sendable {
     case committedOutputAuditFailed(outputURL: URL, reason: String)
 }
 
-public enum VerifiedOutputExecutionStage: Equatable, Sendable {
-    case verifying
-    case committing
-}
-
 public typealias MatroskaMetadataExecutionStage = VerifiedOutputExecutionStage
 
 extension MatroskaMetadataExecutionError: LocalizedError {

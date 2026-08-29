@@ -940,8 +940,14 @@ names and help; plan review uses Return to accept and Escape to cancel. These
 contracts have AppKit regressions. The saved-workflow editor begins in its
 workflow list, exposes explicit builder semantics, uses Command-S to save, and
 explains its unavailable preview prerequisite. Verified-output progress begins
-on Cancel, maps Escape to safe cancellation, names status/progress, and explains
-why cancellation closes at atomic commit. A packaged manual keyboard/VoiceOver
+on Cancel, maps Escape to safe cancellation, names status/progress, counts
+completed bounded execution stages, and explains why cancellation closes at
+atomic commit. Batch workflow queueing and subtitle cleanup count completed
+items, while multi-file inspection reports current and total files. `mkvmerge`
+and supported `mkvextract tracks` work consume MKVToolNix's stable `--gui-mode`
+percentage within the current bounded stage; it is not labeled as a whole-job
+time estimate. Discovery and external-tool activity remain indeterminate when
+no honest duration, byte, frame, or item denominator exists. A packaged manual keyboard/VoiceOver
 walkthrough and the rest of the app surface remain M8 acceptance work.
 
 The chapter editor is a dedicated window or workspace with a synchronized outline/table, timeline, thumbnails, analysis suggestions, and inspector.
@@ -1121,6 +1127,13 @@ Private beta media remains outside version control. Record anonymized input fact
 - Trash collision and Trash failure.
 
 ### 11.5 Coverage and continuous security gates
+
+The named common-user-flow matrix in `docs/testing/COMMON_USER_FLOWS.md` keeps
+one readable regression path across intake, source preservation, zero-encode
+editing, subtitles, joins and one-generation planning, saved workflows and
+queue admission, History, collision-safe destinations, progress, Help, and
+manual-only updates. These high-level contracts complement rather than replace
+the focused unit, planner, integration, fault, accessibility, and release gates.
 
 - Collect Swift coverage in CI and publish a per-target report. Domain, Planning, Verification, chapter/subtitle rules, workflow migrations, and transaction state machines target at least 90% line coverage; non-UI Swift targets collectively target at least 80% before public beta.
 - AppKit rendering and platform adapters are not excused by a low-value line metric: cover their policy through fakes and contract tests, then exercise real file panels, bookmarks, queue actions, cancellation, error recovery, and update controls with focused UI/integration tests.

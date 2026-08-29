@@ -22,16 +22,19 @@ private actor SubtitleMuxRecordingRunner: CommandRunning {
 
     func run(_ request: CommandRequest) async throws -> CommandResult {
         requests.append(request)
-        if request.arguments.first == "tracks",
-            request.arguments.count == 3,
-            let separator = request.arguments[2].firstIndex(of: ":"),
+        let arguments =
+            request.arguments.first == "--gui-mode"
+            ? Array(request.arguments.dropFirst()) : request.arguments
+        if arguments.first == "tracks",
+            arguments.count == 3,
+            let separator = arguments[2].firstIndex(of: ":"),
             let subtitleData =
-                (URL(fileURLWithPath: request.arguments[1]).lastPathComponent == "working-copy.mkv"
+                (URL(fileURLWithPath: arguments[1]).lastPathComponent == "working-copy.mkv"
                     ? extractedSubtitleOverride : committedExtractedSubtitleOverride)
                 ?? extractedSubtitleOverride ?? subtitleInputs.last
         {
             let outputPath = String(
-                request.arguments[2][request.arguments[2].index(after: separator)...])
+                arguments[2][arguments[2].index(after: separator)...])
             try subtitleData.write(
                 to: URL(fileURLWithPath: outputPath),
                 options: .withoutOverwriting
@@ -42,16 +45,16 @@ private actor SubtitleMuxRecordingRunner: CommandRunning {
                 standardError: CommandOutput(data: Data(), wasTruncated: false)
             )
         }
-        if let subtitlePath = request.arguments.first(where: {
+        if let subtitlePath = arguments.first(where: {
             URL(fileURLWithPath: $0).lastPathComponent.hasPrefix("external-subtitle.")
         }) {
             subtitleInputs.append(try Data(contentsOf: URL(fileURLWithPath: subtitlePath)))
         }
-        guard request.arguments.first == "--output", request.arguments.count > 1 else {
+        guard arguments.first == "--output", arguments.count > 1 else {
             throw CocoaError(.fileWriteUnknown)
         }
         try Data("muxed".utf8).write(
-            to: URL(fileURLWithPath: request.arguments[1]),
+            to: URL(fileURLWithPath: arguments[1]),
             options: .withoutOverwriting
         )
         return CommandResult(
@@ -153,7 +156,7 @@ final class ExternalSubtitleMuxExecutorTests: XCTestCase {
         let subtitleInputs = await runner.subtitleInputs
 
         XCTAssertEqual(payload.appliedCleanupChangeCount, 2)
-        XCTAssertEqual(requests.filter { $0.arguments.first == "--output" }.count, 1)
+        XCTAssertEqual(requests.filter { $0.arguments.first == "--gui-mode" }.count, 1)
         XCTAssertEqual(requests.filter { $0.arguments.first == "tracks" }.count, 2)
         XCTAssertEqual(
             subtitleInputs,
@@ -275,18 +278,20 @@ final class ExternalSubtitleMuxExecutorTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputURL.path))
         XCTAssertEqual(requests.count, 1)
         XCTAssertEqual(requests[0].executableURL.path, "/tools/mkvmerge")
+        XCTAssertEqual(requests[0].arguments.first, "--gui-mode")
+        let muxArguments = Array(requests[0].arguments.dropFirst())
         XCTAssertEqual(
-            requests[0].arguments.prefix(6),
+            muxArguments.prefix(6),
             [
-                "--output", requests[0].arguments[1],
+                "--output", muxArguments[1],
                 "--abort-on-warnings",
                 "--normalize-language-ietf", "canonical",
                 "--disable-track-statistics-tags",
             ])
-        XCTAssertTrue(requests[0].arguments.contains(sourceURL.path))
-        XCTAssertTrue(requests[0].arguments.contains("0:en"))
-        XCTAssertTrue(requests[0].arguments.contains("0:Forced"))
-        XCTAssertEqual(requests[0].arguments.suffix(2), ["--track-order", "0:0,1:0"])
+        XCTAssertTrue(muxArguments.contains(sourceURL.path))
+        XCTAssertTrue(muxArguments.contains("0:en"))
+        XCTAssertTrue(muxArguments.contains("0:Forced"))
+        XCTAssertEqual(muxArguments.suffix(2), ["--track-order", "0:0,1:0"])
         let normalizedSubtitlePath = try XCTUnwrap(
             requests[0].arguments.first(where: {
                 URL(fileURLWithPath: $0).lastPathComponent == "external-subtitle.srt"

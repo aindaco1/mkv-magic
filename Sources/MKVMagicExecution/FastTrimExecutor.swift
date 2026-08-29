@@ -144,6 +144,7 @@ public struct FastTrimExecutor<Runner: CommandRunning, Inspector: MediaInspectin
     public func execute(
         preview: FastTrimPreview,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
     ) async throws -> MediaAsset {
         guard supports(preview.source) else { throw FastTrimExecutionError.unsupportedSource }
@@ -167,11 +168,11 @@ public struct FastTrimExecutor<Runner: CommandRunning, Inspector: MediaInspectin
                     outputURL: outputURL
                 )
                 let merge = try await runner.run(
-                    CommandRequest(
+                    MKVToolNixProgress.request(
                         executableURL: mkvmergeURL,
                         arguments: command.arguments,
                         timeout: 24 * 60 * 60,
-                        outputLimit: 1_048_576
+                        onProgress: onProgress
                     )
                 )
                 try requireSuccess(merge, tool: "mkvmerge")

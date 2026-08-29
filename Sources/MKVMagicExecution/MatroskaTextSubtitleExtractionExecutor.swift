@@ -142,6 +142,7 @@ public struct MatroskaTextSubtitleExtractionExecutor<
     public func execute(
         preview: MatroskaTextSubtitleExtractionPreview,
         destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
             _ in
         }
@@ -169,7 +170,8 @@ public struct MatroskaTextSubtitleExtractionExecutor<
         let data = try await extract(
             sourceURL: current.sourceURL,
             trackID: preview.track.id,
-            format: preview.format
+            format: preview.format,
+            onProgress: onProgress
         )
         let document = try Self.parse(data, format: preview.format)
         try Task.checkCancellation()
@@ -234,13 +236,15 @@ public struct MatroskaTextSubtitleExtractionExecutor<
     private func extract(
         sourceURL: URL,
         trackID: Int,
-        format: ExternalTextSubtitleFormat
+        format: ExternalTextSubtitleFormat,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws -> Data {
         do {
             return try await extractor.extract(
                 sourceURL: sourceURL,
                 trackID: trackID,
-                format: format
+                format: format,
+                onProgress: onProgress
             )
         } catch let error as MatroskaTextSubtitleExtractorError {
             switch error {

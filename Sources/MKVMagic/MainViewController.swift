@@ -1110,6 +1110,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 let output = try await model.executeTrim(
                     preview: preview,
                     destinationURL: destination.url,
+                    onProgress: { toolProgress in
+                        progress?.update(toolProgress: toolProgress)
+                    },
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1321,6 +1324,12 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 let output = try await model.executeCommonFormatJoin(
                     preview: preview,
                     destinationURL: destination.url,
+                    onAssemblyProgress: { toolProgress in
+                        progress?.update(
+                            toolProgress: toolProgress,
+                            completedStageCount: 1
+                        )
+                    },
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1436,6 +1445,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 let output = try await model.executeLosslessJoin(
                     preview: preview,
                     destinationURL: destination.url,
+                    onProgress: { toolProgress in
+                        progress?.update(toolProgress: toolProgress)
+                    },
                     onStage: { stage in progress?.update(stage: stage) }
                 )
                 preferredSelectionURL = output.sourceURL
@@ -1665,9 +1677,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
         disableEditingControls()
-        let progress = VerifiedOutputProgressWindowController.verifiedChange(
+        let progress = VerifiedOutputProgressWindowController.batch(
             title: "Adding Workflow Batch",
-            initialMessage: "Preparing the first of \(items.count) independent queue jobs…"
+            initialMessage: "Preparing the first of \(items.count) independent queue jobs…",
+            itemCount: items.count
         )
         batchProgressWindowController = progress
         progress.beginSheet(for: parentWindow)
@@ -1680,6 +1693,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 do {
                     try Task.checkCancellation()
                     progress?.update(
+                        completedUnitCount: index,
                         message:
                             "Queueing \(index + 1) of \(items.count): \(item.asset.sourceURL.lastPathComponent)"
                     )
@@ -1715,6 +1729,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 } catch {
                     failed += 1
                 }
+                progress?.update(completedUnitCount: index + 1)
             }
             progress?.finish()
             batchProgressWindowController = nil
@@ -2350,9 +2365,10 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
             return
         }
         disableEditingControls()
-        let progress = VerifiedOutputProgressWindowController.verifiedChange(
+        let progress = VerifiedOutputProgressWindowController.batch(
             title: "Cleaning Subtitles",
-            initialMessage: "Preparing the first of \(items.count) verified subtitle outputs…"
+            initialMessage: "Preparing the first of \(items.count) verified subtitle outputs…",
+            itemCount: items.count
         )
         batchProgressWindowController = progress
         progress.beginSheet(for: parentWindow)
@@ -2364,6 +2380,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 do {
                     try Task.checkCancellation()
                     progress?.update(
+                        completedUnitCount: index,
                         message:
                             "Cleaning \(index + 1) of \(items.count): \(item.asset.sourceURL.lastPathComponent)"
                     )
@@ -2404,6 +2421,7 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 } catch {
                     failed += 1
                 }
+                progress?.update(completedUnitCount: index + 1)
             }
             progress?.finish()
             batchProgressWindowController = nil
@@ -3205,32 +3223,46 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                 self.refresh()
             }
             do {
+                let onToolProgress: @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = {
+                    [weak progress] toolProgress in
+                    progress?.update(toolProgress: toolProgress)
+                }
+                let onStage: @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = {
+                    [weak progress] stage in
+                    progress?.update(stage: stage)
+                }
                 let outputURL: URL
                 switch pendingChange {
                 case .segmentTitle(let title):
                     outputURL = try await model.editSegmentTitle(
                         in: asset,
                         title: title,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).sourceURL
                 case .track(let edit):
                     outputURL = try await model.editTrackMetadata(
                         in: asset,
                         edit: edit,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).sourceURL
                 case .trackRemoval(let removal, let isEnglishCleanup):
                     if isEnglishCleanup {
                         outputURL = try await model.cleanEnglishLibrary(
                             in: asset,
                             removal: removal,
-                            destinationURL: destination.url
+                            destinationURL: destination.url,
+                            onProgress: onToolProgress,
+                            onStage: onStage
                         ).sourceURL
                     } else {
                         outputURL = try await model.removeTracks(
                             in: asset,
                             removal: removal,
-                            destinationURL: destination.url
+                            destinationURL: destination.url,
+                            onProgress: onToolProgress,
+                            onStage: onStage
                         ).sourceURL
                     }
                 case .savedWorkflow(let prepared):
@@ -3242,73 +3274,92 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
                         retryingQueueJobID: prepared.retryingQueueJobID,
                         expectedSourceRevision: prepared.expectedSourceRevision,
                         in: asset,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).sourceURL
                 case .subtitleCleanup(let preview, let restoringCueIDs):
                     outputURL = try await model.cleanSubtitle(
                         preview: preview,
                         restoringCueIDs: restoringCueIDs,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).outputURL
                 case .advancedSubtitleCleanup(let preview, let restoringEventIDs):
                     outputURL = try await model.cleanAdvancedSubtitle(
                         preview: preview,
                         restoringEventIDs: restoringEventIDs,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).outputURL
                 case .externalSubtitle(let preview, let metadata):
                     outputURL = try await model.muxExternalSubtitle(
                         in: asset,
                         subtitlePreview: preview,
                         metadata: metadata,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).sourceURL
                 case .embeddedSubtitle(let preview, let restoringIDs):
                     outputURL = try await model.cleanEmbeddedSubtitle(
                         preview: preview,
                         restoringIDs: restoringIDs,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).sourceURL
                 case .timedTextSubtitle(let preview):
                     outputURL = try await model.executeTimedTextSubtitleConversion(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).outputURL
                 case .textSubtitleExtraction(let preview):
                     outputURL = try await model.executeMatroskaTextSubtitleExtraction(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).outputURL
                 case .attachmentExtraction(let preview):
                     outputURL = try await model.executeMatroskaAttachmentExtraction(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).outputURL
                 case .attachmentRemoval(let preview):
                     outputURL = try await model.executeMatroskaAttachmentRemoval(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).sourceURL
                 case .tagExport(let preview):
                     outputURL = try await model.executeMatroskaTagExport(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).outputURL
                 case .tagRemoval(let preview):
                     outputURL = try await model.executeMatroskaTagRemoval(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).sourceURL
                 case .chapters(let preview, let desired):
                     outputURL = try await model.editChapters(
                         preview: preview,
                         desired: desired,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onStage: onStage
                     ).sourceURL
                 case .remuxToMKV(let preview):
                     outputURL = try await model.executeRemuxToMKV(
                         preview: preview,
-                        destinationURL: destination.url
+                        destinationURL: destination.url,
+                        onProgress: onToolProgress,
+                        onStage: onStage
                     ).sourceURL
                 }
                 preferredSelectionURL =
@@ -3690,9 +3741,9 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
         case .discovering:
             lastAnnouncedModelFailure = nil
             statusLabel.stringValue = "Finding media files…"
-        case .inspecting(let filename):
+        case .inspecting(let filename, let completed, let total):
             lastAnnouncedModelFailure = nil
-            statusLabel.stringValue = "Inspecting \(filename)…"
+            statusLabel.stringValue = "Inspecting \(completed + 1) of \(total): \(filename)…"
         case .executing(let message):
             lastAnnouncedModelFailure = nil
             statusLabel.stringValue = message

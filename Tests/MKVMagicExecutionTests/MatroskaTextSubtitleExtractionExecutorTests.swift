@@ -157,10 +157,11 @@ final class MatroskaTextSubtitleExtractionExecutorTests: XCTestCase {
         XCTAssertTrue(
             requests.allSatisfy { request in
                 request.executableURL.path == "/tools/mkvextract"
-                    && request.arguments.count == 3
-                    && request.arguments[0] == "tracks"
-                    && request.arguments[1] == fixture.sourceURL.path
-                    && request.arguments[2].hasPrefix("2:/")
+                    && request.arguments.count == 4
+                    && request.arguments[0] == "--gui-mode"
+                    && request.arguments[1] == "tracks"
+                    && request.arguments[2] == fixture.sourceURL.path
+                    && request.arguments[3].hasPrefix("2:/")
                     && !request.arguments.contains("sh")
             }
         )
