@@ -659,6 +659,11 @@ cannot ride inside the app. A real pinned-runtime DMG rehearsal passed both
 ARM64 and Rosetta x86_64 tool launch checks. See
 [docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md](docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md).
 
+The current runtime layout packages each helper and its Qt library as one
+Universal Mach-O under `Resources/Tools/universal`. macOS selects the native
+slice, and release validation rejects a thin helper or the former split tree so
+an Intel-only bundled component cannot reintroduce the Apple Silicon warning.
+
 Release verification now goes beyond tool version output: the mounted signed
 app creates, inspects, safely edits, verifies, preserves, and extracts a fixed
 Matroska fixture under both ARM64 and x86_64 sandbox inheritance. See
@@ -724,7 +729,9 @@ same commit, verify that artifact's GitHub-hosted provenance and metadata, and
 reject unsafe archive layouts before reuse. Release still reruns the shared
 source contract, assembles a fresh Universal app, signs and notarizes it, and
 performs both native-architecture DMG checks. CodeQL analyzes one ARM64 build;
-the separate CI and release gates retain the Universal binary requirement. See
+the analyzed build retains Release configuration but disables optimizer work
+that CodeQL does not require, while retained SARIF and the separate CI/release
+gates preserve the security and Universal-binary evidence. See
 [docs/releases/M9_VERIFIED_BUILD_REUSE_SLICE.md](docs/releases/M9_VERIFIED_BUILD_REUSE_SLICE.md).
 
 Candidate notes for a possible 0.1.0 beta now describe only currently executable

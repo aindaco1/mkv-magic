@@ -37,35 +37,35 @@ for license_file in "${required_license_files[@]}"; do
 done
 validate_mkv_magic_tool_source_manifest "$sources"
 expected_tools=(ffmpeg ffprobe mkvmerge mkvpropedit mkvextract)
-for architecture in arm64 x86_64; do
-    architecture_root="$tool_root/$architecture"
-    manifest="$architecture_root/manifest.json"
-    if [[ ! -d "$architecture_root" || -L "$architecture_root" || \
+runtime_architecture=universal
+runtime_root="$tool_root/$runtime_architecture"
+manifest="$runtime_root/manifest.json"
+if [[ ! -d "$runtime_root" || -L "$runtime_root" || \
           ! -f "$manifest" || -L "$manifest" ]]; then
-        echo "missing or unsafe $architecture tool tree" >&2
-        exit 1
-    fi
+    echo "missing or unsafe Universal tool tree" >&2
+    exit 1
+fi
     schema="$(jq -r '.schema' "$manifest")"
     manifest_architecture="$(jq -r '.architecture' "$manifest")"
     manifest_platform="$(jq -r '.platform' "$manifest")"
     keys="$(jq -r 'keys | sort | join(",")' "$manifest")"
-    if [[ "$schema" != mkv-magic-tool-manifest-v1 || \
-          "$manifest_architecture" != "$architecture" || \
+    if [[ "$schema" != mkv-magic-tool-manifest-v2 || \
+          "$manifest_architecture" != "$runtime_architecture" || \
           "$manifest_platform" != macos || \
           "$keys" != architecture,libraries,platform,schema,tools ]]; then
-        echo "invalid $architecture tool manifest identity" >&2
+        echo "invalid Universal tool manifest identity" >&2
         exit 1
     fi
     if [[ "$(jq '.tools | length' "$manifest")" -ne 5 ]]; then
-        echo "$architecture tool manifest must contain exactly five tools" >&2
+        echo "Universal tool manifest must contain exactly five tools" >&2
         exit 1
     fi
-    build_manifest="$architecture_root/build-manifest.json"
+    build_manifest="$runtime_root/build-manifest.json"
     if [[ -e "$build_manifest" ]]; then
         if [[ ! -f "$build_manifest" || -L "$build_manifest" ]] || \
-            ! jq -e --arg architecture "$architecture" '
+            ! jq -e --arg architecture "$runtime_architecture" '
                 (keys | sort) == ["architecture", "libraries", "platform", "schema", "tools"] and
-                .schema == "mkv-magic-tool-manifest-v1" and
+                .schema == "mkv-magic-tool-manifest-v2" and
                 .platform == "macos" and
                 .architecture == $architecture and
                 (.tools | length == 5) and
@@ -73,7 +73,7 @@ for architecture in arm64 x86_64; do
                 ([.tools[].sha256, .libraries[].sha256]
                   | all(type == "string" and test("^[a-f0-9]{64}$")))
             ' "$build_manifest" >/dev/null; then
-            echo "invalid $architecture build manifest" >&2
+            echo "invalid Universal build manifest" >&2
             exit 1
         fi
         signed_structure="$(
@@ -83,60 +83,60 @@ for architecture in arm64 x86_64; do
             jq -S 'del(.tools[].sha256, .libraries[].sha256)' "$build_manifest"
         )"
         if [[ "$signed_structure" != "$build_structure" ]]; then
-            echo "$architecture build and signed manifests disagree" >&2
+            echo "Universal build and signed manifests disagree" >&2
             exit 1
         fi
     fi
     for tool in "${expected_tools[@]}"; do
-        tool_path="$architecture_root/$tool"
+        tool_path="$runtime_root/$tool"
         if [[ ! -f "$tool_path" || -L "$tool_path" || ! -x "$tool_path" ]]; then
-            echo "missing or unsafe $architecture tool: $tool" >&2
+            echo "missing or unsafe Universal tool: $tool" >&2
             exit 1
         fi
         manifest_path="$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .path' "$manifest")"
         expected_hash="$(jq -r --arg name "$tool" '.tools[] | select(.name == $name) | .sha256' "$manifest")"
         if [[ "$manifest_path" != "$tool" || ! "$expected_hash" =~ ^[a-f0-9]{64}$ ]]; then
-            echo "invalid manifest entry for $architecture/$tool" >&2
+            echo "invalid manifest entry for universal/$tool" >&2
             exit 1
         fi
         actual_hash="$(shasum -a 256 "$tool_path" | awk '{print $1}')"
         if [[ "$actual_hash" != "$expected_hash" ]]; then
-            echo "hash mismatch for $architecture/$tool" >&2
+            echo "hash mismatch for universal/$tool" >&2
             exit 1
         fi
         tool_architectures="$(lipo -archs "$tool_path")"
-        if [[ "$tool_architectures" != "$architecture" ]]; then
-            echo "wrong architecture for $tool_path: $tool_architectures" >&2
+        if ! mkv_magic_is_universal_architecture_set "$tool_architectures"; then
+            echo "expected Universal tool at $tool_path, found: $tool_architectures" >&2
             exit 1
         fi
         codesign --verify --strict "$tool_path"
     done
     while IFS= read -r library_path; do
         if [[ "$library_path" != libs/* || "$library_path" == *..* ]]; then
-            echo "invalid library path in $architecture manifest" >&2
+            echo "invalid library path in Universal manifest" >&2
             exit 1
         fi
-        library="$architecture_root/$library_path"
+        library="$runtime_root/$library_path"
         expected_hash="$(
             jq -r --arg path "$library_path" \
                 '.libraries[] | select(.path == $path) | .sha256' "$manifest"
         )"
         if [[ ! -f "$library" || -L "$library" || \
               ! "$expected_hash" =~ ^[a-f0-9]{64}$ ]]; then
-            echo "missing or unsafe runtime library: $architecture/$library_path" >&2
+            echo "missing or unsafe runtime library: universal/$library_path" >&2
             exit 1
         fi
         actual_hash="$(shasum -a 256 "$library" | awk '{print $1}')"
         library_architectures="$(lipo -archs "$library")"
-        if [[ "$actual_hash" != "$expected_hash" || \
-              "$library_architectures" != "$architecture" ]]; then
-            echo "runtime library verification failed: $architecture/$library_path" >&2
+        if [[ "$actual_hash" != "$expected_hash" ]] || \
+            ! mkv_magic_is_universal_architecture_set "$library_architectures"; then
+            echo "Universal runtime library verification failed: $library_path" >&2
             exit 1
         fi
     done < <(jq -r '.libraries[].path' "$manifest")
 
     for relative_binary in "${expected_tools[@]}" libs/libQt6Core.6.dylib; do
-        binary="$architecture_root/$relative_binary"
+        binary="$runtime_root/$relative_binary"
         minimum_versions="$(
             otool -l "$binary" \
                 | awk '/LC_BUILD_VERSION/{found=1} found && /minos/{print $2; found=0}' \
@@ -167,11 +167,11 @@ for architecture in arm64 x86_64; do
                     ;;
             esac
         done < <(
-            otool -L "$binary" | tail -n +2 \
-                | sed -E 's/^[[:space:]]*//; s/[[:space:]]+\(compatibility.*$//'
+            otool -L "$binary" \
+                | sed -E 's/^[[:space:]]*//; s/[[:space:]]+\(compatibility.*$//' \
+                | grep -v ':$'
         )
     done
-done
 
 while IFS= read -r -d '' link_path; do
     target="$(readlink "$link_path")"

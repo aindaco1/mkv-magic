@@ -52,7 +52,7 @@ final class PrivacySafeSupportReportTests: XCTestCase {
         )
         toolRootURL = rootURL.appendingPathComponent("tools", isDirectory: true)
         try FileManager.default.createDirectory(
-            at: toolRootURL.appendingPathComponent("arm64", isDirectory: true),
+            at: toolRootURL.appendingPathComponent("universal", isDirectory: true),
             withIntermediateDirectories: true
         )
         try writeToolTree()
@@ -315,7 +315,7 @@ final class PrivacySafeSupportReportTests: XCTestCase {
     }
 
     private func writeToolTree() throws {
-        let architectureRoot = toolRootURL.appendingPathComponent("arm64", isDirectory: true)
+        let architectureRoot = toolRootURL.appendingPathComponent("universal", isDirectory: true)
         let tools = BundledTool.allCases.map { tool in
             ToolManifestEntry(
                 name: tool,
@@ -334,7 +334,7 @@ final class PrivacySafeSupportReportTests: XCTestCase {
                 ofItemAtPath: url.path
             )
         }
-        let manifest = ToolManifest(architecture: .arm64, tools: tools)
+        let manifest = ToolManifest(tools: tools)
         try JSONEncoder().encode(manifest).write(
             to: architectureRoot.appendingPathComponent("manifest.json")
         )

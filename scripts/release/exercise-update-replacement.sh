@@ -7,6 +7,7 @@ if [[ $# -ne 5 ]]; then
 fi
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/ci/architecture.sh"
 prior_app_input="$1"
 candidate_zip_input="$2"
 release_tag="$3"
@@ -183,8 +184,7 @@ if [[ ! -x "$sparkle_cli" || -L "$sparkle_cli" || \
     exit 1
 fi
 cli_architectures="$(lipo -archs "$sparkle_cli")"
-if [[ "$cli_architectures" != "x86_64 arm64" && \
-      "$cli_architectures" != "arm64 x86_64" ]]; then
+if ! mkv_magic_is_universal_architecture_set "$cli_architectures"; then
     echo "pinned Sparkle updater driver is not Universal" >&2
     exit 1
 fi

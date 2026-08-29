@@ -62,11 +62,11 @@ esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 tool_root="${MKV_MAGIC_TOOL_ROOT:-$repo_root/.build/tool-runtime-m0-5}"
-architecture_root="$tool_root/$architecture"
-ffprobe="$tool_root/$architecture/ffprobe"
-manifest="$architecture_root/manifest.json"
+runtime_root="$tool_root/universal"
+ffprobe="$runtime_root/ffprobe"
+manifest="$runtime_root/manifest.json"
 if [[ ! -d "$tool_root" || -L "$tool_root" || \
-      ! -d "$architecture_root" || -L "$architecture_root" || \
+      ! -d "$runtime_root" || -L "$runtime_root" || \
       ! -f "$manifest" || -L "$manifest" || \
       ! -x "$ffprobe" || -L "$ffprobe" ]]; then
     echo "verified FFprobe was not found at the expected architecture path" >&2
@@ -77,8 +77,8 @@ manifest_architecture="$(jq -r '.architecture' "$manifest")"
 manifest_path="$(jq -r '.tools[] | select(.name == "ffprobe") | .path' "$manifest")"
 expected_hash="$(jq -r '.tools[] | select(.name == "ffprobe") | .sha256' "$manifest")"
 actual_hash="$(shasum -a 256 "$ffprobe" | awk '{print $1}')"
-if [[ "$manifest_schema" != mkv-magic-tool-manifest-v1 || \
-      "$manifest_architecture" != "$architecture" || \
+if [[ "$manifest_schema" != mkv-magic-tool-manifest-v2 || \
+      "$manifest_architecture" != universal || \
       "$manifest_path" != ffprobe || \
       ! "$expected_hash" =~ ^[a-f0-9]{64}$ || \
       "$actual_hash" != "$expected_hash" ]]; then

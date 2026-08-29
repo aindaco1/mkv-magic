@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/ci/architecture.sh"
 cd "$repo_root"
 
 ./scripts/ci/source-contract-gate.sh
@@ -14,7 +15,7 @@ binary_path="$(
         --product MKVMagic --disable-automatic-resolution --show-bin-path
 )/MKVMagic"
 architectures="$(lipo -archs "$binary_path")"
-if [[ "$architectures" != "x86_64 arm64" && "$architectures" != "arm64 x86_64" ]]; then
+if ! mkv_magic_is_universal_architecture_set "$architectures"; then
     echo "expected Universal app executable, found: $architectures" >&2
     exit 1
 fi

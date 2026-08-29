@@ -954,25 +954,22 @@ The chapter editor is a dedicated window or workspace with a synchronized outlin
 
 ### 8.4 Bundled tools
 
-Bundle architecture-specific signed executables under app resources and select by runtime architecture:
+Bundle every signed executable and dynamic library as one Universal Mach-O. The
+operating system selects the native slice at launch, while diagnostics continue
+to record the processor architecture that actually executed:
 
 ```text
 Resources/Tools/
-├── arm64/
-│   ├── ffmpeg
-│   ├── ffprobe
-│   ├── mkvmerge
-│   ├── mkvpropedit
-│   └── mkvextract
-└── x86_64/
+└── universal/
     ├── ffmpeg
     ├── ffprobe
     ├── mkvmerge
     ├── mkvpropedit
-    └── mkvextract
+    ├── mkvextract
+    └── libs/libQt6Core.6.dylib
 ```
 
-The build system pins versions, sources, patches, configure flags, SDK deployment target, architectures, checksums, and licenses. It verifies every binary's architecture and dynamic-library closure before signing. Runtime discovery never falls back to Homebrew, `/usr/local`, `/opt/homebrew`, or the ambient `PATH`.
+The build system pins versions, sources, patches, configure flags, SDK deployment target, architectures, checksums, and licenses. It builds each slice independently, combines the exact pairs, and verifies every packaged binary contains exactly `arm64` and `x86_64` plus the reviewed dynamic-library closure before signing. Runtime discovery never falls back to Homebrew, `/usr/local`, `/opt/homebrew`, or the ambient `PATH`.
 
 The tool bundle has two integrity layers:
 
@@ -1032,7 +1029,7 @@ Diagnostics remain local unless the user explicitly exports them. The current pr
 2. Run the complete local gate on the exact commit, then rerun it in hosted CI with read-only default permissions, commit-pinned GitHub Actions, a pinned release Xcode, and locked Swift dependencies that must not change during resolution.
 3. Run formatting/lint, unit, planner-golden, integration, UI, fault, security, sanitizer, architecture, package, secret, license, and dependency gates. Build-script fixtures must test their own rejection paths.
 4. Build or fetch only provenance-verified, checksum-pinned FFmpeg and MKVToolNix inputs for both `arm64` and `x86_64`; verify source/build manifests before assembly.
-5. Assemble the Universal app and architecture-specific tool trees outside the iCloud-backed checkout so File Provider metadata cannot invalidate signatures. Refuse to replace an existing candidate artifact.
+5. Assemble the Universal app and one Universal tool tree outside the iCloud-backed checkout so File Provider metadata cannot invalidate signatures. Refuse to replace an existing candidate artifact.
 6. Verify bundle layout, version/build metadata, deployment target, both app slices, every tool architecture, dynamic-library closure, licenses, and unsigned/pre-sign manifests.
 7. Materialize the Developer ID certificate in an ephemeral keychain with `umask 077`. Materialize the App Store Connect API key and Sparkle private key only at exact temporary paths. Remove the certificate file immediately after import and delete every temporary key, keychain, and notarization archive even after failure.
 8. Sign all nested Mach-O code explicitly from the inside out with hardened runtime and timestamps, reseal the signed-runtime manifest, then sign the app with reviewed entitlements.
@@ -1378,12 +1375,13 @@ Deliverables:
 
 Gate: multi-step video workflows use one encoded generation, and tested HDR outputs retain the required metadata or fail safely.
 
-Current implementation: the pinned Universal runtime now builds separate
-`arm64` and `x86_64` SVT-AV1 4.1.0, dav1d 1.5.4, libopus 1.6.1, and zimg 3.0.6 static
-libraries, links them
-into the network-disabled FFmpeg, bundles the required notices, publishes the
-matching source archives and SBOM components, and proves real 10-bit AV1 encode
-and software decode for both slices. Join and Exact Trim already route a
+Current implementation: the pinned Universal runtime builds separate `arm64`
+and `x86_64` SVT-AV1 4.1.0, dav1d 1.5.4, libopus 1.6.1, and zimg 3.0.6 static
+libraries, links them into the matching network-disabled FFmpeg slices, then
+packages FFmpeg, FFprobe, MKVToolNix, and Qt as single Universal Mach-O files.
+It bundles the required notices, publishes the matching source archives and
+SBOM components, and proves real 10-bit AV1 encode and software decode for both
+slices. Join and Exact Trim already route a
 verified AV1 choice through their shared single-generation compiler with an
 explicit balanced SVT preset.
 The native, consent-based timed benchmark now measures the actual bundled AV1

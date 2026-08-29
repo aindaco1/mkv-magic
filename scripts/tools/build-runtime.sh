@@ -88,6 +88,7 @@ download_verified "$mkvtoolnix_source_url" "$mkvtoolnix_source_sha256" "$mkvtool
 download_verified "$qtbase_url" "$qtbase_sha256" "$qtbase_archive"
 
 build_root="$(mktemp -d "${TMPDIR:-/tmp}/mkv-magic-tools.XXXXXX")"
+thin_root="$build_root/thin-runtime"
 mount_root="$build_root/mkvtoolnix-volume"
 attached=0
 cleanup() {
@@ -133,9 +134,9 @@ if [[ ! -x "$nasm_binary" || "$($nasm_binary -v)" != "NASM version $nasm_version
     exit 1
 fi
 
-mkdir -p "$output_root" "$output_root/Licenses"
+mkdir -p "$output_root/Licenses" "$output_root/universal/libs"
 for architecture in arm64 x86_64; do
-    mkdir -p "$output_root/$architecture/libs"
+    mkdir -p "$thin_root/$architecture/libs"
 done
 
 # Thin the official, checksum-verified Universal MKVToolNix command-line tools.
@@ -147,16 +148,16 @@ mkvtoolnix_binary_root="$mount_root/MKVToolNix.app/Contents/MacOS"
 for architecture in arm64 x86_64; do
     for tool in mkvmerge mkvpropedit mkvextract; do
         lipo "$mkvtoolnix_binary_root/$tool" -thin "$architecture" \
-            -output "$output_root/$architecture/$tool"
-        chmod 0755 "$output_root/$architecture/$tool"
-        codesign --remove-signature "$output_root/$architecture/$tool" 2>/dev/null || true
+            -output "$thin_root/$architecture/$tool"
+        chmod 0755 "$thin_root/$architecture/$tool"
+        codesign --remove-signature "$thin_root/$architecture/$tool" 2>/dev/null || true
     done
     lipo "$mkvtoolnix_binary_root/libs/libQt6Core.6.11.1.dylib" \
         -thin "$architecture" \
-        -output "$output_root/$architecture/libs/libQt6Core.6.dylib"
-    chmod 0755 "$output_root/$architecture/libs/libQt6Core.6.dylib"
+        -output "$thin_root/$architecture/libs/libQt6Core.6.dylib"
+    chmod 0755 "$thin_root/$architecture/libs/libQt6Core.6.dylib"
     codesign --remove-signature \
-        "$output_root/$architecture/libs/libQt6Core.6.dylib" 2>/dev/null || true
+        "$thin_root/$architecture/libs/libQt6Core.6.dylib" 2>/dev/null || true
 done
 hdiutil detach "$mount_root" -quiet
 attached=0
@@ -428,21 +429,33 @@ for architecture in arm64 x86_64; do
             make -j"$(sysctl -n hw.ncpu)" ffmpeg ffprobe \
             > "$build_root/ffmpeg-$architecture-build.log"
     )
-    install -m 0755 "$source_root/ffmpeg" "$output_root/$architecture/ffmpeg"
-    install -m 0755 "$source_root/ffprobe" "$output_root/$architecture/ffprobe"
-    codesign --remove-signature "$output_root/$architecture/ffmpeg" 2>/dev/null || true
-    codesign --remove-signature "$output_root/$architecture/ffprobe" 2>/dev/null || true
+    install -m 0755 "$source_root/ffmpeg" "$thin_root/$architecture/ffmpeg"
+    install -m 0755 "$source_root/ffprobe" "$thin_root/$architecture/ffprobe"
+    codesign --remove-signature "$thin_root/$architecture/ffmpeg" 2>/dev/null || true
+    codesign --remove-signature "$thin_root/$architecture/ffprobe" 2>/dev/null || true
+done
+
+# Merge the independently built, verified slices into one runtime tree. Keeping
+# every packaged Mach-O Universal prevents macOS from identifying the app as
+# containing an Intel-only component while each Mac still executes natively.
+for relative_binary in \
+    ffmpeg ffprobe mkvmerge mkvpropedit mkvextract libs/libQt6Core.6.dylib
+do
+    lipo -create \
+        "$thin_root/arm64/$relative_binary" \
+        "$thin_root/x86_64/$relative_binary" \
+        -output "$output_root/universal/$relative_binary"
+    chmod 0755 "$output_root/universal/$relative_binary"
+    codesign --remove-signature \
+        "$output_root/universal/$relative_binary" 2>/dev/null || true
 done
 
 # Apple Silicon requires every executable code page to be signed. Apply a
 # reproducible ad-hoc staging signature before calculating manifest hashes;
-# release signing replaces it and reseals the manifests inside the app.
-for architecture in arm64 x86_64; do
-    codesign --force --sign - \
-        "$output_root/$architecture/libs/libQt6Core.6.dylib"
-    for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
-        codesign --force --sign - "$output_root/$architecture/$tool"
-    done
+# release signing replaces it and reseals the manifest inside the app.
+codesign --force --sign - "$output_root/universal/libs/libQt6Core.6.dylib"
+for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
+    codesign --force --sign - "$output_root/universal/$tool"
 done
 
 # Copy source license evidence into the staged runtime.
@@ -476,16 +489,14 @@ chmod 0644 "$output_root/Licenses/FFmpeg-GPLv3.txt" \
     "$output_root/Licenses/zimg/COPYING"
 find "$output_root/Licenses/Qt" -type f -exec chmod 0644 {} +
 
-for architecture in arm64 x86_64; do
-    architecture_root="$output_root/$architecture"
-    ffmpeg_hash="$(shasum -a 256 "$architecture_root/ffmpeg" | awk '{print $1}')"
-    ffprobe_hash="$(shasum -a 256 "$architecture_root/ffprobe" | awk '{print $1}')"
-    mkvmerge_hash="$(shasum -a 256 "$architecture_root/mkvmerge" | awk '{print $1}')"
-    mkvpropedit_hash="$(shasum -a 256 "$architecture_root/mkvpropedit" | awk '{print $1}')"
-    mkvextract_hash="$(shasum -a 256 "$architecture_root/mkvextract" | awk '{print $1}')"
-    qt_hash="$(shasum -a 256 "$architecture_root/libs/libQt6Core.6.dylib" | awk '{print $1}')"
-    jq -n \
-        --arg architecture "$architecture" \
+runtime_root="$output_root/universal"
+ffmpeg_hash="$(shasum -a 256 "$runtime_root/ffmpeg" | awk '{print $1}')"
+ffprobe_hash="$(shasum -a 256 "$runtime_root/ffprobe" | awk '{print $1}')"
+mkvmerge_hash="$(shasum -a 256 "$runtime_root/mkvmerge" | awk '{print $1}')"
+mkvpropedit_hash="$(shasum -a 256 "$runtime_root/mkvpropedit" | awk '{print $1}')"
+mkvextract_hash="$(shasum -a 256 "$runtime_root/mkvextract" | awk '{print $1}')"
+qt_hash="$(shasum -a 256 "$runtime_root/libs/libQt6Core.6.dylib" | awk '{print $1}')"
+jq -n \
         --arg ffmpegVersion "$ffmpeg_version" \
         --arg ffmpegURL "$ffmpeg_url" \
         --arg ffmpegHash "$ffmpeg_hash" \
@@ -498,9 +509,9 @@ for architecture in arm64 x86_64; do
         --arg qtURL "$qtbase_url" \
         --arg qtHash "$qt_hash" \
         '{
-          schema: "mkv-magic-tool-manifest-v1",
+          schema: "mkv-magic-tool-manifest-v2",
           platform: "macos",
-          architecture: $architecture,
+          architecture: "universal",
           tools: [
             {name: "ffmpeg", path: "ffmpeg", version: $ffmpegVersion, sha256: $ffmpegHash, license: "GPL-3.0-or-later", source: $ffmpegURL},
             {name: "ffprobe", path: "ffprobe", version: $ffmpegVersion, sha256: $ffprobeHash, license: "GPL-3.0-or-later", source: $ffmpegURL},
@@ -511,9 +522,8 @@ for architecture in arm64 x86_64; do
           libraries: [
             {path: "libs/libQt6Core.6.dylib", sha256: $qtHash, license: "LGPL-3.0-only", source: $qtURL}
           ]
-        }' > "$architecture_root/manifest.json"
-    chmod 0644 "$architecture_root/manifest.json"
-done
+        }' > "$runtime_root/manifest.json"
+chmod 0644 "$runtime_root/manifest.json"
 
 jq -n \
     --arg ffmpegVersion "$ffmpeg_version" \
@@ -642,48 +652,48 @@ for architecture in arm64 x86_64; do
     else
         runner=(/usr/bin/arch -x86_64)
     fi
-    "${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -version >/dev/null
-    "${runner[@]}" "$output_root/$architecture/ffprobe" -hide_banner -version >/dev/null
-    "${runner[@]}" "$output_root/$architecture/mkvmerge" --version >/dev/null
-    "${runner[@]}" "$output_root/$architecture/mkvpropedit" --version >/dev/null
-    "${runner[@]}" "$output_root/$architecture/mkvextract" --version >/dev/null
+    "${runner[@]}" "$runtime_root/ffmpeg" -hide_banner -version >/dev/null
+    "${runner[@]}" "$runtime_root/ffprobe" -hide_banner -version >/dev/null
+    "${runner[@]}" "$runtime_root/mkvmerge" --version >/dev/null
+    "${runner[@]}" "$runtime_root/mkvpropedit" --version >/dev/null
+    "${runner[@]}" "$runtime_root/mkvextract" --version >/dev/null
 
-    encoders="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -encoders)"
+    encoders="$("${runner[@]}" "$runtime_root/ffmpeg" -hide_banner -encoders)"
     for encoder in aac aac_at ac3 eac3 flac h264_videotoolbox hevc_videotoolbox libopus libsvtav1 prores_ks; do
         if ! grep -Eq "[[:space:]]${encoder}[[:space:]]" <<< "$encoders"; then
             echo "missing required $architecture FFmpeg encoder: $encoder" >&2
             exit 1
         fi
     done
-    filters="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -filters)"
+    filters="$("${runner[@]}" "$runtime_root/ffmpeg" -hide_banner -filters)"
     for filter in aformat anullsrc apad aresample asetpts atrim channelmap concat format pad psnr scale setpts setsar tonemap tpad trim zscale; do
         if ! grep -Eq "[[:space:]]${filter}[[:space:]]" <<< "$filters"; then
             echo "missing required $architecture FFmpeg filter: $filter" >&2
             exit 1
         fi
     done
-    decoders="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -decoders)"
+    decoders="$("${runner[@]}" "$runtime_root/ffmpeg" -hide_banner -decoders)"
     if ! grep -Eq '[[:space:]]libdav1d[[:space:]]' <<< "$decoders"; then
         echo "missing required $architecture FFmpeg libdav1d decoder" >&2
         exit 1
     fi
     smoke_av1="$build_root/smoke-$architecture.ivf"
-    "${runner[@]}" "$output_root/$architecture/ffmpeg" \
+    "${runner[@]}" "$runtime_root/ffmpeg" \
         -hide_banner -loglevel error -nostdin \
         -f rawvideo -pixel_format yuv420p10le -video_size 64x64 \
         -framerate 1 -i "$smoke_frame" -frames:v 1 \
         -c:v libsvtav1 -preset 8 -crf 40 -b:v 0 -f ivf "$smoke_av1" \
         >/dev/null
-    "${runner[@]}" "$output_root/$architecture/ffmpeg" \
+    "${runner[@]}" "$runtime_root/ffmpeg" \
         -hide_banner -loglevel error -nostdin -c:v libdav1d \
         -i "$smoke_av1" -map 0:v:0 -f null - >/dev/null
     for encoder in libopus ac3 eac3 flac; do
-        "${runner[@]}" "$output_root/$architecture/ffmpeg" \
+        "${runner[@]}" "$runtime_root/ffmpeg" \
             -hide_banner -loglevel error -nostdin \
             -f s16le -ar 48000 -ac 2 -i "$smoke_audio" \
             -frames:a 1 -c:a "$encoder" -f null - >/dev/null
     done
-    protocols="$("${runner[@]}" "$output_root/$architecture/ffmpeg" -hide_banner -protocols)"
+    protocols="$("${runner[@]}" "$runtime_root/ffmpeg" -hide_banner -protocols)"
     if grep -Eq '^[[:space:]]*(http|https|tcp|udp|rtmp|srtp|sctp|tls)[[:space:]]*$' \
         <<< "$protocols"; then
         echo "$architecture FFmpeg unexpectedly enables network protocols" >&2

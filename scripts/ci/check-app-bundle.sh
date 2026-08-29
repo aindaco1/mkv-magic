@@ -7,6 +7,7 @@ if [[ $# -ne 1 || "$1" != /* ]]; then
 fi
 app_path="$1"
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/ci/architecture.sh"
 if [[ ! -d "$app_path" || -L "$app_path" ]]; then
     echo "missing or unsafe app bundle" >&2
     exit 1
@@ -39,13 +40,12 @@ fi
 "$repo_root/scripts/ci/check-app-icon.sh" \
     "$app_path/Contents/Resources/MKVMagic.icns"
 architectures="$(lipo -archs "$executable")"
-if [[ "$architectures" != "x86_64 arm64" && "$architectures" != "arm64 x86_64" ]]; then
+if ! mkv_magic_is_universal_architecture_set "$architectures"; then
     echo "expected Universal app executable, found: $architectures" >&2
     exit 1
 fi
 sparkle_architectures="$(lipo -archs "$framework/Versions/Current/Sparkle")"
-if [[ "$sparkle_architectures" != "x86_64 arm64" && \
-      "$sparkle_architectures" != "arm64 x86_64" ]]; then
+if ! mkv_magic_is_universal_architecture_set "$sparkle_architectures"; then
     echo "expected Universal Sparkle framework, found: $sparkle_architectures" >&2
     exit 1
 fi
@@ -57,6 +57,11 @@ elif [[ "${MKV_MAGIC_REQUIRE_TOOLS:-0}" == 1 ]]; then
     echo "release app is missing bundled tools" >&2
     exit 1
 fi
+
+# macOS can warn about Intel support when any nested bundle component is thin,
+# even if the main executable is Universal. Keep the whole app native on both
+# supported processor families, including Sparkle and bundled media helpers.
+mkv_magic_require_universal_mach_o_inventory "$app_path" "app bundle"
 
 if find "$app_path" -name '.DS_Store' -o -name '._*' | grep -q .; then
     echo "app bundle contains forbidden Finder metadata" >&2

@@ -46,40 +46,38 @@ jq -n \
 
 tool_root="$app_path/Contents/Resources/Tools"
 if [[ -d "$tool_root" ]]; then
-    for architecture in arm64 x86_64; do
-        manifest="$tool_root/$architecture/manifest.json"
-        while IFS= read -r component; do
-            jq --argjson component "$component" \
-                '.components += [$component]' "$temporary" > "$temporary.next"
-            mv "$temporary.next" "$temporary"
-        done < <(
-            jq -c --arg architecture "$architecture" \
-                '.tools[] | {
-                  type: "application",
-                  name: .name,
-                  version: .version,
-                  hashes: [{alg: "SHA-256", content: .sha256}],
-                  licenses: [{license: {id: .license}}],
-                  externalReferences: [{type: "distribution", url: .source}],
-                  properties: [{name: "mkv-magic:architecture", value: $architecture}]
-                }' "$manifest"
-        )
-        while IFS= read -r component; do
-            jq --argjson component "$component" \
-                '.components += [$component]' "$temporary" > "$temporary.next"
-            mv "$temporary.next" "$temporary"
-        done < <(
-            jq -c --arg architecture "$architecture" \
-                '.libraries[] | {
-                  type: "library",
-                  name: (.path | split("/") | last),
-                  hashes: [{alg: "SHA-256", content: .sha256}],
-                  licenses: [{license: {id: .license}}],
-                  externalReferences: [{type: "distribution", url: .source}],
-                  properties: [{name: "mkv-magic:architecture", value: $architecture}]
-                }' "$manifest"
-        )
-    done
+    manifest="$tool_root/universal/manifest.json"
+    while IFS= read -r component; do
+        jq --argjson component "$component" \
+            '.components += [$component]' "$temporary" > "$temporary.next"
+        mv "$temporary.next" "$temporary"
+    done < <(
+        jq -c '
+            .tools[] | {
+              type: "application",
+              name: .name,
+              version: .version,
+              hashes: [{alg: "SHA-256", content: .sha256}],
+              licenses: [{license: {id: .license}}],
+              externalReferences: [{type: "distribution", url: .source}],
+              properties: [{name: "mkv-magic:architecture", value: "universal"}]
+            }' "$manifest"
+    )
+    while IFS= read -r component; do
+        jq --argjson component "$component" \
+            '.components += [$component]' "$temporary" > "$temporary.next"
+        mv "$temporary.next" "$temporary"
+    done < <(
+        jq -c '
+            .libraries[] | {
+              type: "library",
+              name: (.path | split("/") | last),
+              hashes: [{alg: "SHA-256", content: .sha256}],
+              licenses: [{license: {id: .license}}],
+              externalReferences: [{type: "distribution", url: .source}],
+              properties: [{name: "mkv-magic:architecture", value: "universal"}]
+            }' "$manifest"
+    )
     sources="$tool_root/SOURCES.json"
     svt_component="$(
         jq -c '

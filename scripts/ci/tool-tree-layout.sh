@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+architecture_script="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/architecture.sh"
+# shellcheck source=scripts/ci/architecture.sh
+source "$architecture_script"
+
 mkv_magic_require_exact_children() {
     local directory="$1"
     local context="$2"
@@ -27,45 +31,41 @@ validate_mkv_magic_tool_tree_layout() {
     fi
     local tool_root="$1"
     mkv_magic_require_exact_children "$tool_root" "tool root" \
-        Licenses SOURCES.json arm64 x86_64 || return 1
+        Licenses SOURCES.json universal || return 1
 
     if [[ ! -s "$tool_root/SOURCES.json" || -L "$tool_root/SOURCES.json" ]]; then
         echo "tool source manifest is missing or unsafe" >&2
         return 1
     fi
 
-    local architecture
-    for architecture in arm64 x86_64; do
-        local architecture_root="$tool_root/$architecture"
-        local architecture_children=(
-            ffmpeg ffprobe libs manifest.json mkvextract mkvmerge mkvpropedit
-        )
-        if [[ -e "$architecture_root/build-manifest.json" ]]; then
-            architecture_children+=(build-manifest.json)
-        fi
-        mkv_magic_require_exact_children "$architecture_root" \
-            "$architecture tool tree" "${architecture_children[@]}" \
-            || return 1
-        mkv_magic_require_exact_children "$architecture_root/libs" \
-            "$architecture library tree" libQt6Core.6.dylib || return 1
-        local relative_file
-        for relative_file in \
-            ffmpeg ffprobe manifest.json mkvextract mkvmerge mkvpropedit \
-            libs/libQt6Core.6.dylib
-        do
-            if [[ ! -s "$architecture_root/$relative_file" || \
-                  -L "$architecture_root/$relative_file" ]]; then
-                echo "tool layout file is missing or unsafe: $architecture/$relative_file" >&2
-                return 1
-            fi
-        done
-        if [[ -e "$architecture_root/build-manifest.json" && \
-              (! -s "$architecture_root/build-manifest.json" || \
-               -L "$architecture_root/build-manifest.json") ]]; then
-            echo "build manifest is unsafe: $architecture/build-manifest.json" >&2
+    local runtime_root="$tool_root/universal"
+    local runtime_children=(
+        ffmpeg ffprobe libs manifest.json mkvextract mkvmerge mkvpropedit
+    )
+    if [[ -e "$runtime_root/build-manifest.json" ]]; then
+        runtime_children+=(build-manifest.json)
+    fi
+    mkv_magic_require_exact_children "$runtime_root" \
+        "Universal tool tree" "${runtime_children[@]}" || return 1
+    mkv_magic_require_exact_children "$runtime_root/libs" \
+        "Universal library tree" libQt6Core.6.dylib || return 1
+    local relative_file
+    for relative_file in \
+        ffmpeg ffprobe manifest.json mkvextract mkvmerge mkvpropedit \
+        libs/libQt6Core.6.dylib
+    do
+        if [[ ! -s "$runtime_root/$relative_file" || \
+              -L "$runtime_root/$relative_file" ]]; then
+            echo "tool layout file is missing or unsafe: universal/$relative_file" >&2
             return 1
         fi
     done
+    if [[ -e "$runtime_root/build-manifest.json" && \
+          (! -s "$runtime_root/build-manifest.json" || \
+           -L "$runtime_root/build-manifest.json") ]]; then
+        echo "build manifest is unsafe: universal/build-manifest.json" >&2
+        return 1
+    fi
 
     local license_root="$tool_root/Licenses"
     mkv_magic_require_exact_children "$license_root" "runtime license tree" \

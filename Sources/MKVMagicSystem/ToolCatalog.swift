@@ -25,6 +25,10 @@ public enum ToolArchitecture: String, Codable, CaseIterable, Hashable, Sendable 
     }
 }
 
+public enum ToolRuntimeArchitecture: String, Codable, CaseIterable, Hashable, Sendable {
+    case universal
+}
+
 public struct ToolManifestEntry: Codable, Hashable, Sendable {
     public let name: BundledTool
     public let path: String
@@ -65,18 +69,18 @@ public struct ToolLibraryManifestEntry: Codable, Hashable, Sendable {
 }
 
 public struct ToolManifest: Codable, Hashable, Sendable {
-    public static let currentSchema = "mkv-magic-tool-manifest-v1"
+    public static let currentSchema = "mkv-magic-tool-manifest-v2"
 
     public let schema: String
     public let platform: String
-    public let architecture: ToolArchitecture
+    public let architecture: ToolRuntimeArchitecture
     public let tools: [ToolManifestEntry]
     public let libraries: [ToolLibraryManifestEntry]
 
     public init(
         schema: String = ToolManifest.currentSchema,
         platform: String = "macos",
-        architecture: ToolArchitecture,
+        architecture: ToolRuntimeArchitecture = .universal,
         tools: [ToolManifestEntry],
         libraries: [ToolLibraryManifestEntry] = []
     ) {
@@ -122,11 +126,14 @@ public struct ToolCatalog: Sendable {
             throw ToolCatalogError.unsafeRoot
         }
 
-        let architectureRoot = root.appendingPathComponent(architecture.rawValue, isDirectory: true)
-        guard try Self.isDirectoryWithoutSymlink(architectureRoot, fileManager: fileManager) else {
+        let runtimeRoot = root.appendingPathComponent(
+            ToolRuntimeArchitecture.universal.rawValue,
+            isDirectory: true
+        )
+        guard try Self.isDirectoryWithoutSymlink(runtimeRoot, fileManager: fileManager) else {
             throw ToolCatalogError.unsafeRoot
         }
-        let manifestURL = architectureRoot.appendingPathComponent("manifest.json")
+        let manifestURL = runtimeRoot.appendingPathComponent("manifest.json")
         guard try Self.isRegularFileWithoutSymlink(manifestURL, fileManager: fileManager) else {
             throw ToolCatalogError.missingManifest
         }
@@ -141,7 +148,7 @@ public struct ToolCatalog: Sendable {
         }
         guard decoded.schema == ToolManifest.currentSchema,
             decoded.platform == "macos",
-            decoded.architecture == architecture
+            decoded.architecture == .universal
         else {
             throw ToolCatalogError.wrongManifestIdentity
         }
@@ -155,8 +162,8 @@ public struct ToolCatalog: Sendable {
             guard entry.path == expectedPath else {
                 throw ToolCatalogError.unsafeToolPath(entry.name)
             }
-            let toolURL = architectureRoot.appendingPathComponent(entry.path)
-            guard Self.contains(toolURL, in: architectureRoot),
+            let toolURL = runtimeRoot.appendingPathComponent(entry.path)
+            guard Self.contains(toolURL, in: runtimeRoot),
                 try Self.isRegularFileWithoutSymlink(toolURL, fileManager: fileManager)
             else {
                 throw ToolCatalogError.missingTool(entry.name)
@@ -182,8 +189,8 @@ public struct ToolCatalog: Sendable {
             else {
                 throw ToolCatalogError.malformedManifest
             }
-            let libraryURL = architectureRoot.appendingPathComponent(library.path)
-            guard Self.contains(libraryURL, in: architectureRoot),
+            let libraryURL = runtimeRoot.appendingPathComponent(library.path)
+            guard Self.contains(libraryURL, in: runtimeRoot),
                 try Self.isRegularFileWithoutSymlink(libraryURL, fileManager: fileManager)
             else {
                 throw ToolCatalogError.malformedManifest
@@ -204,7 +211,7 @@ public struct ToolCatalog: Sendable {
         }
         return
             rootURL
-            .appendingPathComponent(architecture.rawValue, isDirectory: true)
+            .appendingPathComponent(ToolRuntimeArchitecture.universal.rawValue, isDirectory: true)
             .appendingPathComponent(tool.rawValue)
     }
 

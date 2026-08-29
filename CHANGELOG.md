@@ -5,6 +5,19 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.2.1 - 2026-08-29
+
+- Package FFmpeg, FFprobe, MKVToolNix, and their Qt runtime library as one
+  `arm64`/`x86_64` Universal tool tree. Apple Silicon and Intel continue to run
+  native slices, while the app no longer contains separate Intel-only helper
+  components that can trigger macOS's Intel-support warning.
+- Fail closed on the former split-runtime schema, thin packaged helpers,
+  unexpected runtime files, manifest drift, unsigned helpers, unsafe links,
+  deployment-target drift, or unpackaged dynamic dependencies.
+- Keep Swift CodeQL on the production Release compilation graph and exact ARM64
+  product, but disable optimizer work that is unnecessary for CodeQL extraction.
+  Retain SARIF for regression evidence and update the pinned CodeQL action.
+
 ## 0.2.0 - 2026-08-29
 
 - Replace the verified-output progress sheet's bouncing bar with determinate,

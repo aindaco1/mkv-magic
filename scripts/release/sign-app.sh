@@ -61,16 +61,14 @@ if [[ -d "$tool_root" ]]; then
     # also permits a previously signed release tree to be safely re-signed:
     # its build manifest remains the immutable pre-sign provenance record.
     "$repo_root/scripts/ci/check-tool-tree.sh" "$tool_root"
-    for architecture in arm64 x86_64; do
-        while IFS= read -r library_path; do
-            codesign "${common_flags[@]}" \
-                "$tool_root/$architecture/$library_path"
-        done < <(jq -r '.libraries[].path' "$tool_root/$architecture/manifest.json")
-        for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
-            codesign "${common_flags[@]}" \
-                --entitlements "$repo_root/Configuration/Helper.entitlements" \
-                "$tool_root/$architecture/$tool"
-        done
+    runtime_root="$tool_root/universal"
+    while IFS= read -r library_path; do
+        codesign "${common_flags[@]}" "$runtime_root/$library_path"
+    done < <(jq -r '.libraries[].path' "$runtime_root/manifest.json")
+    for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
+        codesign "${common_flags[@]}" \
+            --entitlements "$repo_root/Configuration/Helper.entitlements" \
+            "$runtime_root/$tool"
     done
     "$repo_root/scripts/release/reseal-tool-manifests.swift" "$tool_root"
     "$repo_root/scripts/ci/check-tool-tree.sh" "$tool_root"

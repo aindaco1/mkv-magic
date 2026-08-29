@@ -43,18 +43,17 @@ compare_entitlements \
 
 tool_root="$app_path/Contents/Resources/Tools"
 if [[ -d "$tool_root" ]]; then
-    for architecture in arm64 x86_64; do
-        for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
-            code_path="$tool_root/$architecture/$tool"
-            codesign --verify --strict "$code_path"
-            compare_entitlements \
-                "$code_path" "$repo_root/Configuration/Helper.entitlements" \
-                "helper-$architecture-$tool"
-        done
-        while IFS= read -r library_path; do
-            codesign --verify --strict "$tool_root/$architecture/$library_path"
-        done < <(jq -r '.libraries[].path' "$tool_root/$architecture/manifest.json")
+    runtime_root="$tool_root/universal"
+    for tool in ffmpeg ffprobe mkvmerge mkvpropedit mkvextract; do
+        code_path="$runtime_root/$tool"
+        codesign --verify --strict "$code_path"
+        compare_entitlements \
+            "$code_path" "$repo_root/Configuration/Helper.entitlements" \
+            "helper-universal-$tool"
     done
+    while IFS= read -r library_path; do
+        codesign --verify --strict "$runtime_root/$library_path"
+    done < <(jq -r '.libraries[].path' "$runtime_root/manifest.json")
 fi
 
 if [[ -n "${EXPECTED_TEAM_ID:-}" ]]; then

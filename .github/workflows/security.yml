@@ -32,33 +32,35 @@ jobs:
           git diff --exit-code -- Package.resolved
 
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@5595ccaf912efad79be6eef63a5619ff05969be3
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938
         with:
           languages: swift
           build-mode: manual
 
       # GitHub recommends one architecture for Swift CodeQL. Universal output
-      # remains a separate required CI and release-package invariant.
+      # remains a separate required CI and release-package invariant. Release
+      # configuration preserves the production compilation graph; disabling
+      # optimization removes work that CodeQL does not need for extraction.
       - name: Build analyzed ARM64 application
         run: >-
           swift build -c release --arch arm64
           --product MKVMagic --disable-automatic-resolution
+          -Xswiftc -Onone
 
       - name: Analyze
-        uses: github/codeql-action/analyze@5595ccaf912efad79be6eef63a5619ff05969be3
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938
         with:
           category: /language:swift
-          output: ../results
+          output: codeql-results
           # GitHub code-scanning uploads require public visibility or GitHub
           # Advanced Security. Keep private-repository analysis useful by
           # retaining SARIF as a workflow artifact until the repo is public.
           upload: ${{ github.event.repository.visibility == 'public' && 'always' || 'never' }}
 
-      - name: Retain private-repository SARIF
-        if: ${{ github.event.repository.visibility != 'public' }}
+      - name: Retain SARIF for extraction regression evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: codeql-swift-sarif-${{ github.sha }}
-          path: ../results/*.sarif
+          path: codeql-results/*.sarif
           if-no-files-found: error
           retention-days: 14

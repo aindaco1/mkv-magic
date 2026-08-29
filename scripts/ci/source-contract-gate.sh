@@ -26,6 +26,7 @@ actionlint -color
 ./scripts/ci/test-runtime-version-pin.sh
 ./scripts/ci/test-tool-source-cache.sh
 ./scripts/ci/test-tool-tree-layout.sh
+./scripts/ci/test-universal-mach-o-inventory.sh
 ./scripts/ci/test-reseal-tool-manifests.sh
 ./scripts/ci/test-codeql-build-scope.sh
 

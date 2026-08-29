@@ -11,7 +11,7 @@ final class ToolCatalogTests: XCTestCase {
         temporaryRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("mkv-magic-tool-tests-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(
-            at: temporaryRoot.appendingPathComponent("arm64", isDirectory: true),
+            at: temporaryRoot.appendingPathComponent("universal", isDirectory: true),
             withIntermediateDirectories: true
         )
     }
@@ -26,12 +26,38 @@ final class ToolCatalogTests: XCTestCase {
         try writeToolTree()
         let catalog = try ToolCatalog(rootURL: temporaryRoot, architecture: .arm64)
         XCTAssertEqual(try catalog.url(for: .ffprobe).lastPathComponent, "ffprobe")
+        XCTAssertEqual(
+            try catalog.url(for: .ffprobe).deletingLastPathComponent().lastPathComponent,
+            "universal")
+        XCTAssertEqual(catalog.architecture, .arm64)
+        XCTAssertEqual(catalog.manifest.architecture, .universal)
+    }
+
+    func testIntelExecutionUsesTheSameUniversalRuntime() throws {
+        try writeToolTree()
+        let catalog = try ToolCatalog(rootURL: temporaryRoot, architecture: .x86_64)
+
+        XCTAssertEqual(catalog.architecture, .x86_64)
+        XCTAssertEqual(
+            try catalog.url(for: .mkvmerge).path,
+            temporaryRoot.appendingPathComponent("universal/mkvmerge").path
+        )
+    }
+
+    func testLegacySplitRuntimeManifestFailsClosed() throws {
+        try writeToolTree(schema: "mkv-magic-tool-manifest-v1")
+
+        XCTAssertThrowsError(
+            try ToolCatalog(rootURL: temporaryRoot, architecture: .arm64)
+        ) { error in
+            XCTAssertEqual(error as? ToolCatalogError, .wrongManifestIdentity)
+        }
     }
 
     func testHashMismatchFailsClosed() throws {
         try writeToolTree()
         try Data("changed".utf8).write(
-            to: temporaryRoot.appendingPathComponent("arm64/ffprobe")
+            to: temporaryRoot.appendingPathComponent("universal/ffprobe")
         )
         XCTAssertThrowsError(
             try ToolCatalog(rootURL: temporaryRoot, architecture: .arm64)
@@ -51,7 +77,7 @@ final class ToolCatalogTests: XCTestCase {
 
     func testSymlinkedToolFailsClosed() throws {
         try writeToolTree()
-        let tool = temporaryRoot.appendingPathComponent("arm64/ffprobe")
+        let tool = temporaryRoot.appendingPathComponent("universal/ffprobe")
         try FileManager.default.removeItem(at: tool)
         try FileManager.default.createSymbolicLink(
             atPath: tool.path, withDestinationPath: "/usr/bin/true")
@@ -60,8 +86,11 @@ final class ToolCatalogTests: XCTestCase {
         )
     }
 
-    private func writeToolTree(extraManifestField: Bool = false) throws {
-        let architectureRoot = temporaryRoot.appendingPathComponent("arm64", isDirectory: true)
+    private func writeToolTree(
+        extraManifestField: Bool = false,
+        schema: String = ToolManifest.currentSchema
+    ) throws {
+        let architectureRoot = temporaryRoot.appendingPathComponent("universal", isDirectory: true)
         var entries: [[String: Any]] = []
         for tool in BundledTool.allCases {
             let toolURL = architectureRoot.appendingPathComponent(tool.rawValue)
@@ -81,9 +110,9 @@ final class ToolCatalogTests: XCTestCase {
             ])
         }
         var manifest: [String: Any] = [
-            "schema": ToolManifest.currentSchema,
+            "schema": schema,
             "platform": "macos",
-            "architecture": "arm64",
+            "architecture": "universal",
             "tools": entries,
             "libraries": [],
         ]

@@ -2,6 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+source "$repo_root/scripts/ci/architecture.sh"
 release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
 app_path="$release_root/MKV Magic.app"
 version="${MKV_MAGIC_VERSION:-0.0.0-dev}"
@@ -106,7 +107,7 @@ codesign --remove-signature "$app_path/Contents/MacOS/MKVMagic" 2>/dev/null || t
 xattr -cr "$app_path"
 
 architectures="$(lipo -archs "$app_path/Contents/MacOS/MKVMagic")"
-if [[ "$architectures" != "x86_64 arm64" && "$architectures" != "arm64 x86_64" ]]; then
+if ! mkv_magic_is_universal_architecture_set "$architectures"; then
     echo "expected Universal app executable, found: $architectures" >&2
     exit 1
 fi

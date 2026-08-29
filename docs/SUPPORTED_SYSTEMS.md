@@ -2,6 +2,8 @@
 
 MKV Magic currently targets macOS 13 Ventura or newer and ships as one
 Universal application containing native `arm64` and `x86_64` slices.
+Every bundled FFmpeg, FFprobe, MKVToolNix, and Qt Mach-O also contains both
+slices; Apple Silicon executes `arm64` natively and Intel executes `x86_64`.
 
 - Apple Silicon: M1 or newer.
 - Intel: any Mac capable of running macOS 13.
