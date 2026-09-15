@@ -4185,6 +4185,32 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testInspectorDocumentFillsItsViewportAcrossWindowSizes() throws {
+        let controller = MainViewController(model: AppModel())
+        let window = NSWindow(contentViewController: controller)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.orderFront(nil)
+        defer { window.close() }
+        let text = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTextView }.first {
+                $0.accessibilityLabel() == "Selected media details"
+            })
+        let scroll = try XCTUnwrap(text.enclosingScrollView)
+        for size in [NSSize(width: 1_080, height: 680), NSSize(width: 1_280, height: 800)] {
+            window.setContentSize(size)
+            window.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            XCTAssertGreaterThan(text.frame.width, 200)
+            XCTAssertGreaterThan(text.frame.height, 20)
+            XCTAssertGreaterThan(text.textContainer?.size.width ?? 0, 200)
+            XCTAssertEqual(text.frame.width, scroll.contentView.bounds.width, accuracy: 2)
+            XCTAssertTrue(text.isSelectable)
+            XCTAssertFalse(text.isEditable)
+            XCTAssertTrue(text.isVerticallyResizable)
+        }
+    }
+
+    @MainActor
     func testMainWindowContentKeepsUsableWidthAfterLayout() throws {
         let controller = MainViewController(model: AppModel())
         controller.loadView()
