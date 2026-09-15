@@ -5,6 +5,13 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.2.4 - 2026-09-15
+
+- Validate every versioned release note during source CI, preventing a stale
+  hard-coded list from missing the signed-tag release requirements.
+- Include the output-access and readable-inspector corrections from 0.2.3,
+  whose release attempt stopped at notes validation before signing.
+
 ## 0.2.3 - 2026-09-15
 
 - Ask for an output location when selecting a source file has not granted
