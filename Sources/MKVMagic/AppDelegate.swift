@@ -32,9 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = makeMainMenu(openTarget: content)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic"
-        window.setContentSize(NSSize(width: 1080, height: 680))
         window.minSize = NSSize(width: 820, height: 520)
-        window.center()
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: content.preferredInitialFirstResponder
@@ -43,6 +41,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // Activation can change the usable screen area when the menu bar appears.
+        // Constrain content explicitly; AppKit's implicit resize differs by OS.
+        let requestedSize = NSSize(width: 1080, height: 680)
+        let availableSize =
+            window.screen.map {
+                window.contentRect(forFrameRect: $0.visibleFrame).size
+            } ?? requestedSize
+        window.setContentSize(
+            NSSize(
+                width: min(requestedSize.width, availableSize.width),
+                height: min(requestedSize.height, availableSize.height)
+            ))
+        window.center()
         automaticQueueTask = Task { await model.runAutomaticQueueCycleIfEligible() }
     }
 
