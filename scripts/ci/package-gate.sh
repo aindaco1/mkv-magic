@@ -2,7 +2,11 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-gate_root="$(mktemp -d "${TMPDIR:-/tmp}/mkv-magic-package-gate.XXXXXX")"
+# A sandboxed app staged in macOS's private per-process temporary directory
+# triggers sandbox-extension denial diagnostics on the Xcode 27 hosted image.
+# The runner's workspace temp directory models a normal downloaded app location.
+gate_parent="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
+gate_root="$(mktemp -d "$gate_parent/mkv-magic-package-gate.XXXXXX")"
 cleanup() {
     /bin/rm -rf -- "$gate_root"
 }

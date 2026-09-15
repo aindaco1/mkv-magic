@@ -56,7 +56,13 @@ do {
             result.duration.isFinite,
             result.duration < 5
         else {
-            throw AppBaselineLauncherError.childFailed
+            throw AppBaselineLauncherError.childFailed(
+                exitCode: result.exitCode,
+                stdoutBytes: result.standardOutput.data.count,
+                stderrBytes: result.standardError.data.count,
+                truncated: result.standardOutput.wasTruncated || result.standardError.wasTruncated,
+                duration: result.duration
+            )
         }
         samples.append(
             try JSONDecoder().decode(AppBaselineSample.self, from: result.standardOutput.data))
@@ -81,14 +87,20 @@ do {
 
 private enum AppBaselineLauncherError: Error {
     case unsafeExecutable
-    case childFailed
+    case childFailed(
+        exitCode: Int32, stdoutBytes: Int, stderrBytes: Int, truncated: Bool, duration: TimeInterval
+    )
 }
 
 extension AppBaselineLauncherError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .unsafeExecutable: "The app executable must be an absolute, regular, non-symlink file."
-        case .childFailed: "The app probe failed or emitted unsafe diagnostic output."
+        case .childFailed(
+            let exitCode, let stdoutBytes, let stderrBytes, let truncated, let duration):
+            "The app probe failed or emitted unsafe diagnostic output "
+                + "(exit: \(exitCode), stdout bytes: \(stdoutBytes), stderr bytes: \(stderrBytes), "
+                + "truncated: \(truncated), seconds: \(duration))."
         }
     }
 }

@@ -4440,7 +4440,7 @@ final class AppPolicyTests: XCTestCase {
             try captureTrimWindow(window: window, content: content, at: capturePath)
         }
         review.performClick(nil)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(waitUntil { reviewedRequest != nil })
 
         XCTAssertEqual(reviewedRequest?.operation, .transcode)
         XCTAssertEqual(reviewedRequest?.mode, .exact)
