@@ -2,11 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-# A sandboxed app staged in macOS's private per-process temporary directory
-# triggers sandbox-extension denial diagnostics on the Xcode 27 hosted image.
-# The runner's workspace temp directory models a normal downloaded app location.
-gate_parent="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-gate_root="$(mktemp -d "$gate_parent/mkv-magic-package-gate.XXXXXX")"
+gate_root="$("$repo_root/scripts/release/create-verification-directory.sh" mkv-magic-package-gate)"
 cleanup() {
     /bin/rm -rf -- "$gate_root"
 }

@@ -11,6 +11,7 @@ semantic versioning; public release tags are immutable and signed.
 - Fix Swift 6.4 compilation of unchanged-byte verification fixtures.
 - Correct hosted sandbox staging and the Xcode 27 deployment target used by
   the Sparkle update acceptance driver, retaining all release acceptance gates.
+- Apply accessible sandbox staging to local package and update checks as well.
 
 ## 0.2.1 - 2026-08-29
 
