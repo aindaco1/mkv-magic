@@ -522,20 +522,16 @@ final class MainViewController: NSViewController, NSTableViewDataSource, NSTable
     private func makeInspector() -> NSView {
         let heading = NSTextField(labelWithString: "Inspector")
         heading.font = .systemFont(ofSize: 16, weight: .semibold)
-        inspectorText.isEditable = false
-        inspectorText.drawsBackground = false
-        inspectorText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        inspectorText.isHorizontallyResizable = false
-        inspectorText.textContainer?.widthTracksTextView = true
+        ReadOnlyTextViewPresentation.configure(inspectorText, drawsBackground: false)
         inspectorText.string = "Select an inspected file to see its tracks."
         inspectorText.setAccessibilityLabel("Selected media details")
         inspectorText.setAccessibilityHelp(
             "Read-only container, track, chapter, attachment, tag, and warning details."
         )
-        let scroll = NSScrollView()
-        scroll.documentView = inspectorText
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .noBorder
+        let scroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: inspectorText,
+            borderType: .noBorder
+        )
 
         let titleLabel = NSTextField(labelWithString: "Segment title")
         segmentTitleField.placeholderString = "Leave empty to remove"
