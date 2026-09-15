@@ -83,9 +83,7 @@ fi
 prior_app="$(cd "$(dirname "$prior_app_input")" && pwd -P)/$(basename "$prior_app_input")"
 candidate_zip="$(cd "$(dirname "$candidate_zip_input")" && pwd -P)/$(basename "$candidate_zip_input")"
 private_key_file="$(cd "$(dirname "$private_key_input")" && pwd -P)/$(basename "$private_key_input")"
-# Keep hosted sandboxed app launches outside macOS's private process temp tree.
-acceptance_parent="${RUNNER_TEMP:-${TMPDIR:-/tmp}}"
-work_root="$(mktemp -d "$acceptance_parent/mkv-magic-update-replacement.XXXXXX")"
+work_root="$("$repo_root/scripts/release/create-verification-directory.sh" mkv-magic-update-replacement)"
 server_pid=''
 cleanup() {
     if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then

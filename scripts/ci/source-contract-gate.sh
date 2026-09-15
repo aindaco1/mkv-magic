@@ -14,6 +14,7 @@ actionlint -color
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
 ./scripts/ci/test-loopback-server.sh
+./scripts/ci/test-verification-directory.sh
 ./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-release-build-number.sh
 ./scripts/ci/test-release-ci-provenance.sh

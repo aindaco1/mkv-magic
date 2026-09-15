@@ -5,6 +5,14 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.2.2 - 2026-09-15
+
+- Fit the initial native window to the display's usable frame on macOS 27.
+- Fix Swift 6.4 compilation of unchanged-byte verification fixtures.
+- Correct hosted sandbox staging and the Xcode 27 deployment target used by
+  the Sparkle update acceptance driver, retaining all release acceptance gates.
+- Apply accessible sandbox staging to local package and update checks as well.
+
 ## 0.2.1 - 2026-08-29
 
 - Package FFmpeg, FFprobe, MKVToolNix, and their Qt runtime library as one
