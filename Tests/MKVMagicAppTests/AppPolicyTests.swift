@@ -502,13 +502,46 @@ final class AppPolicyTests: XCTestCase {
             sourceURL: source,
             suggestedFilename: "Movie — Edited.mkv",
             preferences: preferences,
-            fileExists: { occupied.contains($0) }
+            fileExists: { occupied.contains($0) },
+            directoryAccessProvider: {
+                OutputDirectorySecurityScope(
+                    directoryURL: $0, startAccessing: { _ in true }, stopAccessing: { _ in })
+            }
         )
 
         guard case .automatic(let destination) = resolution else {
             return XCTFail("The default output mode must not show a save panel")
         }
         XCTAssertEqual(destination.url.path, "/Media/Features/Movie — Edited 3.mkv")
+    }
+
+    @MainActor
+    func testAutomaticBesideSourceRequestsSavePanelWithoutDirectoryAccess() throws {
+        let suite = "mkv-magic-output-policy-denied-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = OutputDestinationPreferences(defaults: defaults)
+
+        let resolution = try OutputDestinationPolicy.resolve(
+            sourceURL: URL(fileURLWithPath: "/Media/Features/Movie.mkv"),
+            suggestedFilename: "Movie — Edited.mkv",
+            preferences: preferences,
+            directoryAccessProvider: { _ in nil }
+        )
+
+        guard case .askEveryTime = resolution else {
+            return XCTFail("Selecting a source file does not grant its parent directory")
+        }
+        XCTAssertEqual(preferences.mode, .besideSource)
+    }
+
+    func testOutputDirectoryScopeRejectsDeniedAccess() {
+        XCTAssertNil(
+            OutputDirectorySecurityScope(
+                directoryURL: URL(fileURLWithPath: "/Media"),
+                startAccessing: { _ in false },
+                stopAccessing: { _ in XCTFail("A denied grant must not be released") }
+            ))
     }
 
     @MainActor
@@ -545,7 +578,11 @@ final class AppPolicyTests: XCTestCase {
                 sourceURL: source,
                 suggestedFilename: "Movie — Edited.mkv",
                 preferences: preferences,
-                fileExists: { _ in false }
+                fileExists: { _ in false },
+                directoryAccessProvider: {
+                    OutputDirectorySecurityScope(
+                        directoryURL: $0, startAccessing: { _ in true }, stopAccessing: { _ in })
+                }
             )
         else {
             return XCTFail("A chosen default folder must not show a save panel")
@@ -554,6 +591,17 @@ final class AppPolicyTests: XCTestCase {
             destination.url.deletingLastPathComponent().standardizedFileURL,
             folder.standardizedFileURL
         )
+        XCTAssertThrowsError(
+            try OutputDestinationPolicy.resolve(
+                sourceURL: source,
+                suggestedFilename: "Movie — Edited.mkv",
+                preferences: preferences,
+                directoryAccessProvider: { _ in nil }
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? OutputDestinationPreferenceError, .unavailableChosenFolder)
+        }
     }
 
     @MainActor

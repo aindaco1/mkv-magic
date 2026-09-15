@@ -9,7 +9,7 @@ enum OutputDestinationMode: String, CaseIterable, Sendable {
 
     var title: String {
         switch self {
-        case .besideSource: "Beside each source automatically"
+        case .besideSource: "Beside source when access is available"
         case .chosenFolder: "In one chosen folder automatically"
         case .askEveryTime: "Ask where to save every time"
         }
@@ -102,15 +102,24 @@ final class OutputDestinationPreferences {
 
 final class OutputDirectorySecurityScope: @unchecked Sendable {
     let directoryURL: URL
-    private let accessed: Bool
+    private let stopAccessing: @Sendable (URL) -> Void
 
-    init(directoryURL: URL) {
+    init?(
+        directoryURL: URL,
+        startAccessing: @Sendable (URL) -> Bool = {
+            $0.startAccessingSecurityScopedResource()
+        },
+        stopAccessing: @escaping @Sendable (URL) -> Void = {
+            $0.stopAccessingSecurityScopedResource()
+        }
+    ) {
         self.directoryURL = directoryURL.standardizedFileURL
-        accessed = self.directoryURL.startAccessingSecurityScopedResource()
+        guard startAccessing(self.directoryURL) else { return nil }
+        self.stopAccessing = stopAccessing
     }
 
     deinit {
-        if accessed { directoryURL.stopAccessingSecurityScopedResource() }
+        stopAccessing(directoryURL)
     }
 }
 
@@ -134,7 +143,10 @@ enum OutputDestinationPolicy {
         sourceURL: URL,
         suggestedFilename: String,
         preferences: OutputDestinationPreferences,
-        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }
+        fileExists: (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+        directoryAccessProvider: (URL) -> OutputDirectorySecurityScope? = {
+            OutputDirectorySecurityScope(directoryURL: $0)
+        }
     ) throws -> OutputDestinationResolution {
         guard MediaQueueOutputFilenamePolicy.isSafe(suggestedFilename) else {
             throw OutputDestinationPreferenceError.unsafeOutputName
@@ -142,15 +154,23 @@ enum OutputDestinationPolicy {
         guard preferences.mode != .askEveryTime else { return .askEveryTime }
 
         let directoryURL: URL
+        let access: OutputDirectorySecurityScope
         switch preferences.mode {
         case .besideSource:
             directoryURL = defaultDirectory(for: sourceURL)
+            guard let grantedAccess = directoryAccessProvider(directoryURL) else {
+                return .askEveryTime
+            }
+            access = grantedAccess
         case .chosenFolder:
             directoryURL = try preferences.resolveChosenFolder()
+            guard let grantedAccess = directoryAccessProvider(directoryURL) else {
+                throw OutputDestinationPreferenceError.unavailableChosenFolder
+            }
+            access = grantedAccess
         case .askEveryTime:
             return .askEveryTime
         }
-        let access = OutputDirectorySecurityScope(directoryURL: directoryURL)
         let outputURL = try availableOutputURL(
             filename: suggestedFilename,
             directoryURL: directoryURL,

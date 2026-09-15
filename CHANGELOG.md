@@ -5,6 +5,13 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+## 0.2.3 - 2026-09-15
+
+- Ask for an output location when selecting a source file has not granted
+  access to its parent folder. Automatic sibling exports no longer fail at
+  the final verified commit because of a missing sandbox grant.
+- Report an unavailable chosen output folder before processing starts.
+
 ## 0.2.2 - 2026-09-15
 
 - Fit the initial native window to the display's usable frame on macOS 27.
