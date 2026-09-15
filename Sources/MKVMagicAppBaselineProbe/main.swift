@@ -56,10 +56,6 @@ do {
             result.duration.isFinite,
             result.duration < 5
         else {
-            // Temporary hosted-fixture diagnosis; remove once the SDK message is identified.
-            if ProcessInfo.processInfo.environment["GITHUB_ACTIONS"] == "true" {
-                writeError("Hosted baseline stderr: " + result.standardError.text + "\n")
-            }
             throw AppBaselineLauncherError.childFailed(
                 exitCode: result.exitCode,
                 stdoutBytes: result.standardOutput.data.count,
