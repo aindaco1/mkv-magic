@@ -4,25 +4,27 @@ import XCTest
 final class MatroskaChapterTests: XCTestCase {
     func testMatroskaXMLRoundTripsNestedEditionsFlagsDisplaysAndNanoseconds() throws {
         let xml = Data(
-            ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                + "<Chapters><EditionEntry><EditionUID>10</EditionUID>"
-                + "<EditionFlagHidden>0</EditionFlagHidden>"
-                + "<EditionFlagDefault>1</EditionFlagDefault>"
-                + "<EditionFlagOrdered>0</EditionFlagOrdered>"
-                + "<ChapterAtom><ChapterUID>100</ChapterUID>"
-                + "<ChapterTimeStart>00:00:00.000000000</ChapterTimeStart>"
-                + "<ChapterTimeEnd>00:05:00.123456789</ChapterTimeEnd>"
-                + "<ChapterFlagHidden>0</ChapterFlagHidden>"
-                + "<ChapterFlagEnabled>1</ChapterFlagEnabled>"
-                + "<ChapterDisplay><ChapterString>Part &amp; One</ChapterString>"
-                + "<ChapterLanguage>eng</ChapterLanguage>"
-                + "<ChapLanguageIETF>en-US</ChapLanguageIETF>"
-                + "<ChapterCountry>US</ChapterCountry></ChapterDisplay>"
-                + "<ChapterAtom><ChapterUID>101</ChapterUID>"
-                + "<ChapterTimeStart>00:00:10.000000001</ChapterTimeStart>"
-                + "<ChapterDisplay><ChapterString>Opening</ChapterString>"
-                + "<ChapterLanguage>eng</ChapterLanguage></ChapterDisplay>"
-                + "</ChapterAtom></ChapterAtom></EditionEntry></Chapters>\n").utf8
+            [
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<Chapters><EditionEntry><EditionUID>10</EditionUID>",
+                "<EditionFlagHidden>0</EditionFlagHidden>",
+                "<EditionFlagDefault>1</EditionFlagDefault>",
+                "<EditionFlagOrdered>0</EditionFlagOrdered>",
+                "<ChapterAtom><ChapterUID>100</ChapterUID>",
+                "<ChapterTimeStart>00:00:00.000000000</ChapterTimeStart>",
+                "<ChapterTimeEnd>00:05:00.123456789</ChapterTimeEnd>",
+                "<ChapterFlagHidden>0</ChapterFlagHidden>",
+                "<ChapterFlagEnabled>1</ChapterFlagEnabled>",
+                "<ChapterDisplay><ChapterString>Part &amp; One</ChapterString>",
+                "<ChapterLanguage>eng</ChapterLanguage>",
+                "<ChapLanguageIETF>en-US</ChapLanguageIETF>",
+                "<ChapterCountry>US</ChapterCountry></ChapterDisplay>",
+                "<ChapterAtom><ChapterUID>101</ChapterUID>",
+                "<ChapterTimeStart>00:00:10.000000001</ChapterTimeStart>",
+                "<ChapterDisplay><ChapterString>Opening</ChapterString>",
+                "<ChapterLanguage>eng</ChapterLanguage></ChapterDisplay>",
+                "</ChapterAtom></ChapterAtom></EditionEntry></Chapters>\n",
+            ].joined().utf8
         )
         let codec = MatroskaChapterXMLCodec()
 
