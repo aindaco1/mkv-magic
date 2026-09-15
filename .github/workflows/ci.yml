@@ -15,8 +15,12 @@ concurrency:
 
 jobs:
   validate:
-    name: Source, tests, Universal build, and package
-    runs-on: macos-15
+    name: ${{ matrix.os == 'macos-15' && 'Source, tests, Universal build, and package' || 'Xcode 27 compatibility' }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, xcode-27]
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -26,10 +30,20 @@ jobs:
       - name: Install source-gate dependencies
         run: brew install actionlint ripgrep shellcheck
 
-      - name: Report toolchain
+      - name: Record host and toolchain
         run: |
-          swift --version
+          sw_vers
           xcodebuild -version
+          swift --version
+          xcrun --show-sdk-version
+          if [[ "${{ matrix.os }}" == "xcode-27" ]]; then
+            xcode_version="$(xcodebuild -version)"
+            xcode_first_line="${xcode_version%%$'\n'*}"
+            [[ "$xcode_first_line" == "Xcode 27" || "$xcode_first_line" == "Xcode 27."* || "$xcode_first_line" == "Xcode 27 "* ]]
+          fi
+
+      - name: Report source-gate tools
+        run: |
           actionlint --version
           rg --version
           shellcheck --version
