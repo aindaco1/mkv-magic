@@ -95,6 +95,8 @@ final class DiagnosticIssueReportTests: XCTestCase {
         let report = try XCTUnwrap(DiagnosticCrashFacts.parse(try incident()))
         XCTAssertEqual(report.kind, .nativeCrash)
         XCTAssertEqual(report.crash?.imageOffset, 128)
+        XCTAssertEqual(
+            report.fingerprint, "02fb7f5d959100701ec47d5ef4c418225880c3fc895e7592d6588487fb11b6b7")
         let json = String(decoding: try report.encoded(), as: UTF8.self)
         for forbidden in ["private", "procPath", "symbol", "usedImages", "123456789"] {
             XCTAssertFalse(json.contains(forbidden))

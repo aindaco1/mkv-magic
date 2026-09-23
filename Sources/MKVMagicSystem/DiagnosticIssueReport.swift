@@ -46,14 +46,20 @@ public struct DiagnosticIssueReport: Codable, Equatable, Sendable {
     /// Delimiter-separated closed values avoid JSON object-key-order differences
     /// across Swift and the relay. Identity/progress/version don't split symptoms.
     public var fingerprint: String {
-        let parts = [
+        let exitCodeText = exitCode.map { String($0) } ?? ""
+        let imageOffsetText = crash?.imageOffset.map { String($0) } ?? ""
+        var parts: [String] = [
             schema, kind.rawValue, architecture.rawValue, action.rawValue,
-            stage.rawValue, failure.rawValue, tool?.rawValue ?? "",
-            exitCode.map(String.init) ?? "",
-            crash?.exception.rawValue ?? "", crash?.signal?.rawValue ?? "",
-            crash?.image?.rawValue ?? "", crash?.imageOffset.map(String.init) ?? "",
-            crash == nil ? "" : build, crash == nil ? "" : operatingSystem,
+            stage.rawValue, failure.rawValue,
         ]
+        parts.append(tool?.rawValue ?? "")
+        parts.append(exitCodeText)
+        parts.append(crash?.exception.rawValue ?? "")
+        parts.append(crash?.signal?.rawValue ?? "")
+        parts.append(crash?.image?.rawValue ?? "")
+        parts.append(imageOffsetText)
+        parts.append(crash == nil ? "" : build)
+        parts.append(crash == nil ? "" : operatingSystem)
         return SHA256.hash(data: Data(parts.joined(separator: "|").utf8)).map {
             String(format: "%02x", $0)
         }.joined()
