@@ -84,21 +84,26 @@ final class JoinedChapterComposerTests: XCTestCase {
 
     func testRenumbersRepeatedConsecutiveChapterSequencesAcrossRealPartCounts() throws {
         let counts = [42, 43, 46]
-        let sources = counts.enumerated().map { partIndex, count in
-            JoinedChapterSource(
-                title: "Part \(partIndex + 1)",
-                duration: seconds(Int64(count)),
-                retainedStart: .zero,
-                retainedEnd: seconds(Int64(count)),
-                selectedEditionChapters: (1...count).map { ordinal in
+        var sources: [JoinedChapterSource] = []
+        for (partIndex, count) in counts.enumerated() {
+            var chapters: [MatroskaChapterAtom] = []
+            for ordinal in 1...count {
+                chapters.append(
                     atom(
                         uid: UInt64(partIndex * 100 + ordinal),
                         title: "Chapter \(ordinal)",
                         start: Int64(ordinal - 1),
                         end: Int64(ordinal)
-                    )
-                }
-            )
+                    ))
+            }
+            sources.append(
+                JoinedChapterSource(
+                    title: "Part \(partIndex + 1)",
+                    duration: seconds(Int64(count)),
+                    retainedStart: .zero,
+                    retainedEnd: seconds(Int64(count)),
+                    selectedEditionChapters: chapters
+                ))
         }
 
         let result = try JoinedChapterComposer().compose(sources)
