@@ -3,7 +3,12 @@
 All notable changes to MKV Magic will be documented here. Versions follow
 semantic versioning; public release tags are immutable and signed.
 
-## 0.3.0 (candidate)
+## 0.3.0 - 2026-09-23
+
+Published as a signed, notarized beta. Native Apple Silicon and prior-version
+Sparkle replacement passed; clean-account Apple Silicon, physical Intel, and
+manual playback acceptance remain pending. See the
+[release acceptance record](docs/releases/0.3.0.md).
 
 - Keep Help, licenses, and both join-review text views fitted to their scroll
   viewports on older macOS releases by reusing the shared text presentation.

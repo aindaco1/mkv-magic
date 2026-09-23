@@ -9,10 +9,11 @@ named `mkv-magic`; the internal Swift package and executable are `MKVMagic`.
 
 ## Status
 
-Installers are available from the [latest published release](https://github.com/aindaco1/mkv-magic/releases/latest).
-The capabilities below describe the 0.3.0 source. Each installer has its own
-validation record; private test installers and local checks do not establish
-hardware acceptance. See the [0.3.0 notes](docs/releases/0.3.0.md) and
+The signed, notarized **0.3.0 beta** is available from the
+[latest published release](https://github.com/aindaco1/mkv-magic/releases/latest).
+It includes the capabilities below and was published at the owner's direction
+with clean-account Apple Silicon, physical Intel, and manual playback checks
+still pending. See the [release acceptance record](docs/releases/0.3.0.md) and
 [Jev development check](docs/testing/JEV_EVALUATION.md).
 
 **Appearance:** MKV Magic > Settings offers System (the default), Light, and
