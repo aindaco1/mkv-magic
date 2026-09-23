@@ -11,13 +11,16 @@ trap cleanup EXIT
 validator="$repo_root/scripts/release/validate-release-notes.sh"
 notes="$repo_root/docs/releases/0.1.0.md"
 
-"$validator" 0.1.0 >/dev/null
-"$validator" 0.1.2 >/dev/null
-"$validator" 0.1.3 >/dev/null
-"$validator" 0.1.4 >/dev/null
-"$validator" 0.1.5 >/dev/null
-"$validator" 0.1.6 >/dev/null
-"$validator" 0.1.7 >/dev/null
+# Validate every versioned note so a new release cannot pass source CI while
+# failing the signed-tag gate because a hard-coded version list went stale.
+for notes_path in "$repo_root"/docs/releases/[0-9]*.md; do
+    version="${notes_path##*/}"
+    version="${version%.md}"
+    if [[ "$version" == 0.0.0 ]]; then
+        continue # The reserved disposable notes are rejected separately below.
+    fi
+    "$validator" "$version" >/dev/null
+done
 
 expect_rejection() {
     local description="$1"

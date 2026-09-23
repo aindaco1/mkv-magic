@@ -3,7 +3,7 @@
 All notable changes to MKV Magic will be documented here. Versions follow
 semantic versioning; public release tags are immutable and signed.
 
-## Unreleased
+## 0.3.0 (candidate)
 
 - Add a default local development check with Jev calibration and semantic review
   of synthetic planner, queue, retry, cancellation, real-remux, and presentation
@@ -82,8 +82,6 @@ semantic versioning; public release tags are immutable and signed.
   Add native interaction, minimum-size light/dark, long-list, and cancellation
   regressions alongside the existing common-flow suite.
 
-## Earlier 0.3.0 development work (unreleased)
-
 - Keep the track editor's fields, labels, flags, and actions compact and visible.
   Preview Changes now follows valid edits as you type, select a language, or
   toggle a flag, clears stale validation, and explains the final Verify & Run
@@ -129,8 +127,6 @@ semantic versioning; public release tags are immutable and signed.
   another already-inspected pair. Each job privately preserves its exact
   source-audio language choices and sidecar review.
 
-## 0.2.2 - 2026-08-29
-
 - Require a live writable directory grant before using an automatic output
   destination. When beside-source access is unavailable, obtain an authorized
   destination through the save panel before processing instead of failing at
@@ -160,6 +156,30 @@ semantic versioning; public release tags are immutable and signed.
 - Distinguish a failed join-boundary decode in privacy-safe support reports and
   include only its validated one-based boundary number. Decoder output, exit
   codes, filenames, and paths remain excluded.
+
+## 0.2.4 - 2026-09-15
+
+- Validate every versioned release note during source CI, preventing a stale
+  hard-coded list from missing the signed-tag release requirements.
+- Include the output-access and readable-inspector corrections from 0.2.3,
+  whose release attempt stopped at notes validation before signing.
+
+## 0.2.3 - 2026-09-15
+
+- Ask for an output location when selecting a source file has not granted
+  access to its parent folder. Automatic sibling exports no longer fail at
+  the final verified commit because of a missing sandbox grant.
+- Report an unavailable chosen output folder before processing starts.
+- Keep the inspector text fitted to its scroll view so parsed media details
+  remain visible after native window layout on macOS 27.
+
+## 0.2.2 - 2026-09-15
+
+- Fit the initial native window to the display's usable frame on macOS 27.
+- Fix Swift 6.4 compilation of unchanged-byte verification fixtures.
+- Correct hosted sandbox staging and the Xcode 27 deployment target used by
+  the Sparkle update acceptance driver, retaining all release acceptance gates.
+- Apply accessible sandbox staging to local package and update checks as well.
 
 ## 0.2.1 - 2026-08-29
 

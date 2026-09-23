@@ -530,8 +530,18 @@ final class AppPolicyTests: XCTestCase {
         )
 
         guard case .askEveryTime = resolution else {
-            return XCTFail("An automatic sibling output requires a writable directory grant")
+            return XCTFail("Selecting a source file does not grant its parent directory")
         }
+        XCTAssertEqual(preferences.mode, .besideSource)
+    }
+
+    func testOutputDirectoryScopeRejectsDeniedAccess() {
+        XCTAssertNil(
+            OutputDirectorySecurityScope(
+                directoryURL: URL(fileURLWithPath: "/Media"),
+                startAccessing: { _ in false },
+                stopAccessing: { _ in XCTFail("A denied grant must not be released") }
+            ))
     }
 
     @MainActor
@@ -578,6 +588,17 @@ final class AppPolicyTests: XCTestCase {
             destination.url.deletingLastPathComponent().standardizedFileURL,
             folder.standardizedFileURL
         )
+        XCTAssertThrowsError(
+            try OutputDestinationPolicy.resolve(
+                sourceURL: source,
+                suggestedFilename: "Movie — Edited.mkv",
+                preferences: preferences,
+                directoryAccessProvider: { _ in nil }
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? OutputDestinationPreferenceError, .unavailableChosenFolder)
+        }
     }
 
     @MainActor
@@ -4730,6 +4751,32 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertFalse(historyText.contains(root.path))
         XCTAssertFalse(historyText.contains("Dialogue"))
         XCTAssertFalse(historyText.contains("YTS.MX"))
+    }
+
+    @MainActor
+    func testInspectorDocumentFillsItsViewportAcrossWindowSizes() throws {
+        let controller = MainViewController(model: AppModel())
+        let window = NSWindow(contentViewController: controller)
+        window.appearance = NSAppearance(named: .darkAqua)
+        window.orderFront(nil)
+        defer { window.close() }
+        let text = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTextView }.first {
+                $0.accessibilityLabel() == "Selected media details"
+            })
+        let scroll = try XCTUnwrap(text.enclosingScrollView)
+        for size in [NSSize(width: 1_080, height: 680), NSSize(width: 1_280, height: 800)] {
+            window.setContentSize(size)
+            window.displayIfNeeded()
+            RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+            XCTAssertGreaterThan(text.frame.width, 200)
+            XCTAssertGreaterThan(text.frame.height, 20)
+            XCTAssertGreaterThan(text.textContainer?.size.width ?? 0, 200)
+            XCTAssertEqual(text.frame.width, scroll.contentView.bounds.width, accuracy: 2)
+            XCTAssertTrue(text.isSelectable)
+            XCTAssertFalse(text.isEditable)
+            XCTAssertTrue(text.isVerticallyResizable)
+        }
     }
 
     @MainActor
