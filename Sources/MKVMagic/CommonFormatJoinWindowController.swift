@@ -855,20 +855,16 @@ private final class CommonFormatJoinViewController: NSViewController {
         )
         help.textColor = AppPalette.secondaryText
 
-        review.isEditable = false
-        review.isSelectable = true
-        review.drawsBackground = false
-        review.font = .systemFont(ofSize: 12)
-        review.textContainerInset = NSSize(width: 10, height: 10)
+        ReadOnlyTextViewPresentation.configure(
+            review, drawsBackground: false, inset: NSSize(width: 10, height: 10),
+            font: .systemFont(ofSize: 12))
         review.setAccessibilityLabel("Reviewed common-format choices")
         review.setAccessibilityHelp(
             "Read-only explanation of which lanes are copied and which are converted once."
         )
         refreshReviewText()
-        let scroll = NSScrollView()
-        scroll.documentView = review
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
+        let scroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: review, borderType: .bezelBorder)
 
         let targets = NSStackView()
         targets.orientation = .vertical
@@ -1039,10 +1035,11 @@ private final class CommonFormatJoinViewController: NSViewController {
     }
 
     private func refreshReviewText() {
-        review.string = CommonFormatJoinChoicePolicy.summaries(
+        let summary = CommonFormatJoinChoicePolicy.summaries(
             for: candidate,
             resolvedPlan: reviewedPlan
         ).map { "• \($0)" }.joined(separator: "\n\n")
+        ReadOnlyTextViewPresentation.present(summary, in: review)
     }
 
     private func showValidation(_ message: String) {

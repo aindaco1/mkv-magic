@@ -806,19 +806,15 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
 
         let reviewHeading = NSTextField(labelWithString: "Compatibility review")
         reviewHeading.font = .systemFont(ofSize: 15, weight: .semibold)
-        reviewText.isEditable = false
-        reviewText.isSelectable = true
-        reviewText.drawsBackground = false
-        reviewText.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        reviewText.textContainerInset = NSSize(width: 8, height: 8)
+        ReadOnlyTextViewPresentation.configure(
+            reviewText, drawsBackground: false,
+            font: .monospacedSystemFont(ofSize: 11, weight: .regular))
         reviewText.setAccessibilityLabel("Join compatibility review")
         reviewText.setAccessibilityHelp(
             "Read-only track, chapter, copy, and encoding consequences for this source order."
         )
-        let reviewScroll = NSScrollView()
-        reviewScroll.documentView = reviewText
-        reviewScroll.hasVerticalScroller = true
-        reviewScroll.borderType = .bezelBorder
+        let reviewScroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: reviewText, borderType: .bezelBorder)
 
         statusLabel.maximumNumberOfLines = 2
         statusLabel.setAccessibilityLabel("Join readiness status")
@@ -1069,7 +1065,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
                 ? ["  Waiting for a complete track map."]
                 : snapshot.normalizationSummaries.map { "  \($0)" }
         )
-        reviewText.string = lines.joined(separator: "\n")
+        ReadOnlyTextViewPresentation.present(lines.joined(separator: "\n"), in: reviewText)
         mappingButton.isEnabled = snapshot.reviewedMapping != nil
         mappingButton.title =
             snapshot.unresolvedAmbiguities.isEmpty

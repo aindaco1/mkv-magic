@@ -258,20 +258,14 @@ final class ThirdPartySoftwareViewController: NSViewController {
             "Choose the packaged notice or license text to read."
         )
 
-        documentText.isEditable = false
-        documentText.isRichText = false
-        documentText.isSelectable = true
-        documentText.drawsBackground = false
-        documentText.font = .systemFont(ofSize: 13)
-        documentText.textContainerInset = NSSize(width: 8, height: 8)
+        ReadOnlyTextViewPresentation.configure(
+            documentText, drawsBackground: false, font: .systemFont(ofSize: 13))
         documentText.setAccessibilityLabel("Selected license text")
         documentText.setAccessibilityHelp(
             "The complete local text of the selected packaged document."
         )
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        scroll.documentView = documentText
+        let scroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: documentText, borderType: .bezelBorder)
 
         let close = NSButton(title: "Close", target: self, action: #selector(closeWindow))
         close.keyEquivalent = "\u{1b}"
@@ -310,7 +304,7 @@ final class ThirdPartySoftwareViewController: NSViewController {
 
     @objc private func selectDocument() {
         let index = max(0, documentPicker.indexOfSelectedItem)
-        documentText.string = documents[index].body
+        ReadOnlyTextViewPresentation.present(documents[index].body, in: documentText)
         documentText.scrollToBeginningOfDocument(nil)
     }
 

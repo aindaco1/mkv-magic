@@ -5,6 +5,11 @@ semantic versioning; public release tags are immutable and signed.
 
 ## 0.3.0 (candidate)
 
+- Keep Help, licenses, and both join-review text views fitted to their scroll
+  viewports on older macOS releases by reusing the shared text presentation.
+- Simplify diagnostic fingerprint and chapter-fixture expressions for the
+  release compiler without changing report grouping or chapter expectations.
+
 - Add a default local development check with Jev calibration and semantic review
   of synthetic planner, queue, retry, cancellation, real-remux, and presentation
   evidence from existing tests. Keep inference outside the app; preserve offline

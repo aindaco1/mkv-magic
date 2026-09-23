@@ -4754,6 +4754,28 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testReadOnlyDocumentTracksItsViewportFromAnInitiallyEmptyFrame() throws {
+        let text = NSTextView(frame: .zero)
+        ReadOnlyTextViewPresentation.configure(text, drawsBackground: false)
+        let scroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: text, borderType: .bezelBorder)
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 420),
+            styleMask: [.titled, .resizable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = scroll
+        ReadOnlyTextViewPresentation.present("Review the changes before saving.", in: text)
+        window.orderFront(nil)
+        defer { window.close() }
+        for size in [NSSize(width: 520, height: 420), NSSize(width: 760, height: 480)] {
+            window.setContentSize(size)
+            window.displayIfNeeded()
+            try assertReadableDocument(text)
+            XCTAssertEqual(text.string, "Review the changes before saving.")
+        }
+    }
+
+    @MainActor
     func testInspectorDocumentFillsItsViewportAcrossWindowSizes() throws {
         let controller = MainViewController(model: AppModel())
         let window = NSWindow(contentViewController: controller)

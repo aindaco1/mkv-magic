@@ -37,21 +37,16 @@ final class HelpViewController: NSViewController {
         )
         introduction.textColor = AppPalette.secondaryText
 
-        topics.isEditable = false
-        topics.isRichText = false
-        topics.isSelectable = true
-        topics.drawsBackground = false
-        topics.font = .systemFont(ofSize: 13)
-        topics.string = Self.helpText
-        topics.textContainerInset = NSSize(width: 4, height: 4)
+        ReadOnlyTextViewPresentation.configure(
+            topics, drawsBackground: false, inset: NSSize(width: 4, height: 4),
+            font: .systemFont(ofSize: 13))
+        ReadOnlyTextViewPresentation.present(Self.helpText, in: topics)
         topics.setAccessibilityLabel("MKV Magic help topics")
         topics.setAccessibilityHelp(
             "Getting started, output safety, encoding, workflows, and keyboard shortcuts."
         )
-        let scroll = NSScrollView()
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        scroll.documentView = topics
+        let scroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: topics, borderType: .bezelBorder)
 
         let close = NSButton(
             title: "Close",
