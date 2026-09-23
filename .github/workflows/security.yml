@@ -42,10 +42,12 @@ jobs:
       # configuration preserves the production compilation graph; disabling
       # optimization removes work that CodeQL does not need for extraction.
       - name: Build analyzed ARM64 application
-        run: >-
-          swift build -c release --arch arm64
-          --product MKVMagic --disable-automatic-resolution
-          -Xswiftc -Onone
+        run: |
+          for product in MKVMagic MKVMagicReportService; do
+            swift build -c release --arch arm64 \
+              --product "$product" --disable-automatic-resolution \
+              -Xswiftc -Onone
+          done
 
       - name: Analyze
         uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938

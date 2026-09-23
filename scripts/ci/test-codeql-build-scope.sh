@@ -18,6 +18,10 @@ if [[ "$build_step" != *'-Xswiftc -Onone'* ]]; then
     echo "CodeQL does not disable unnecessary optimizer work" >&2
     exit 1
 fi
+if [[ "$build_step" != *'for product in MKVMagic MKVMagicReportService; do'* ]]; then
+    echo "CodeQL must analyze both shipped executables, including the isolated reporting service" >&2
+    exit 1
+fi
 if [[ "$build_step" == *'x86_64'* || "$build_step" == *'Universal'* ]]; then
     echo "CodeQL redundantly builds a second architecture" >&2
     exit 1
