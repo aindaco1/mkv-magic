@@ -80,6 +80,15 @@ version/platform buckets. An uncertain provider result remains retryable with
 the same ID; success is shown only after a validated receipt. See the relay README
 for uncertain-create reconciliation and repository permission/deployment steps.
 
+## Packaged verification
+
+The production native verifier checks the signed reporting peer with an invalid
+payload, which the service rejects before any network request. The helper keeps
+its fixed production host and same-Team-ID requirement. Ad-hoc CI packages
+cannot satisfy that identity: their gate checks the app baseline, bundled tools,
+and original-preserving media fixture separately. Downloaded Developer ID-signed
+releases must still pass the complete native verifier, including reporting IPC.
+
 ## Acceptance status (2026-09-07)
 
 Private test.19 / build `1788785951` is built and Developer ID-signed, with native

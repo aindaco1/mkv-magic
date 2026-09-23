@@ -16,6 +16,37 @@ for required_fragment in \
         exit 1
     fi
 done
+
+# CI signs a disposable package ad hoc; the reporter deliberately requires a
+# production host and Team ID. Keep app/media execution in CI and require the
+# complete reporting IPC check on the downloaded Developer ID-signed release.
+for required_fragment in \
+    '--app-baseline-probe' \
+    'MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1' \
+    'MKV_MAGIC_VERIFY_BUNDLED_FIXTURE=1'; do
+    if ! grep -Fq -- "$required_fragment" "$ci_workflow"; then
+        echo "CI fixture is missing native app/media coverage: $required_fragment" >&2
+        exit 1
+    fi
+done
+if grep -Fq 'MKV_MAGIC_VERIFY_NATIVE_RELEASE=1' "$ci_workflow"; then
+    echo "ad-hoc CI fixture cannot impersonate a production reporting host" >&2
+    exit 1
+fi
+for required_fragment in \
+    'MKV_MAGIC_REQUIRE_DISTRIBUTION=1' \
+    'MKV_MAGIC_VERIFY_NATIVE_RELEASE=1'; do
+    if ! grep -Fq "$required_fragment" \
+        "$repo_root/scripts/release/verify-downloaded-release.sh"; then
+        echo "downloaded release is missing production verification: $required_fragment" >&2
+        exit 1
+    fi
+done
+if ! grep -Fq 'try await ReportSubmissionClient().checkAvailability()' \
+    "$repo_root/Sources/MKVMagic/NativeReleaseVerification.swift"; then
+    echo "production native verification must check the reporting peer" >&2
+    exit 1
+fi
 if rg -n 'xcodebuild -version[[:space:]]*\|[[:space:]]*head' \
     "$ci_workflow" "$release_workflow" \
     "$repo_root/scripts/tools/package-ci-runtime.sh"; then

@@ -176,3 +176,11 @@ skip, 19 evaluator regressions, all 48 labeled examples, and all 12 workflows.
 The Universal build and source/security checks passed. The source-bound report
 is retained locally in `.build/jev/release-0.3.0/`; the rubric, model policy,
 and calibration labels are unchanged.
+
+The final September 23 application check, after the shared text-view resize
+regression was added, passed 894 Swift tests (one optional private-media skip),
+19 evaluator regressions, all 48 labeled examples, and all 12 workflow reviews.
+Its evidence is in `.build/jev/release-0.3.0-final/`. The complete local gate also
+passed, including 89.45% non-UI line coverage, both sanitizers, packaging, and
+disposable updater replacement. Later CI workflow corrections do not change
+the application or evaluator source bound to this evidence.

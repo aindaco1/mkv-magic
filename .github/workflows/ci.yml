@@ -123,8 +123,14 @@ jobs:
           ./scripts/release/build-app.sh
           ./scripts/release/sign-app.sh \
             "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app" - none
+          "$MKV_MAGIC_RELEASE_ROOT/MKV Magic.app/Contents/MacOS/MKVMagic" \
+            --app-baseline-probe
           ./scripts/release/package.sh
-          MKV_MAGIC_VERIFY_NATIVE_RELEASE=1 \
+          # The ad-hoc fixture cannot satisfy the reporting helper's production
+          # Team ID/host requirement. Signed release downloads still run the
+          # complete native verifier, including the non-networking XPC check.
+          MKV_MAGIC_VERIFY_BUNDLED_TOOLS=1 \
+          MKV_MAGIC_VERIFY_BUNDLED_FIXTURE=1 \
             ./scripts/release/verify-dmg.sh \
               "$MKV_MAGIC_RELEASE_ROOT/MKV-Magic-0.0.0-universal.dmg"
 
