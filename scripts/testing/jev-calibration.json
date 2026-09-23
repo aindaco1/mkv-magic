@@ -1,0 +1,170 @@
+[
+  {
+    "id": "metadata-plan-pair",
+    "case": "metadata-plan",
+    "split": "calibration",
+    "pass": "Edit the temporary clone, verify the output, then commit the verified result.",
+    "fail": "Edit the original in place and save immediately without verification."
+  },
+  {
+    "id": "fused-trim-pair",
+    "case": "fused-trim",
+    "split": "calibration",
+    "pass": "Combine the exact trim and conversion into one final encode.",
+    "fail": "Encode the trim first, then encode that result again for conversion."
+  },
+  {
+    "id": "cleanup-review-pair",
+    "case": "cleanup-review",
+    "split": "calibration",
+    "pass": "Will apply: remove tags. No transcoding.",
+    "fail": "Completed: removed tags successfully."
+  },
+  {
+    "id": "remux-review-pair",
+    "case": "remux-review",
+    "split": "calibration",
+    "pass": "No transcoding; one MKV remux.",
+    "fail": "Encode the video to HEVC while adding the subtitle."
+  },
+  {
+    "id": "waiting-queue-pair",
+    "case": "waiting-queue",
+    "split": "calibration",
+    "pass": "Two pending jobs, waiting for automatic execution.",
+    "fail": "Both outputs have been verified and saved successfully."
+  },
+  {
+    "id": "subtitle-cold-queue-pair",
+    "case": "subtitle-cold-queue",
+    "split": "calibration",
+    "pass": "Verified output completed successfully.",
+    "fail": "Jobs are waiting and no output has been verified."
+  },
+  {
+    "id": "stale-source-retry-pair",
+    "case": "stale-source-retry",
+    "split": "calibration",
+    "pass": "Needs review because an input or its permissions changed.",
+    "fail": "The unchanged source is ready and requires no review."
+  },
+  {
+    "id": "failed-job-retry-pair",
+    "case": "failed-job-retry",
+    "split": "calibration",
+    "pass": "Before retry: execution failed. Choose Review Again before retrying. After retry: verified output completed.",
+    "fail": "Before retry: failed, but the app will retry automatically without review. After retry: verified output completed."
+  },
+  {
+    "id": "cancelled-output-pair",
+    "case": "cancelled-output",
+    "split": "calibration",
+    "pass": "Cancelled",
+    "fail": "Succeeded"
+  },
+  {
+    "id": "real-restored-remux-pair",
+    "case": "real-restored-remux",
+    "split": "calibration",
+    "pass": "No transcoding; one MKV remux. Verified output completed successfully.",
+    "fail": "The video was re-encoded twice and verification was skipped."
+  },
+  {
+    "id": "commit-boundary-pair",
+    "case": "commit-boundary",
+    "split": "calibration",
+    "pass": "Verification passed. The output is being committed atomically; cancellation is no longer available.",
+    "fail": "Click Cancel now to stop the atomic commit before verification."
+  },
+  {
+    "id": "metadata-plan-validation",
+    "case": "metadata-plan",
+    "split": "regression",
+    "pass": "Prepare a copy, check the result, then commit it.",
+    "fail": "Commit the temporary output first and check it afterward."
+  },
+  {
+    "id": "fused-trim-validation",
+    "case": "fused-trim",
+    "split": "regression",
+    "pass": "All video changes share a single final encoding pass.",
+    "fail": "Two separate video generations are required."
+  },
+  {
+    "id": "cleanup-review-validation",
+    "case": "cleanup-review",
+    "split": "regression",
+    "pass": "Will apply the reviewed changes once you approve them.",
+    "fail": "The requested cleanup is already finished."
+  },
+  {
+    "id": "waiting-queue-validation",
+    "case": "waiting-queue",
+    "split": "regression",
+    "pass": "Nothing has started; both jobs remain pending.",
+    "fail": "Both jobs have finished verification."
+  },
+  {
+    "id": "failed-job-retry-validation",
+    "case": "failed-job-retry",
+    "split": "regression",
+    "pass": "Before retry: the job failed. Review it again before another attempt. After retry: it succeeded.",
+    "fail": "Before retry: the job failed. Keep retrying immediately with the old plan; review is unnecessary."
+  },
+  {
+    "id": "commit-boundary-validation",
+    "case": "commit-boundary",
+    "split": "regression",
+    "pass": "Checks passed. Cancel is disabled during the atomic save.",
+    "fail": "Verification failed. The commit can be cancelled at any time."
+  },
+  {
+    "id": "cleanup-noop-pair",
+    "case": "cleanup-noop",
+    "split": "calibration",
+    "pass": "No applicable changes. No output.",
+    "fail": "Cleanup completed and the new output was saved."
+  },
+  {
+    "id": "metadata-plan-fresh-validation",
+    "case": "metadata-plan",
+    "split": "validation",
+    "pass": "Change the temporary copy, verify the result, then commit it.",
+    "fail": "Apply the change to the source file before checking the result."
+  },
+  {
+    "id": "cleanup-review-fresh-validation",
+    "case": "cleanup-review",
+    "split": "validation",
+    "pass": "Remove all Matroska tags \u2014 Will apply. Normalize commentary names \u2014 Will apply.",
+    "fail": "Remove all Matroska tags \u2014 Completed. Normalize commentary names \u2014 Completed."
+  },
+  {
+    "id": "cleanup-noop-fresh-validation",
+    "case": "cleanup-noop",
+    "split": "validation",
+    "pass": "This file already meets the recipe. Nothing will be written.",
+    "fail": "The recipe has already created a new file."
+  },
+  {
+    "id": "failed-job-retry-fresh-validation",
+    "case": "failed-job-retry",
+    "split": "validation",
+    "pass": "Before retry: processing failed. Refresh and approve the reviewed plan before trying again. After retry: verified output saved.",
+    "fail": "Before retry: processing failed. No input review is needed; repeat the old plan immediately. After retry: verified output saved."
+  },
+  {
+    "id": "waiting-queue-fresh-validation",
+    "case": "waiting-queue",
+    "split": "validation",
+    "pass": "There are two pending items, neither of which has started.",
+    "fail": "Both pending items are already verified outputs."
+  },
+  {
+    "id": "commit-boundary-fresh-validation",
+    "case": "commit-boundary",
+    "split": "validation",
+    "pass": "Verification is complete. The verified file is being committed atomically and Cancel is unavailable.",
+    "fail": "Verification is pending. You can still interrupt the atomic commit with Cancel."
+  }
+]

@@ -10,7 +10,8 @@ done < <(find "$source_root" -type f -name '*.swift' -print0)
 
 forbidden_patterns=(
     '^[[:space:]]*import[[:space:]]+(CFNetwork|FoundationNetworking|Network|NetworkExtension|WebKit)([[:space:]]|$)'
-    'URLSession|NSURLSession|NW(Connection|Listener|Browser|PathMonitor)|CFSocket|SentrySDK|PostHogSDK|FirebaseAnalytics'
+    'URLSession|NSURLSession'
+    'NW(Connection|Listener|Browser|PathMonitor)|CFSocket|SentrySDK|PostHogSDK|FirebaseAnalytics'
     'URL[[:space:]]*\([[:space:]]*string:[[:space:]]*"https?://'
     '/(usr/bin|usr/local/bin|opt/homebrew/bin)/(curl|wget|nc)'
     '(/bin/|/usr/bin/)(ba|z|c|fi|k)?sh(["[:space:]]|$)'
@@ -23,6 +24,10 @@ for pattern in "${forbidden_patterns[@]}"; do
     matches="$(grep -EnH "$pattern" "${source_files[@]}")"
     status=$?
     set -e
+    if [[ "$pattern" == 'URLSession|NSURLSession' && "$status" -eq 0 ]]; then
+        matches="$(grep -Fv '/Sources/MKVMagicReportService/ReportTransport.swift:' <<<"$matches" || true)"
+        if [[ -z "$matches" ]]; then status=1; fi
+    fi
     if [[ "$status" -eq 0 ]]; then
         echo "local-only or shell boundary violation:" >&2
         echo "$matches" >&2
@@ -49,6 +54,7 @@ fi
     "$repo_root/Configuration/MKVMagic.entitlements"
 "$repo_root/scripts/ci/check-helper-entitlements.sh" \
     "$repo_root/Configuration/Helper.entitlements"
+bash "$repo_root/scripts/ci/check-reporting-boundary.sh"
 "$repo_root/scripts/ci/check-info-plist.sh"
 "$repo_root/scripts/ci/check-app-icon.sh" \
     "$repo_root/Assets/AppIcon/MKVMagic.icns" \

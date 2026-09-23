@@ -1,0 +1,114 @@
+{
+  "metadata-plan": {
+    "level": "planner",
+    "facts": [
+      "no_video_encoding",
+      "no_audio_encoding",
+      "verified_clone_before_commit"
+    ],
+    "requirement": "Describe editing a temporary clone and verifying it before committing the result."
+  },
+  "fused-trim": {
+    "level": "planner",
+    "facts": [
+      "exact_trim_requested",
+      "one_video_generation",
+      "one_encode_stage"
+    ],
+    "requirement": "Convey that the requested video operations are combined into one final video encode."
+  },
+  "cleanup-review": {
+    "level": "presentation",
+    "facts": [
+      "no_video_encoding",
+      "no_audio_encoding",
+      "changes_await_approval"
+    ],
+    "requirement": "The listed cleanup changes are described as future work, not as actions that have already executed."
+  },
+  "remux-review": {
+    "level": "planner",
+    "facts": [
+      "one_remux",
+      "no_video_encoding",
+      "no_audio_encoding"
+    ],
+    "requirement": "Explain that this operation uses one MKV remux without transcoding."
+  },
+  "waiting-queue": {
+    "level": "queue-model",
+    "facts": [
+      "two_waiting_jobs",
+      "no_attempts_started"
+    ],
+    "requirement": "Describe the queued jobs as awaiting execution, not completed outputs."
+  },
+  "subtitle-cold-queue": {
+    "level": "local-execution",
+    "facts": [
+      "four_jobs_waited_without_attempts",
+      "four_verified_outputs_after_reload",
+      "originals_unchanged"
+    ],
+    "requirement": "Describe the final outputs as successfully verified and completed."
+  },
+  "stale-source-retry": {
+    "level": "local-execution",
+    "facts": [
+      "changed_input_required_review",
+      "other_job_completed_independently",
+      "retry_preserved_identity",
+      "retry_started_one_new_attempt"
+    ],
+    "requirement": "Explain why the changed-input job needed a fresh review. Judge the explanation of the pre-retry state."
+  },
+  "failed-job-retry": {
+    "level": "local-execution",
+    "facts": [
+      "first_attempt_failed",
+      "retry_kept_job_identity",
+      "second_attempt_succeeded"
+    ],
+    "requirement": "In the before-retry explanation, identify failure and direct the user to review the job before retrying. A separate after-retry success is valid."
+  },
+  "cancelled-output": {
+    "level": "local-execution",
+    "facts": [
+      "source_unchanged",
+      "no_output_committed",
+      "history_cancelled"
+    ],
+    "requirement": "Identify this outcome as cancellation rather than success or failure."
+  },
+  "real-restored-remux": {
+    "level": "generated-media",
+    "facts": [
+      "fresh_model_restored_review",
+      "no_video_encoding",
+      "no_audio_encoding",
+      "all_sidecars_retained",
+      "source_unchanged",
+      "primary_sidecar_unchanged",
+      "verification_preceded_commit"
+    ],
+    "requirement": "Describe a completed, verified output from remuxing without transcoding."
+  },
+  "commit-boundary": {
+    "level": "native-controller",
+    "facts": [
+      "cancellation_disabled_at_commit",
+      "verification_already_passed",
+      "commit_in_progress"
+    ],
+    "requirement": "Explain that verification passed and cancellation is unavailable while committing atomically."
+  },
+  "cleanup-noop": {
+    "level": "native-controller",
+    "facts": [
+      "no_runnable_changes",
+      "done_action_available",
+      "run_action_absent"
+    ],
+    "requirement": "Explain that no changes are needed and no output will be created."
+  }
+}

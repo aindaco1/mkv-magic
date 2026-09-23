@@ -436,10 +436,17 @@ public struct JoinOutputAuditor<Runner: CommandRunning & CommandLineDigesting>: 
         let codec = track.codec.lowercased()
         let codecID = track.codecID?.lowercased() ?? ""
         if codec == "hevc" || codec == "h265" || codecID.contains("hevc") {
-            return "filter_units=remove_types=32|33|34|35"
+            // MP4 and Matroska may carry the same HEVC parameter sets, access
+            // delimiters, SEI, end markers, and filler either as codec private
+            // data or in-band units. Hash the encoded picture units plus private
+            // extensions (including Dolby Vision NAL types) so a legal container
+            // relocation cannot look like a re-encode.
+            return "filter_units=remove_types=32-40"
         }
         if codec == "h264" || codec == "avc" || codecID.contains("avc") {
-            return "filter_units=remove_types=7|8|9"
+            // As above, normalize only the standard non-picture units that MP4
+            // and Matroska are allowed to relocate around the first packet.
+            return "filter_units=remove_types=6-12"
         }
         return nil
     }

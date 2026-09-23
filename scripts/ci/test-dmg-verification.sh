@@ -23,6 +23,29 @@ if mkv_magic_verification_architectures 'x86_64 arm64' >/dev/null 2>&1 || \
     echo "DMG verification accepted an unsafe architecture list" >&2
     exit 1
 fi
+if [[ "$(mkv_magic_native_verification_architecture_for arm64 1)" != arm64 || \
+      "$(mkv_magic_native_verification_architecture_for x86_64 1)" != arm64 || \
+      "$(mkv_magic_native_verification_architecture_for x86_64 0)" != x86_64 ]]; then
+    echo "native DMG verification architecture selection is inconsistent" >&2
+    exit 1
+fi
+if mkv_magic_native_verification_architecture_for i386 0 >/dev/null 2>&1; then
+    echo "native DMG verification accepted an unsupported host" >&2
+    exit 1
+fi
+if ! mkv_magic_require_native_verification arm64 arm64 0 || \
+    ! mkv_magic_require_native_verification x86_64 x86_64 0 || \
+    ! mkv_magic_require_native_verification 'arm64 x86_64' arm64 1; then
+    echo "native DMG verification rejected an allowed architecture" >&2
+    exit 1
+fi
+if mkv_magic_require_native_verification x86_64 arm64 0 >/dev/null 2>&1 || \
+    mkv_magic_require_native_verification 'arm64 x86_64' x86_64 0 \
+        >/dev/null 2>&1 || \
+    mkv_magic_require_native_verification invalid arm64 1 >/dev/null 2>&1; then
+    echo "native DMG verification accepted translated execution by default" >&2
+    exit 1
+fi
 
 verify_calls=0
 detached_device=''

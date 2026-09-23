@@ -46,7 +46,7 @@ final class TrackEditorWindowController: NSWindowController {
 }
 
 @MainActor
-final class TrackEditorViewController: NSViewController {
+final class TrackEditorViewController: NSViewController, NSTextFieldDelegate, NSComboBoxDelegate {
     var onCancel: (() -> Void)?
     var onPreview: ((TrackMetadataEdit) -> Void)?
 
@@ -67,7 +67,15 @@ final class TrackEditorViewController: NSViewController {
         checkboxWithTitle: "Original language", target: nil, action: nil)
     private let textDescriptionCheck = NSButton(
         checkboxWithTitle: "Text descriptions", target: nil, action: nil)
-    private let statusLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(wrappingLabelWithString: "")
+    private let previewButton = NSButton(title: "Preview Changes", target: nil, action: nil)
+
+    private var flagButtons: [NSButton] {
+        [
+            defaultCheck, forcedCheck, enabledCheck, commentaryCheck, hearingCheck,
+            visualCheck, originalCheck, textDescriptionCheck,
+        ]
+    }
 
     var preferredInitialFirstResponder: NSView { trackPopup }
 
@@ -89,7 +97,7 @@ final class TrackEditorViewController: NSViewController {
             wrappingLabelWithString:
                 "This changes Matroska headers only. Audio, video, subtitles, chapters, and attachments are copied exactly."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
         trackPopup.addItems(withTitles: tracks.map(TrackEditorPresentation.label))
         trackPopup.target = self
@@ -99,12 +107,14 @@ final class TrackEditorViewController: NSViewController {
             "Choose one Matroska track whose header metadata will be changed."
         )
         nameField.placeholderString = "Optional display name"
+        nameField.delegate = self
         nameField.setAccessibilityLabel("Track display name")
         nameField.setAccessibilityHelp("Set an optional name shown by media players.")
         languageField.addItems(withObjectValues: [
             "en", "en-US", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "und",
         ])
         languageField.placeholderString = "en, en-US, es, und…"
+        languageField.delegate = self
         languageField.setAccessibilityLabel("Track language tag")
         languageField.setAccessibilityHelp(
             "Enter a language tag such as en, en-US, or und for undetermined."
@@ -118,7 +128,8 @@ final class TrackEditorViewController: NSViewController {
         fields.rowSpacing = 10
         fields.columnSpacing = 12
         fields.column(at: 0).xPlacement = .trailing
-        fields.column(at: 1).width = 360
+        fields.column(at: 0).width = 96
+        fields.column(at: 1).xPlacement = .fill
 
         let flagsHeading = NSTextField(labelWithString: "Playback roles and flags")
         flagsHeading.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -130,35 +141,38 @@ final class TrackEditorViewController: NSViewController {
         ])
         flagGrid.rowSpacing = 8
         flagGrid.columnSpacing = 22
-        flagGrid.column(at: 0).width = 210
-        flagGrid.column(at: 1).width = 210
+        for button in flagButtons {
+            button.target = self
+            button.action = #selector(fieldsChanged)
+        }
 
-        statusLabel.textColor = .systemRed
-        statusLabel.lineBreakMode = .byWordWrapping
-        statusLabel.maximumNumberOfLines = 2
+        statusLabel.textColor = AppPalette.secondaryText
+        statusLabel.maximumNumberOfLines = 3
         statusLabel.setAccessibilityLabel("Track edit status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.setAccessibilityHelp("Close without preparing a track edit.")
-        let previewButton = NSButton(
-            title: "Preview Changes", target: self, action: #selector(preview))
+        previewButton.target = self
+        previewButton.action = #selector(preview)
         previewButton.keyEquivalent = "\r"
         previewButton.bezelStyle = .rounded
         previewButton.setAccessibilityHelp(
-            "Review this metadata-only change before creating a verified MKV copy."
+            "Prepare this metadata-only change, then use Verify & Run in the main window to save a verified MKV copy."
         )
         let buttonSpacer = NSView()
         buttonSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let buttons = NSStackView(views: [statusLabel, buttonSpacer, cancelButton, previewButton])
+        let buttons = NSStackView(views: [buttonSpacer, cancelButton, previewButton])
         buttons.orientation = .horizontal
         buttons.alignment = .centerY
         buttons.spacing = 10
 
-        let stack = NSStackView(views: [heading, help, fields, flagsHeading, flagGrid, buttons])
+        let stack = NSStackView(views: [
+            heading, help, fields, flagsHeading, flagGrid, statusLabel, buttons,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = 14
-        stack.edgeInsets = NSEdgeInsets(top: 22, left: 24, bottom: 22, right: 24)
+        stack.spacing = MKVMagicLayoutMetrics.sectionGap
+        stack.edgeInsets = MKVMagicLayoutMetrics.windowInsets
         stack.translatesAutoresizingMaskIntoConstraints = false
         fields.translatesAutoresizingMaskIntoConstraints = false
         flagGrid.translatesAutoresizingMaskIntoConstraints = false
@@ -168,9 +182,12 @@ final class TrackEditorViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            // Extra window height must not stretch a form row into a blank region.
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor),
+            stack.contentWidthConstraint(for: help),
             stack.contentWidthConstraint(for: fields),
             stack.contentWidthConstraint(for: flagGrid),
+            stack.contentWidthConstraint(for: statusLabel),
             stack.contentWidthConstraint(for: buttons),
         ])
         view = root
@@ -178,7 +195,23 @@ final class TrackEditorViewController: NSViewController {
     }
 
     @objc private func selectedTrackChanged() {
+        view.window?.makeFirstResponder(trackPopup)
         populateFields()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        updatePreviewAvailability()
+    }
+
+    func comboBoxSelectionDidChange(_ notification: Notification) {
+        if let language = languageField.objectValueOfSelectedItem as? String {
+            languageField.stringValue = language
+        }
+        updatePreviewAvailability()
+    }
+
+    @objc private func fieldsChanged() {
+        updatePreviewAvailability()
     }
 
     @objc private func cancel() {
@@ -186,6 +219,8 @@ final class TrackEditorViewController: NSViewController {
     }
 
     @objc private func preview() {
+        // Also commit text when Return invokes the default button directly.
+        guard view.window?.makeFirstResponder(nil) != false else { return }
         guard let track = selectedTrack else {
             AccessibleStatusPresentation.present(
                 "No track with a stable Matroska UID is available.",
@@ -195,27 +230,9 @@ final class TrackEditorViewController: NSViewController {
             return
         }
         do {
-            let language = try TrackLanguageTag.canonical(languageField.stringValue)
-            let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-            let edit = TrackMetadataEdit(
-                trackUID: try requiredUID(track),
-                name: name.isEmpty ? nil : name,
-                language: language,
-                isDefault: defaultCheck.state == .on,
-                isForced: forcedCheck.state == .on,
-                isEnabled: enabledCheck.state == .on,
-                isCommentary: commentaryCheck.state == .on,
-                isHearingImpaired: hearingCheck.state == .on,
-                isVisualImpaired: visualCheck.state == .on,
-                isOriginal: originalCheck.state == .on,
-                isTextDescription: textDescriptionCheck.state == .on
-            )
+            let edit = try currentEdit(for: track)
             guard edit != (try TrackEditorPresentation.normalizedEdit(for: track)) else {
-                AccessibleStatusPresentation.present(
-                    "Change at least one value before previewing.",
-                    in: statusLabel,
-                    returningFocusTo: nameField
-                )
+                updatePreviewAvailability()
                 return
             }
             statusLabel.stringValue = ""
@@ -241,7 +258,10 @@ final class TrackEditorViewController: NSViewController {
     }
 
     private func populateFields() {
-        guard let track = selectedTrack else { return }
+        guard let track = selectedTrack else {
+            updatePreviewAvailability()
+            return
+        }
         nameField.stringValue = track.title ?? ""
         languageField.stringValue =
             (try? TrackLanguageTag.canonical(track.language ?? "und")) ?? "und"
@@ -253,7 +273,46 @@ final class TrackEditorViewController: NSViewController {
         visualCheck.state = track.isVisualImpaired ? .on : .off
         originalCheck.state = track.isOriginal ? .on : .off
         textDescriptionCheck.state = track.isTextDescription ? .on : .off
-        statusLabel.stringValue = ""
+        updatePreviewAvailability()
+    }
+
+    private func currentEdit(for track: MediaTrack) throws -> TrackMetadataEdit {
+        let language = try TrackLanguageTag.canonical(languageField.stringValue)
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        return TrackMetadataEdit(
+            trackUID: try requiredUID(track),
+            name: name.isEmpty ? nil : name,
+            language: language,
+            isDefault: defaultCheck.state == .on,
+            isForced: forcedCheck.state == .on,
+            isEnabled: enabledCheck.state == .on,
+            isCommentary: commentaryCheck.state == .on,
+            isHearingImpaired: hearingCheck.state == .on,
+            isVisualImpaired: visualCheck.state == .on,
+            isOriginal: originalCheck.state == .on,
+            isTextDescription: textDescriptionCheck.state == .on
+        )
+    }
+
+    private func updatePreviewAvailability() {
+        previewButton.isEnabled = false
+        statusLabel.textColor = AppPalette.secondaryText
+        guard let track = selectedTrack else {
+            statusLabel.stringValue = "No track with a stable Matroska UID is available."
+            return
+        }
+        do {
+            let edit = try currentEdit(for: track)
+            previewButton.isEnabled =
+                edit != (try TrackEditorPresentation.normalizedEdit(for: track))
+            statusLabel.stringValue =
+                previewButton.isEnabled
+                ? "Ready to preview. Then use Verify & Run in the main window to save a new MKV copy."
+                : "Change a name, language, or flag to enable Preview Changes. Your original file is never changed."
+        } catch {
+            statusLabel.textColor = AppPalette.errorText
+            statusLabel.stringValue = UserFacingErrorPresentation.shortReason(error)
+        }
     }
 
     private func fieldLabel(_ value: String) -> NSTextField {

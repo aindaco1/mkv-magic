@@ -22,10 +22,13 @@ decode-boundary spot checks, physical Intel acceptance, or a public release.
 8. The app verifies the temporary result, disables cancellation for the final
    commit, reopens the saved result, and records every source in History.
 
-The joined chapter output is one default nested edition. Each source becomes a
-top-level **Part** whose timestamps are offset onto the final timeline. The
-selected source edition remains nested beneath it; a chapterless part receives a
-numbered child boundary.
+The joined chapter output is one default edition containing every retained
+source leaf at the top level, offset onto the final timeline. A chapterless part
+receives one numbered boundary chapter. Join Files applies this player-compatible
+presentation automatically through the same composition logic for lossless and
+Common Format routes; it does not expose a hierarchy switch. Repeated per-source
+numbering is continued only when every source sequence has the same style and is
+chronologically consecutive; custom or irregular titles remain unchanged.
 
 ## Safety and truthfulness
 
@@ -48,7 +51,7 @@ numbered child boundary.
 ## Regression and real-tool evidence
 
 Focused app tests cover deterministic joined output naming; strict ready-state
-composition with nested Part chapters; normalization blocking; required explicit
+composition with one top-level joined chapter list; normalization blocking; required explicit
 multi-edition choice; and all native controls remaining visible at the 720 by 560
 point minimum. A rendered local AppKit artifact confirms the source table, track
 lane review, chapter summary, zero-encode status, and final action layout.
@@ -57,7 +60,7 @@ A bundled-tool application integration creates two independent AAC Matroska
 files, inspects them through the real app model, extracts their chapters, builds
 the same native review candidate, creates the revision-bound executor preview,
 and saves the verified join. It observes one retained audio lane, two top-level
-Part chapters, unchanged SHA-256 source digests, and a sanitized eight-state
+boundary chapters, unchanged SHA-256 source digests, and a sanitized eight-state
 History lifecycle containing both input display names.
 
 The current complete bundled-tool suite passes all 262 tests with zero skips. The

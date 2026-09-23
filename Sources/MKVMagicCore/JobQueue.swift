@@ -97,17 +97,23 @@ public struct MediaQueueExternalSubtitleReview: Codable, Hashable, Sendable {
     public let format: ExternalTextSubtitleFormat
     public let metadata: ExternalSubtitleTrackMetadata
     public let restoredCleanupChangeIDs: [Int]?
+    /// Exact source-track language choices made during the same review. Optional
+    /// so queue documents written before direct common-media remux queueing remain
+    /// decodable and retain their original behavior.
+    public let sourceTrackLanguageOverrides: [Int: String]?
     public let sourceSHA256: Data
 
     public init(
         format: ExternalTextSubtitleFormat,
         metadata: ExternalSubtitleTrackMetadata,
         restoredCleanupChangeIDs: [Int]? = nil,
+        sourceTrackLanguageOverrides: [Int: String]? = nil,
         sourceSHA256: Data
     ) {
         self.format = format
         self.metadata = metadata
         self.restoredCleanupChangeIDs = restoredCleanupChangeIDs
+        self.sourceTrackLanguageOverrides = sourceTrackLanguageOverrides
         self.sourceSHA256 = sourceSHA256
     }
 
@@ -122,23 +128,41 @@ public struct MediaQueueExternalSubtitleReview: Codable, Hashable, Sendable {
         {
             return false
         }
+        if let sourceTrackLanguageOverrides {
+            guard Self.validSourceLanguages(sourceTrackLanguageOverrides) else { return false }
+        }
         guard let restoredCleanupChangeIDs else { return true }
-        return restoredCleanupChangeIDs.count <= 1_000_000
-            && restoredCleanupChangeIDs.allSatisfy { $0 >= 0 }
-            && restoredCleanupChangeIDs == restoredCleanupChangeIDs.sorted()
-            && Set(restoredCleanupChangeIDs).count == restoredCleanupChangeIDs.count
+        return Self.validCleanupChangeIDs(restoredCleanupChangeIDs)
+    }
+
+    public static func validCleanupChangeIDs(_ ids: [Int]) -> Bool {
+        ids.count <= 1_000_000 && ids.allSatisfy { $0 >= 0 }
+            && ids == ids.sorted() && Set(ids).count == ids.count
+    }
+
+    public static func validSourceLanguages(_ overrides: [Int: String]) -> Bool {
+        overrides.count <= 1_024 && overrides.keys.allSatisfy { $0 >= 0 }
+            && overrides.values.allSatisfy {
+                !$0.contains("\0") && (try? ChapterLanguage.canonical($0)) == $0
+            }
     }
 }
 
 public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
     case saved(SavedWorkflow)
     case savedWithExternalSubtitle(SavedWorkflow, MediaQueueExternalSubtitleReview)
+    case savedWithExternalSubtitles(SavedWorkflow, [MediaQueueExternalSubtitleReview])
+    case savedWithSourceLanguages(SavedWorkflow, [Int: String])
+    case reviewedEdit(MediaQueueReviewedEdit)
     case builtIn(id: UUID, name: String)
 
     public var id: UUID {
         switch self {
         case .saved(let workflow): workflow.id
         case .savedWithExternalSubtitle(let workflow, _): workflow.id
+        case .savedWithExternalSubtitles(let workflow, _): workflow.id
+        case .savedWithSourceLanguages(let workflow, _): workflow.id
+        case .reviewedEdit(let edit): edit.workflowID
         case .builtIn(let id, _): id
         }
     }
@@ -147,20 +171,39 @@ public enum MediaQueueWorkflowIntent: Codable, Hashable, Sendable {
         switch self {
         case .saved(let workflow): workflow.name
         case .savedWithExternalSubtitle(let workflow, _): workflow.name
+        case .savedWithExternalSubtitles(let workflow, _): workflow.name
+        case .savedWithSourceLanguages(let workflow, _): workflow.name
+        case .reviewedEdit(let edit): edit.name
         case .builtIn(_, let name): name
         }
     }
 
     public var savedWorkflow: SavedWorkflow? {
         switch self {
-        case .saved(let workflow), .savedWithExternalSubtitle(let workflow, _): workflow
-        case .builtIn: nil
+        case .saved(let workflow), .savedWithExternalSubtitle(let workflow, _),
+            .savedWithExternalSubtitles(let workflow, _),
+            .savedWithSourceLanguages(let workflow, _):
+            workflow
+        case .builtIn, .reviewedEdit: nil
         }
     }
 
     public var externalSubtitleReview: MediaQueueExternalSubtitleReview? {
         guard case .savedWithExternalSubtitle(_, let review) = self else { return nil }
         return review
+    }
+
+    public var externalSubtitleReviews: [MediaQueueExternalSubtitleReview] {
+        switch self {
+        case .savedWithExternalSubtitle(_, let review): [review]
+        case .savedWithExternalSubtitles(_, let reviews): reviews
+        default: []
+        }
+    }
+
+    public var sourceTrackLanguageOverrides: [Int: String] {
+        if case .savedWithSourceLanguages(_, let overrides) = self { return overrides }
+        return externalSubtitleReviews.first?.sourceTrackLanguageOverrides ?? [:]
     }
 }
 
@@ -174,6 +217,10 @@ public enum MediaQueueAutomaticWorkflowPolicy {
         guard !actions.contains(.cleanExternalSubtitleText) || addsExternalSubtitle else {
             return false
         }
+        if addsExternalSubtitle && inputCount > 2 {
+            return inputCount <= ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo + 1
+                && ExternalSubtitleBatchPolicy.supportsMultipleSubtitles(workflow)
+        }
         return inputCount == (addsExternalSubtitle ? 2 : 1)
     }
 
@@ -185,10 +232,34 @@ public enum MediaQueueAutomaticWorkflowPolicy {
         case .savedWithExternalSubtitle(let workflow, let review):
             let actions = Set(workflow.steps.filter(\.isEnabled).map(\.action))
             return supports(workflow, inputCount: job.inputs.count)
+                && job.inputs.count == 2
                 && actions.contains(.addExternalSubtitle)
                 && actions.contains(.cleanExternalSubtitleText)
                     == (review.restoredCleanupChangeIDs != nil)
                 && review.hasCanonicalStructure
+        case .savedWithExternalSubtitles(let workflow, let reviews):
+            return (2...ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo).contains(
+                reviews.count)
+                && supports(workflow, inputCount: job.inputs.count)
+                && job.inputs.count == reviews.count + 1
+                && ExternalSubtitleBatchPolicy.supportsMultipleSubtitles(workflow)
+                && reviews.allSatisfy {
+                    $0.hasCanonicalStructure && $0.restoredCleanupChangeIDs == nil
+                        && $0.sourceTrackLanguageOverrides
+                            == reviews.first?.sourceTrackLanguageOverrides
+                }
+        case .savedWithSourceLanguages(let workflow, let overrides):
+            return job.inputs.count == 1 && !overrides.isEmpty
+                && Set(workflow.steps.filter(\.isEnabled).map(\.action)) == [.remuxToMKV]
+                && MediaQueueExternalSubtitleReview.validSourceLanguages(overrides)
+        case .reviewedEdit(let edit):
+            return job.inputs.count == 1 && edit.hasCanonicalStructure
+                && job.sourceDisposition == .keepOriginal
+                && URL(fileURLWithPath: job.outputDisplayName).pathExtension.lowercased()
+                    == edit.outputExtension
+                && job.reviewedPlan.impact.videoEncodeCount == 0
+                && job.reviewedPlan.impact.audioEncodeCount == 0
+                && !job.reviewedPlan.impact.changesSourceBeforeVerification
         case .builtIn:
             return false
         }
@@ -220,15 +291,18 @@ public struct MediaQueueJobEvent: Codable, Hashable, Sendable {
     public let state: MediaQueueJobState
     public let timestamp: Date
     public let reason: MediaQueueEventReason?
+    public let failure: PrivacySafeMediaFailure?
 
     public init(
         state: MediaQueueJobState,
         timestamp: Date,
-        reason: MediaQueueEventReason? = nil
+        reason: MediaQueueEventReason? = nil,
+        failure: PrivacySafeMediaFailure? = nil
     ) {
         self.state = state
         self.timestamp = timestamp
         self.reason = reason
+        self.failure = failure
     }
 }
 
@@ -299,10 +373,16 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         max(events.last?.timestamp ?? createdAt, sourceDispositionResult?.timestamp ?? createdAt)
     }
 
+    public var failure: PrivacySafeMediaFailure? {
+        guard state == .failed else { return nil }
+        return events.last?.failure
+    }
+
     public mutating func transition(
         to nextState: MediaQueueJobState,
         at timestamp: Date,
-        reason: MediaQueueEventReason? = nil
+        reason: MediaQueueEventReason? = nil,
+        failure: PrivacySafeMediaFailure? = nil
     ) throws {
         let currentState = state
         guard !currentState.isFinished else {
@@ -320,8 +400,20 @@ public struct MediaQueueJob: Codable, Hashable, Identifiable, Sendable {
         if nextState != .failed, reason == .executionFailed {
             throw MediaQueueTransitionError.unexpectedReason
         }
+        if nextState != .failed, failure != nil {
+            throw MediaQueueTransitionError.unexpectedReason
+        }
         if nextState == .running { attemptCount += 1 }
-        events.append(MediaQueueJobEvent(state: nextState, timestamp: timestamp, reason: reason))
+        events.append(
+            MediaQueueJobEvent(
+                state: nextState,
+                timestamp: timestamp,
+                reason: reason,
+                failure: nextState == .failed
+                    ? failure ?? .executionFailed()
+                    : nil
+            )
+        )
     }
 
     @discardableResult
@@ -438,13 +530,19 @@ public struct MediaQueueSnapshot: Codable, Hashable, Sendable {
         jobID: UUID,
         to state: MediaQueueJobState,
         at timestamp: Date,
-        reason: MediaQueueEventReason? = nil
+        reason: MediaQueueEventReason? = nil,
+        failure: PrivacySafeMediaFailure? = nil
     ) throws {
         let timestamp = try normalizedTimestamp(timestamp)
         guard let index = jobs.firstIndex(where: { $0.id == jobID }) else {
             throw MediaQueueMutationError.jobNotFound
         }
-        try jobs[index].transition(to: state, at: timestamp, reason: reason)
+        try jobs[index].transition(
+            to: state,
+            at: timestamp,
+            reason: reason,
+            failure: failure
+        )
         updatedAt = timestamp
     }
 

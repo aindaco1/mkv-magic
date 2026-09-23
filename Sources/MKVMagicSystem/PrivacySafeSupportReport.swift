@@ -109,61 +109,7 @@ public enum SupportElapsedTimeBucket: String, Codable, CaseIterable, Hashable, S
     }
 }
 
-public enum SupportFailureCategory: String, Codable, CaseIterable, Hashable, Sendable {
-    case sourceChanged
-    case toolFailed
-    case emptyOutput
-    case containerMismatch
-    case durationMismatch
-    case trackMismatch
-    case trackMetadataMismatch
-    case chapterMismatch
-    case titleMismatch
-    case attachmentMismatch
-    case segmentIdentityMismatch
-    case packetCopyMismatch
-    case committedOutputAuditFailed
-    case verificationFailed
-    case executionFailed
-
-    init?(record: MediaJobRecord) {
-        guard record.state == .failed else { return nil }
-        let message = record.events.last?.message?.lowercased() ?? ""
-        if message.contains("source changed") {
-            self = .sourceChanged
-        } else if message.contains("tool could not") || message.contains("mkvmerge could not") {
-            self = .toolFailed
-        } else if message.contains("output was empty") || message.contains("mkv is empty") {
-            self = .emptyOutput
-        } else if message.contains("container did not match")
-            || message.contains("did not create a matroska")
-        {
-            self = .containerMismatch
-        } else if message.contains("duration did not match") {
-            self = .durationMismatch
-        } else if message.contains("track metadata did not match") {
-            self = .trackMetadataMismatch
-        } else if message.contains("track structure did not match") {
-            self = .trackMismatch
-        } else if message.contains("chapter timing or titles did not match") {
-            self = .chapterMismatch
-        } else if message.contains("segment title did not match") {
-            self = .titleMismatch
-        } else if message.contains("attachment set did not match") {
-            self = .attachmentMismatch
-        } else if message.contains("segment identity was invalid") {
-            self = .segmentIdentityMismatch
-        } else if message.contains("packet-copy audit did not match") {
-            self = .packetCopyMismatch
-        } else if message.contains("final reopen audit failed") {
-            self = .committedOutputAuditFailed
-        } else if record.events.dropLast().last?.state == .verifying {
-            self = .verificationFailed
-        } else {
-            self = .executionFailed
-        }
-    }
-}
+public typealias SupportFailureCategory = PrivacySafeMediaFailureCategory
 
 public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
     public let caseNumber: Int
@@ -175,6 +121,7 @@ public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
     public let inputs: [MediaJobInputFacts?]
     public let plan: MediaJobPlanFacts?
     public let failureCategory: SupportFailureCategory?
+    public let joinBoundaryNumber: Int?
 
     init(caseNumber: Int, record: MediaJobRecord) {
         self.caseNumber = caseNumber
@@ -190,7 +137,18 @@ public struct PrivacySafeSupportJob: Codable, Hashable, Sendable {
         lifecycle = record.events.map(\.state)
         inputs = record.inputs.map(\.privacySafeFacts)
         plan = record.privacySafePlan
-        failureCategory = SupportFailureCategory(record: record)
+        guard record.state == .failed else {
+            failureCategory = nil
+            joinBoundaryNumber = nil
+            return
+        }
+        let failure = PrivacySafeMediaFailureClassifier.classify(
+            sanitizedMessage: record.events.last?.message ?? "",
+            lastActiveStage: lastActiveStage ?? .running,
+            inputCount: record.inputs.count
+        )
+        failureCategory = failure.category
+        joinBoundaryNumber = failure.joinBoundaryNumber
     }
 }
 
@@ -201,8 +159,42 @@ public struct PrivacySafeSupportHistory: Codable, Hashable, Sendable {
     public let jobs: [PrivacySafeSupportJob]
 }
 
+public struct PrivacySafeSupportQueueJob: Codable, Hashable, Sendable {
+    public let caseNumber: Int
+    public let workflow: SupportWorkflowKind
+    public let state: MediaQueueJobState
+    public let lastEventReason: MediaQueueEventReason?
+    public let resourceClass: MediaQueueResourceClass
+    public let inputCount: Int
+    public let attemptCount: Int
+    public let failureCategory: SupportFailureCategory?
+    public let failureStage: MediaJobState?
+    public let joinBoundaryNumber: Int?
+
+    init(caseNumber: Int, job: MediaQueueJob) {
+        self.caseNumber = caseNumber
+        workflow = SupportWorkflowKind(workflowID: job.workflow.id)
+        state = job.state
+        lastEventReason = job.events.last?.reason
+        resourceClass = job.resourceClass
+        inputCount = job.inputs.count
+        attemptCount = job.attemptCount
+        failureCategory = job.failure?.category
+        failureStage = job.failure?.lastActiveStage
+        joinBoundaryNumber = job.failure?.joinBoundaryNumber
+    }
+}
+
+public struct PrivacySafeSupportQueue: Codable, Hashable, Sendable {
+    public let isPaused: Bool
+    public let totalJobCount: Int
+    public let includedJobCount: Int
+    public let omittedOlderJobCount: Int
+    public let jobs: [PrivacySafeSupportQueueJob]
+}
+
 public struct PrivacySafeSupportReport: Codable, Hashable, Sendable {
-    public static let currentSchema = "mkv-magic-privacy-safe-support-v2"
+    public static let currentSchema = "mkv-magic-privacy-safe-support-v4"
     public static let maximumIncludedJobs = 500
 
     public let schema: String
@@ -210,13 +202,17 @@ public struct PrivacySafeSupportReport: Codable, Hashable, Sendable {
     public let system: SupportSystemIdentity
     public let tools: [SupportToolIdentity]
     public let history: PrivacySafeSupportHistory
+    public let queue: PrivacySafeSupportQueue?
+    public let diagnostics: DiagnosticSnapshot?
 
     public static func make(
         applicationVersion: String,
         applicationBuild: String,
         operatingSystem: String,
         catalog: ToolCatalog,
-        records: [MediaJobRecord]
+        records: [MediaJobRecord],
+        queueSnapshot: MediaQueueSnapshot? = nil,
+        diagnostics: DiagnosticSnapshot? = nil
     ) -> Self {
         let sorted = records.sorted {
             if $0.updatedAt == $1.updatedAt { return $0.id.uuidString < $1.id.uuidString }
@@ -249,7 +245,23 @@ public struct PrivacySafeSupportReport: Codable, Hashable, Sendable {
                 jobs: included.enumerated().map {
                     PrivacySafeSupportJob(caseNumber: $0.offset + 1, record: $0.element)
                 }
-            )
+            ),
+            queue: queueSnapshot.map { snapshot in
+                let includedJobs = Array(snapshot.jobs.suffix(maximumIncludedJobs))
+                return PrivacySafeSupportQueue(
+                    isPaused: snapshot.isPaused,
+                    totalJobCount: snapshot.jobs.count,
+                    includedJobCount: includedJobs.count,
+                    omittedOlderJobCount: snapshot.jobs.count - includedJobs.count,
+                    jobs: includedJobs.enumerated().map {
+                        PrivacySafeSupportQueueJob(
+                            caseNumber: $0.offset + 1,
+                            job: $0.element
+                        )
+                    }
+                )
+            },
+            diagnostics: diagnostics
         )
     }
 
@@ -307,6 +319,20 @@ public enum PrivacySafeSupportReportWriter {
         to destinationURL: URL,
         fileManager: FileManager = .default
     ) throws {
+        try write(try report.encoded(), to: destinationURL, fileManager: fileManager)
+    }
+
+    /// Available even when tools, History, or queue storage cannot be opened.
+    public static func writeDiagnostics(_ snapshot: DiagnosticSnapshot, to destinationURL: URL)
+        throws
+    {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try write(try encoder.encode(snapshot), to: destinationURL, fileManager: .default)
+    }
+
+    private static func write(_ data: Data, to destinationURL: URL, fileManager: FileManager) throws
+    {
         let destination = destinationURL.standardizedFileURL
         let parent = destination.deletingLastPathComponent()
         guard destination.isFileURL,
@@ -325,16 +351,11 @@ public enum PrivacySafeSupportReportWriter {
                 throw PrivacySafeSupportReportWriterError.unsafeDestination
             }
         }
-        let data = try report.encoded()
         guard data.count <= maximumDocumentBytes else {
             throw PrivacySafeSupportReportWriterError.oversizedReport
         }
         do {
-            try data.write(to: destination, options: [.atomic])
-            try fileManager.setAttributes(
-                [.posixPermissions: 0o600],
-                ofItemAtPath: destination.path
-            )
+            try LocalExportWriter.write(data, to: destination)
         } catch {
             throw PrivacySafeSupportReportWriterError.writeFailed
         }

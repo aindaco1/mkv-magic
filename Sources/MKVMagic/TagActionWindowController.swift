@@ -39,7 +39,7 @@ final class TagActionWindowController: NSWindowController {
             wrappingLabelWithString:
                 "Export creates an exact XML sidecar and leaves the MKV untouched. Removal creates a new verified MKV copy with every global and track tag cleared; tracks, title, chapters, and attachments stay in place."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         let exportButton = NSButton(
             title: "Export XML…",

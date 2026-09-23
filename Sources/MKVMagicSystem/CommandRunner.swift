@@ -254,27 +254,31 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
     public init() {}
 
     public func run(_ request: CommandRequest) async throws -> CommandResult {
-        try validate(request)
+        try await DiagnosticContext.observingTool(
+            request,
+            operation: {
+                try validate(request)
 
-        do {
-            return try await withThrowingTaskGroup(of: CommandResult.self) { group in
-                group.addTask {
-                    try await execute(request)
+                do {
+                    return try await withThrowingTaskGroup(of: CommandResult.self) { group in
+                        group.addTask {
+                            try await execute(request)
+                        }
+                        group.addTask {
+                            let nanoseconds = UInt64(request.timeout * 1_000_000_000)
+                            try await Task.sleep(nanoseconds: nanoseconds)
+                            throw CommandRunnerError.timedOut
+                        }
+                        guard let first = try await group.next() else {
+                            throw CommandRunnerError.launchFailed("Command produced no result")
+                        }
+                        group.cancelAll()
+                        return first
+                    }
+                } catch {
+                    throw normalizedCommandError(error)
                 }
-                group.addTask {
-                    let nanoseconds = UInt64(request.timeout * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: nanoseconds)
-                    throw CommandRunnerError.timedOut
-                }
-                guard let first = try await group.next() else {
-                    throw CommandRunnerError.launchFailed("Command produced no result")
-                }
-                group.cancelAll()
-                return first
-            }
-        } catch {
-            throw normalizedCommandError(error)
-        }
+            }, exitCode: { $0.exitCode })
     }
 
     public func digestLines(
@@ -403,23 +407,27 @@ public struct FoundationCommandRunner: CommandRunning, CommandLineDigesting {
         _ request: CommandRequest,
         operation: @escaping @Sendable () async throws -> DigestProcessResult
     ) async throws -> DigestProcessResult {
-        do {
-            return try await withThrowingTaskGroup(of: DigestProcessResult.self) { group in
-                group.addTask(operation: operation)
-                group.addTask {
-                    let nanoseconds = UInt64(request.timeout * 1_000_000_000)
-                    try await Task.sleep(nanoseconds: nanoseconds)
-                    throw CommandRunnerError.timedOut
+        try await DiagnosticContext.observingTool(
+            request,
+            operation: {
+                do {
+                    return try await withThrowingTaskGroup(of: DigestProcessResult.self) { group in
+                        group.addTask(operation: operation)
+                        group.addTask {
+                            let nanoseconds = UInt64(request.timeout * 1_000_000_000)
+                            try await Task.sleep(nanoseconds: nanoseconds)
+                            throw CommandRunnerError.timedOut
+                        }
+                        guard let first = try await group.next() else {
+                            throw CommandRunnerError.launchFailed("Command produced no result")
+                        }
+                        group.cancelAll()
+                        return first
+                    }
+                } catch {
+                    throw normalizedCommandError(error)
                 }
-                guard let first = try await group.next() else {
-                    throw CommandRunnerError.launchFailed("Command produced no result")
-                }
-                group.cancelAll()
-                return first
-            }
-        } catch {
-            throw normalizedCommandError(error)
-        }
+            }, exitCode: { $0.exitCode })
     }
 }
 

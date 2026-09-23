@@ -1,5 +1,6 @@
 import Foundation
 import MKVMagicCore
+import MKVMagicReporting
 import MKVMagicSystem
 
 struct NativeReleaseVerificationReport: Codable, Equatable, Sendable {
@@ -95,6 +96,7 @@ enum NativeReleaseVerification {
         else {
             throw NativeReleaseVerificationError.missingBundleMetadata
         }
+        try await ReportSubmissionClient().checkAvailability()
         let toolRoot = resources.appendingPathComponent("Tools", isDirectory: true)
         let toolSummaries = try await BundledToolVerifier().verify(toolRoot: toolRoot)
         let fixture = try await BundledFixtureSmoke().run(toolRoot: toolRoot)

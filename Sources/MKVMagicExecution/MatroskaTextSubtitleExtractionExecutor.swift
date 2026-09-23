@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MKVMagicCore
 import MKVMagicMedia
@@ -56,6 +57,7 @@ private enum ExtractedTextSubtitleDocument: Equatable, Sendable {
 }
 
 public struct MatroskaTextSubtitleExtractionPreview: Equatable, Sendable {
+    public var outputSHA256: Data { Data(SHA256.hash(data: data)) }
     public let source: MediaAsset
     public let track: MediaTrack
     public let format: ExternalTextSubtitleFormat

@@ -470,23 +470,39 @@ public struct ExternalSubtitleMuxOutputVerifier: Sendable {
             outputTracks.count == expectedOriginalTracks.count + 1,
             retainedOutputSnapshots == expectedOriginalSnapshots,
             let added = outputTracks.last,
-            added.kind == .subtitle,
-            Self.matches(added, expectedFormat: expectedFormat)
+            added.kind == .subtitle
         else {
             throw OutputVerificationError.tracksChanged
         }
+        try ExternalSubtitleTrackVerifier.verify(
+            added,
+            expectedMetadata: expectedMetadata,
+            expectedFormat: expectedFormat
+        )
+    }
+}
+
+enum ExternalSubtitleTrackVerifier {
+    static func verify(
+        _ track: MediaTrack,
+        expectedMetadata: ExternalSubtitleTrackMetadata,
+        expectedFormat: ExternalTextSubtitleFormat
+    ) throws {
+        guard matches(track, expectedFormat: expectedFormat) else {
+            throw OutputVerificationError.tracksChanged
+        }
         let expectedLanguage = try TrackLanguageTag.canonical(expectedMetadata.language)
-        let outputLanguage = try TrackLanguageTag.canonical(added.language ?? "und")
+        let outputLanguage = try TrackLanguageTag.canonical(track.language ?? "und")
         guard outputLanguage == expectedLanguage,
-            added.title == expectedMetadata.name,
-            added.isDefault == expectedMetadata.isDefault,
-            added.isForced == expectedMetadata.isForced,
-            added.isHearingImpaired == expectedMetadata.isHearingImpaired,
-            added.isEnabled,
-            !added.isCommentary,
-            !added.isVisualImpaired,
-            !added.isOriginal,
-            !added.isTextDescription
+            track.title == expectedMetadata.name,
+            track.isDefault == expectedMetadata.isDefault,
+            track.isForced == expectedMetadata.isForced,
+            track.isHearingImpaired == expectedMetadata.isHearingImpaired,
+            track.isEnabled,
+            !track.isCommentary,
+            !track.isVisualImpaired,
+            !track.isOriginal,
+            !track.isTextDescription
         else {
             throw OutputVerificationError.trackMetadataMismatch
         }
@@ -1540,7 +1556,7 @@ private func verifyPreservedStructure(original: MediaAsset, output: MediaAsset) 
     }
 }
 
-private func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
+func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
     switch (lhs, rhs) {
     case (nil, nil): true
     case (.some(let lhs), .some(let rhs)):
@@ -1550,16 +1566,10 @@ private func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
 }
 
 private func remuxDurationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
-    switch (lhs, rhs) {
-    case (nil, nil): true
-    case (.some(let lhs), .some(let rhs)):
-        // Container duration can move by a final encoded packet during a stream-copy remux.
-        abs(lhs.nanoseconds - rhs.nanoseconds) <= 50_000_000
-    default: false
-    }
+    PacketCopyTimingTolerance.durationsMatch(lhs, rhs)
 }
 
-private func muxedDurationsMatch(
+func muxedDurationsMatch(
     _ original: MediaTime?,
     _ output: MediaTime?,
     subtitleEnd: SubRipTimestamp
@@ -1568,7 +1578,29 @@ private func muxedDurationsMatch(
     let subtitleNanoseconds = subtitleEnd.milliseconds.multipliedReportingOverflow(by: 1_000_000)
     guard !subtitleNanoseconds.overflow else { return false }
     let expected = max(original?.nanoseconds ?? 0, subtitleNanoseconds.partialValue)
-    return abs(output.nanoseconds - expected) <= 50_000_000
+    return PacketCopyTimingTolerance.matches(output.nanoseconds, expected)
+}
+
+enum PacketCopyTimingTolerance {
+    /// MP4 and Matroska use different time bases. mkvmerge can move the
+    /// reported container end by a final packet while copying every packet
+    /// unchanged, so verification accepts only this bounded rounding window.
+    static let nanoseconds: UInt64 = 100_000_000
+
+    static func durationsMatch(_ lhs: MediaTime?, _ rhs: MediaTime?) -> Bool {
+        switch (lhs, rhs) {
+        case (nil, nil): true
+        case (.some(let lhs), .some(let rhs)):
+            matches(lhs.nanoseconds, rhs.nanoseconds)
+        default: false
+        }
+    }
+
+    static func matches(_ lhs: Int64, _ rhs: Int64) -> Bool {
+        let difference = lhs.subtractingReportingOverflow(rhs)
+        return !difference.overflow
+            && difference.partialValue.magnitude <= nanoseconds
+    }
 }
 
 private struct TrackTechnicalSnapshot: Equatable {

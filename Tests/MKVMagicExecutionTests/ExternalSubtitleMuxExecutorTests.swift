@@ -157,7 +157,22 @@ final class ExternalSubtitleMuxExecutorTests: XCTestCase {
 
         XCTAssertEqual(payload.appliedCleanupChangeCount, 2)
         XCTAssertEqual(requests.filter { $0.arguments.first == "--gui-mode" }.count, 1)
-        XCTAssertEqual(requests.filter { $0.arguments.first == "tracks" }.count, 2)
+        let extractionRequests = requests.filter { $0.arguments.first == "tracks" }
+        XCTAssertEqual(extractionRequests.count, 2)
+        for request in extractionRequests {
+            let inputDirectory = URL(fileURLWithPath: request.arguments[1])
+                .deletingLastPathComponent()
+            let mapping = request.arguments[2]
+            let separator = try XCTUnwrap(mapping.firstIndex(of: ":"))
+            let auditDirectory = URL(
+                fileURLWithPath: String(mapping[mapping.index(after: separator)...])
+            ).deletingLastPathComponent()
+            XCTAssertNotEqual(
+                auditDirectory,
+                inputDirectory,
+                "Subtitle audits must not require permission to create a sibling of the output."
+            )
+        }
         XCTAssertEqual(
             subtitleInputs,
             [Data("1\n00:00:01,000 --> 00:00:02,000\nDialogue\n".utf8)]

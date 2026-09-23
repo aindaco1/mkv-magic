@@ -32,7 +32,10 @@ public struct JoinedChapterComposition: Equatable, Sendable {
     public let document: MatroskaChapterDocument
     public let duration: MediaTime
 
-    public init(document: MatroskaChapterDocument, duration: MediaTime) {
+    public init(
+        document: MatroskaChapterDocument,
+        duration: MediaTime
+    ) {
         self.document = document
         self.duration = duration
     }
@@ -57,8 +60,9 @@ extension JoinedChapterCompositionError: LocalizedError {
     }
 }
 
-/// Builds one nested default edition for a hard-join timeline. Callers choose the
-/// source edition explicitly so multiple-edition inputs are never silently collapsed.
+/// Builds one reviewed player-compatible edition for a hard-join timeline. Callers
+/// choose the source edition explicitly so multiple-edition inputs are never silently
+/// collapsed. Every retained source leaf becomes a top-level output chapter.
 public struct JoinedChapterComposer: Sendable {
     public init() {}
 
@@ -72,7 +76,9 @@ public struct JoinedChapterComposer: Sendable {
         var outputChapterCount = 0
         var nextGenericChapterNumber = 1
         var parents = [MatroskaChapterAtom]()
+        var sourceEndTimes = [MediaTime]()
         parents.reserveCapacity(sources.count)
+        sourceEndTimes.reserveCapacity(sources.count)
 
         for (index, source) in sources.enumerated() {
             try validate(source)
@@ -127,13 +133,21 @@ public struct JoinedChapterComposer: Sendable {
                 )
             )
             outputStart = outputEnd
+            sourceEndTimes.append(MediaTime(nanoseconds: outputEnd))
         }
 
         let duration = MediaTime(nanoseconds: outputStart)
-        let document = try MatroskaChapterDocument(
+        let nestedDocument = MatroskaChapterDocument(
             editions: [MatroskaChapterEdition(isDefault: true, chapters: parents)]
-        ).validated(mediaDuration: duration)
-        return JoinedChapterComposition(document: document, duration: duration)
+        )
+        let document = JoinedChapterNumberingPolicy.renumberRepeatedSequences(
+            in: nestedDocument.flattenedForPlayerCompatibility(),
+            sourceEndTimes: sourceEndTimes
+        )
+        return JoinedChapterComposition(
+            document: try document.validated(mediaDuration: duration),
+            duration: duration
+        )
     }
 
     private func validate(_ source: JoinedChapterSource) throws {
@@ -236,5 +250,130 @@ public struct JoinedChapterComposer: Sendable {
         let result = lhs.subtractingReportingOverflow(rhs)
         guard !result.overflow else { throw JoinedChapterCompositionError.timeOverflow }
         return result.partialValue
+    }
+}
+
+private enum JoinedChapterNumberingPolicy {
+    static func renumberRepeatedSequences(
+        in document: MatroskaChapterDocument,
+        sourceEndTimes: [MediaTime]
+    ) -> MatroskaChapterDocument {
+        guard sourceEndTimes.count >= 2,
+            document.editions.count == 1,
+            !document.editions[0].chapters.isEmpty
+        else { return document }
+
+        let chapters = document.editions[0].chapters
+        var grouped = Array(repeating: [Int](), count: sourceEndTimes.count)
+        var sourceIndex = 0
+        for index in chapters.indices {
+            while sourceIndex < sourceEndTimes.count,
+                chapters[index].start >= sourceEndTimes[sourceIndex]
+            {
+                sourceIndex += 1
+            }
+            guard sourceIndex < grouped.count else { return document }
+            grouped[sourceIndex].append(index)
+        }
+        guard grouped.allSatisfy({ !$0.isEmpty }) else { return document }
+
+        let parsed = chapters.map { NumberedChapterTitle.parse($0.primaryTitle) }
+        guard parsed.allSatisfy({ $0 != nil }) else { return document }
+        let titles = parsed.compactMap { $0 }
+        guard let first = titles.first,
+            titles.allSatisfy({ $0.normalizedPrefix == first.normalizedPrefix }),
+            grouped.allSatisfy({ indicesAreConsecutive($0, titles: titles) })
+        else { return document }
+
+        var expected = first.value
+        let alreadyGlobal = titles.allSatisfy { title in
+            guard title.value == expected else { return false }
+            let (next, overflow) = expected.addingReportingOverflow(1)
+            guard !overflow else { return false }
+            expected = next
+            return true
+        }
+        guard !alreadyGlobal else { return document }
+
+        var renumbered = document
+        expected = first.value
+        for index in renumbered.editions[0].chapters.indices {
+            let originalNumber = titles[index].value
+            renumbered.editions[0].chapters[index].displays =
+                renumbered.editions[0].chapters[index].displays.map { display in
+                    guard let parsedDisplay = NumberedChapterTitle.parse(display.title),
+                        parsedDisplay.value == originalNumber
+                    else { return display }
+                    var changed = display
+                    changed.title = parsedDisplay.replacingNumber(with: expected)
+                    return changed
+                }
+            let (next, overflow) = expected.addingReportingOverflow(1)
+            guard !overflow else { return document }
+            expected = next
+        }
+        return renumbered
+    }
+
+    private static func indicesAreConsecutive(
+        _ indices: [Int],
+        titles: [NumberedChapterTitle]
+    ) -> Bool {
+        guard let firstIndex = indices.first else { return false }
+        var expected = titles[firstIndex].value
+        for index in indices {
+            guard titles[index].value == expected else { return false }
+            let (next, overflow) = expected.addingReportingOverflow(1)
+            guard !overflow else { return false }
+            expected = next
+        }
+        return true
+    }
+}
+
+private struct NumberedChapterTitle {
+    let title: String
+    let numberRange: Range<String.Index>
+    let value: Int
+    let width: Int
+    let normalizedPrefix: String
+
+    static func parse(_ title: String) -> Self? {
+        var ranges = [Range<String.Index>]()
+        var runStart: String.Index?
+        var index = title.startIndex
+        while index < title.endIndex {
+            let isASCIIDigit = title[index].isASCII && title[index].isNumber
+            if isASCIIDigit, runStart == nil {
+                runStart = index
+            } else if !isASCIIDigit, let digitStart = runStart {
+                ranges.append(digitStart..<index)
+                runStart = nil
+            }
+            index = title.index(after: index)
+        }
+        if let digitStart = runStart { ranges.append(digitStart..<title.endIndex) }
+        guard ranges.count == 1, let numberRange = ranges.first,
+            title[numberRange.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+                .isEmpty,
+            let value = Int(title[numberRange])
+        else { return nil }
+        let prefix = title[..<numberRange.lowerBound]
+        let normalizedPrefix = prefix.split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+            .lowercased()
+        return Self(
+            title: title,
+            numberRange: numberRange,
+            value: value,
+            width: title.distance(from: numberRange.lowerBound, to: numberRange.upperBound),
+            normalizedPrefix: normalizedPrefix
+        )
+    }
+
+    func replacingNumber(with replacement: Int) -> String {
+        let digits = String(format: "%0*d", width, replacement)
+        return String(title[..<numberRange.lowerBound]) + digits
+            + String(title[numberRange.upperBound...])
     }
 }

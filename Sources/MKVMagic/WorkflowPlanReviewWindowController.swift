@@ -27,7 +27,7 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
             wrappingLabelWithString:
                 "\(preview.workflowName) • \(sourceDisplayName)"
         )
-        context.textColor = .secondaryLabelColor
+        context.textColor = AppPalette.secondaryText
         context.lineBreakMode = .byTruncatingMiddle
         context.setAccessibilityLabel("Workflow and source")
 
@@ -60,7 +60,7 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
                 ? "No output will be created."
                 : "MKV Magic will create and verify one new MKV. The source file will not be changed."
         )
-        safety.textColor = .secondaryLabelColor
+        safety.textColor = AppPalette.secondaryText
         safety.setAccessibilityLabel("Source safety")
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -129,10 +129,13 @@ final class WorkflowPlanReviewWindowController: NSWindowController {
         image.contentTintColor = WorkflowPlanReviewPresentation.color(for: outcome)
         image.symbolConfiguration = .init(pointSize: 15, weight: .semibold)
 
-        let title = NSTextField(labelWithString: outcome.action.displayName)
+        let title = NSTextField(
+            labelWithString:
+                "\(outcome.action.displayName) — \(WorkflowPlanReviewPresentation.statusLabel(for: outcome))"
+        )
         title.font = .systemFont(ofSize: 13, weight: .medium)
         let detail = NSTextField(wrappingLabelWithString: outcome.detail)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = AppPalette.secondaryText
         detail.font = .systemFont(ofSize: 12)
         let text = NSStackView(views: [title, detail])
         text.orientation = .vertical
@@ -179,6 +182,8 @@ enum WorkflowPlanReviewPresentation {
             switch stage.mechanism {
             case .mkvMerge: "one MKV remux"
             case .mkvPropEdit: "one metadata pass"
+            case .mkvExtract: "one extraction pass"
+            case .subtitleText: "reviewed subtitle text"
             case .ffmpegStreamCopy: "one FFmpeg stream-copy pass"
             case .ffmpegEncode: "one FFmpeg encode pass"
             case .verify, .commit: nil
@@ -206,17 +211,16 @@ enum WorkflowPlanReviewPresentation {
 
     static func symbolName(for outcome: SavedWorkflowStepOutcome) -> String {
         switch outcome.disposition {
-        case .applied: "checkmark.circle.fill"
-        case .skipped: "arrow.right.circle"
+        case .applied: "arrow.right.circle"
+        case .skipped: "checkmark.circle"
         case .disabled: "minus.circle"
         }
     }
 
     static func color(for outcome: SavedWorkflowStepOutcome) -> NSColor {
         switch outcome.disposition {
-        case .applied: .systemGreen
-        case .skipped: .systemOrange
-        case .disabled: .secondaryLabelColor
+        case .applied: .labelColor
+        case .skipped, .disabled: AppPalette.secondaryText
         }
     }
 }

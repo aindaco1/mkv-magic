@@ -5,12 +5,20 @@ import XCTest
 
 @testable import MKVMagicMedia
 
-private struct StubRunner: CommandRunning {
+private actor StubRunner: CommandRunning {
     let result: CommandResult
+    private var requests = [CommandRequest]()
+
+    init(result: CommandResult) {
+        self.result = result
+    }
 
     func run(_ request: CommandRequest) async throws -> CommandResult {
-        result
+        requests.append(request)
+        return result
     }
+
+    func capturedRequests() -> [CommandRequest] { requests }
 }
 
 final class FFprobeInspectorTests: XCTestCase {
@@ -37,6 +45,7 @@ final class FFprobeInspectorTests: XCTestCase {
                   "codec_type": "video",
                   "profile": "Main",
                   "level": 8,
+                  "extradata_hash": "SHA256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                   "bit_rate": "6000000",
                   "width": 1920,
                   "height": 1080,
@@ -87,15 +96,16 @@ final class FFprobeInspectorTests: XCTestCase {
               }
             }
             """#
+        let runner = StubRunner(
+            result: CommandResult(
+                exitCode: 0,
+                standardOutput: CommandOutput(data: Data(json.utf8), wasTruncated: false),
+                standardError: CommandOutput(data: Data(), wasTruncated: false)
+            )
+        )
         let inspector = FFprobeInspector(
             ffprobeURL: URL(fileURLWithPath: "/usr/bin/true"),
-            runner: StubRunner(
-                result: CommandResult(
-                    exitCode: 0,
-                    standardOutput: CommandOutput(data: Data(json.utf8), wasTruncated: false),
-                    standardError: CommandOutput(data: Data(), wasTruncated: false)
-                )
-            )
+            runner: runner
         )
         let asset = try await inspector.inspect(inputURL)
         let repeatedAsset = try await inspector.inspect(inputURL)
@@ -108,6 +118,10 @@ final class FFprobeInspectorTests: XCTestCase {
         XCTAssertEqual(asset.tracks[0].dimensions, MediaDimensions(width: 1920, height: 1080))
         XCTAssertEqual(asset.tracks[0].codecLongName, "Alliance for Open Media AV1")
         XCTAssertEqual(asset.tracks[0].level, 8)
+        XCTAssertEqual(
+            asset.tracks[0].codecInitializationDigest?.sha256,
+            String(repeating: "a", count: 64)
+        )
         XCTAssertEqual(asset.tracks[0].bitDepth, 10)
         XCTAssertEqual(asset.tracks[0].bitrate, 6_000_000)
         XCTAssertTrue(asset.tracks[0].isOriginal)
@@ -139,6 +153,45 @@ final class FFprobeInspectorTests: XCTestCase {
         XCTAssertEqual(asset.tracks[1].title, "Main Audio")
         XCTAssertEqual(asset.chapters.first?.title, "Part 1")
         XCTAssertEqual(asset.metadata["title"], "Example")
+        let requests = await runner.capturedRequests()
+        XCTAssertEqual(requests.count, 2)
+        XCTAssertTrue(
+            requests.allSatisfy { request in
+                request.arguments.contains("-show_data_hash")
+                    && request.arguments.contains("sha256")
+            })
+    }
+
+    func testBlankChapterMetadataUsesDeterministicFallbacks() async throws {
+        let json = #"""
+            {
+              "streams": [
+                {"index": 0, "codec_name": "h264", "codec_type": "video"}
+              ],
+              "chapters": [
+                {"id": 0, "start_time": "0.0", "end_time": "5.0", "tags": {"title": "", "language": ""}},
+                {"id": 1, "start_time": "5.0", "end_time": "10.0", "tags": {"title": "  "}}
+              ],
+              "format": {"format_name": "mov,mp4", "duration": "10.0"}
+            }
+            """#
+        let inspector = FFprobeInspector(
+            ffprobeURL: URL(fileURLWithPath: "/usr/bin/true"),
+            runner: StubRunner(
+                result: CommandResult(
+                    exitCode: 0,
+                    standardOutput: CommandOutput(
+                        data: Data(json.utf8), wasTruncated: false
+                    ),
+                    standardError: CommandOutput(data: Data(), wasTruncated: false)
+                )
+            )
+        )
+
+        let asset = try await inspector.inspect(inputURL)
+
+        XCTAssertEqual(asset.chapters.map(\.title), ["Chapter 1", "Chapter 2"])
+        XCTAssertEqual(asset.chapters.map(\.language), [nil, nil])
     }
 
     func testNonzeroExitPreservesBoundedFailure() async {

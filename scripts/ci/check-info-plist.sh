@@ -28,6 +28,7 @@ assert_value CFBundleIdentifier "$expected_bundle_identifier"
 assert_value CFBundlePackageType APPL
 assert_value LSMinimumSystemVersion 13.0
 assert_value NSPrincipalClass NSApplication
+assert_value NSAccentColorName AccentColor
 assert_value CFBundleDocumentTypes.0.CFBundleTypeRole Viewer
 assert_value CFBundleDocumentTypes.0.LSHandlerRank Alternate
 assert_value SUFeedURL \

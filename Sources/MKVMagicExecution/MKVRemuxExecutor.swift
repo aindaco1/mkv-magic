@@ -41,6 +41,27 @@ public struct MKVRemuxPreview: Hashable, Sendable {
     public var source: MediaAsset { plan.source }
 }
 
+public struct MKVRemuxWithExternalSubtitlePreview: Equatable, Sendable {
+    public let remux: MKVRemuxPreview
+    public let subtitlePayload: ExternalSubtitleMuxPayload
+    public let subtitleMetadata: ExternalSubtitleTrackMetadata
+    public let trackLanguageOverrides: [Int: String]
+
+    public init(
+        remux: MKVRemuxPreview,
+        subtitlePayload: ExternalSubtitleMuxPayload,
+        subtitleMetadata: ExternalSubtitleTrackMetadata,
+        trackLanguageOverrides: [Int: String]
+    ) {
+        self.remux = remux
+        self.subtitlePayload = subtitlePayload
+        self.subtitleMetadata = subtitleMetadata
+        self.trackLanguageOverrides = trackLanguageOverrides
+    }
+
+    public var source: MediaAsset { remux.source }
+}
+
 public struct MKVRemuxExecutor<
     Runner: CommandRunning & CommandLineDigesting,
     Inspector: MediaInspecting
@@ -48,6 +69,7 @@ public struct MKVRemuxExecutor<
     private let mkvmergeURL: URL
     private let ffmpegURL: URL
     private let ffprobeURL: URL
+    private let mkvextractURL: URL?
     private let runner: Runner
     private let inspector: Inspector
     private let planner = MKVRemuxPlanner()
@@ -58,12 +80,14 @@ public struct MKVRemuxExecutor<
         mkvmergeURL: URL,
         ffmpegURL: URL,
         ffprobeURL: URL,
+        mkvextractURL: URL? = nil,
         runner: Runner,
         inspector: Inspector
     ) {
         self.mkvmergeURL = mkvmergeURL
         self.ffmpegURL = ffmpegURL
         self.ffprobeURL = ffprobeURL
+        self.mkvextractURL = mkvextractURL
         self.runner = runner
         self.inspector = inspector
     }
@@ -79,32 +103,163 @@ public struct MKVRemuxExecutor<
         return MKVRemuxPreview(plan: plan, sourceRevision: revision)
     }
 
+    public func preview(
+        source: MediaAsset,
+        subtitlePayload: ExternalSubtitleMuxPayload,
+        subtitleMetadata: ExternalSubtitleTrackMetadata,
+        trackLanguageOverrides: [Int: String]
+    ) throws -> MKVRemuxWithExternalSubtitlePreview {
+        let remux = try preview(source: source)
+        guard
+            source.sourceURL.standardizedFileURL
+                != subtitlePayload.sourceURL.standardizedFileURL
+        else { throw ExternalSubtitleMuxError.sourceAndSubtitleAreSame }
+        try subtitlePayload.validateForReview()
+        let audioTrackIDs = Set(source.tracks.filter { $0.kind == .audio }.map(\.id))
+        guard Set(trackLanguageOverrides.keys).isSubset(of: audioTrackIDs) else {
+            throw MKVRemuxCommandError.inconsistentPlan
+        }
+        for language in trackLanguageOverrides.values {
+            _ = try TrackLanguageTag.canonical(language)
+        }
+        _ = try TrackLanguageTag.canonical(subtitleMetadata.language)
+        return MKVRemuxWithExternalSubtitlePreview(
+            remux: remux,
+            subtitlePayload: subtitlePayload,
+            subtitleMetadata: subtitleMetadata,
+            trackLanguageOverrides: trackLanguageOverrides
+        )
+    }
+
     public func execute(
         preview: MKVRemuxPreview,
+        destinationURL: URL,
+        trackLanguageOverrides: [Int: String] = [:],
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
+        onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
+            _ in
+        }
+    ) async throws -> MediaAsset {
+        try await execute(
+            preview: preview,
+            appendedSubtitles: [],
+            destinationURL: destinationURL,
+            sourceLanguageOverrides: trackLanguageOverrides,
+            onProgress: onProgress,
+            onStage: onStage
+        )
+    }
+
+    public func execute(
+        preview: MKVRemuxWithExternalSubtitlePreview,
         destinationURL: URL,
         onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
         onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
             _ in
         }
     ) async throws -> MediaAsset {
+        try await execute(
+            preview: preview.remux,
+            appendedSubtitles: [preview],
+            destinationURL: destinationURL,
+            onProgress: onProgress,
+            onStage: onStage
+        )
+    }
+
+    public func execute(
+        previews: [MKVRemuxWithExternalSubtitlePreview],
+        destinationURL: URL,
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in },
+        onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void = { _ in }
+    ) async throws -> MediaAsset {
+        guard let first = previews.first else { throw MKVRemuxCommandError.inconsistentPlan }
+        return try await execute(
+            preview: first.remux, appendedSubtitles: previews,
+            destinationURL: destinationURL, onProgress: onProgress, onStage: onStage)
+    }
+
+    private func execute(
+        preview: MKVRemuxPreview,
+        appendedSubtitles: [MKVRemuxWithExternalSubtitlePreview],
+        destinationURL: URL,
+        sourceLanguageOverrides: [Int: String] = [:],
+        onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void,
+        onStage: @escaping @Sendable (VerifiedOutputExecutionStage) async throws -> Void
+    ) async throws -> MediaAsset {
+        guard appendedSubtitles.count <= ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo,
+            Set(appendedSubtitles.map { $0.subtitlePayload.sourceURL.standardizedFileURL }).count
+                == appendedSubtitles.count,
+            appendedSubtitles.allSatisfy({
+                $0.remux == preview
+                    && $0.trackLanguageOverrides == appendedSubtitles.first?.trackLanguageOverrides
+                    && $0.subtitlePayload.sourceURL.standardizedFileURL
+                        != preview.source.sourceURL.standardizedFileURL
+                    && $0.subtitlePayload.sourceURL.standardizedFileURL
+                        != destinationURL.standardizedFileURL
+            })
+        else { throw MKVRemuxCommandError.inconsistentPlan }
+        let languageOverrides =
+            appendedSubtitles.first?.trackLanguageOverrides ?? sourceLanguageOverrides
+        let expectations = appendedSubtitles.map {
+            MKVRemuxAppendedSubtitleExpectation(
+                metadata: $0.subtitleMetadata, format: $0.subtitlePayload.format,
+                end: $0.subtitlePayload.subtitleEnd)
+        }
         guard destinationURL.pathExtension.lowercased() == "mkv" else {
             throw MKVRemuxExecutionError.unsupportedDestination
         }
-        let validateSource = try mediaFileRevisionValidator(
+        let validateVideo = try mediaFileRevisionValidator(
             sourceURL: preview.source.sourceURL,
             expectedRevision: preview.sourceRevision,
             changedError: MKVRemuxExecutionError.staleSource
         )
-        return try await VerifiedOutputPipeline(inspector: inspector).execute(
+        let validateSource: @Sendable () throws -> Void = {
+            try validateVideo()
+            for subtitle in appendedSubtitles {
+                try subtitle.subtitlePayload.validateCurrent()
+            }
+        }
+        let output = try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: preview.source,
             destinationURL: destinationURL,
             preparation: .empty,
             produce: { outputURL in
                 try Task.checkCancellation()
                 try validateSource()
+                let reviewedChaptersURL = try writeReviewedChapters(
+                    for: preview.plan,
+                    beside: outputURL
+                )
+                var normalizedSubtitleURLs = [URL]()
+                defer {
+                    if let reviewedChaptersURL {
+                        try? FileManager.default.removeItem(at: reviewedChaptersURL)
+                    }
+                    for url in normalizedSubtitleURLs {
+                        try? FileManager.default.removeItem(at: url)
+                    }
+                }
+                for (index, appendedSubtitle) in appendedSubtitles.enumerated() {
+                    let url = outputURL.deletingLastPathComponent().appendingPathComponent(
+                        "external-subtitle-\(index).\(appendedSubtitle.subtitlePayload.format.filenameExtension)"
+                    )
+                    try appendedSubtitle.subtitlePayload.normalizedData.write(
+                        to: url,
+                        options: .withoutOverwriting
+                    )
+                    normalizedSubtitleURLs.append(url)
+                }
+                let subtitleArguments = zip(normalizedSubtitleURLs, appendedSubtitles).map {
+                    (url: $0.0, metadata: $0.1.subtitleMetadata)
+                }
                 let arguments = try commandBuilder.build(
                     plan: preview.plan,
-                    outputURL: outputURL
+                    outputURL: outputURL,
+                    reviewedChaptersURL: reviewedChaptersURL,
+                    trackLanguageOverrides: languageOverrides,
+                    externalSubtitle: subtitleArguments.first,
+                    additionalExternalSubtitles: Array(subtitleArguments.dropFirst())
                 )
                 let result = try await runner.run(
                     MKVToolNixProgress.request(
@@ -126,10 +281,29 @@ public struct MKVRemuxExecutor<
                         message: String(rawMessage.prefix(240))
                     )
                 }
+                for (index, appendedSubtitle) in appendedSubtitles.enumerated() {
+                    try await ExternalSubtitlePayloadAuditor(
+                        mkvextractURL: mkvextractURL,
+                        runner: runner,
+                        inspector: inspector
+                    ).verify(
+                        outputURL: outputURL,
+                        payload: appendedSubtitle.subtitlePayload,
+                        auditOriginalSubRip: true,
+                        trackOffsetFromEnd: appendedSubtitles.count - 1 - index
+                    )
+                    try appendedSubtitle.subtitlePayload.validateCurrent()
+                }
                 try validateSource()
             },
             verify: { output in
-                try verifier.verify(plan: preview.plan, output: output)
+                try verifier.verify(
+                    plan: preview.plan,
+                    output: output,
+                    trackLanguageOverrides: languageOverrides,
+                    appendedSubtitle: expectations.first,
+                    additionalAppendedSubtitles: Array(expectations.dropFirst())
+                )
                 let copiedTrackIDs = Set(preview.plan.trackIDsInOutputOrder)
                 let sourceTracks = preview.source.tracks.filter {
                     copiedTrackIDs.contains($0.id)
@@ -174,5 +348,48 @@ public struct MKVRemuxExecutor<
             },
             onStage: onStage
         )
+        for (index, appendedSubtitle) in appendedSubtitles.enumerated() {
+            do {
+                try await ExternalSubtitlePayloadAuditor(
+                    mkvextractURL: mkvextractURL,
+                    runner: runner,
+                    inspector: inspector
+                ).verify(
+                    outputURL: output.sourceURL,
+                    payload: appendedSubtitle.subtitlePayload,
+                    auditOriginalSubRip: true,
+                    trackOffsetFromEnd: appendedSubtitles.count - 1 - index
+                )
+            } catch {
+                throw MKVRemuxExecutionError.committedOutputAuditFailed(
+                    outputURL: output.sourceURL,
+                    reason: error.localizedDescription
+                )
+            }
+        }
+        return output
+    }
+
+    private func writeReviewedChapters(
+        for plan: ResolvedMKVRemuxPlan,
+        beside outputURL: URL
+    ) throws -> URL? {
+        guard !plan.source.chapters.isEmpty else { return nil }
+        guard let duration = plan.source.duration else {
+            throw MKVRemuxCommandError.inconsistentPlan
+        }
+        let document = try MatroskaChapterDocument.importingInspectedChapters(
+            plan.source.chapters,
+            sourceID: plan.source.id,
+            mediaDuration: duration
+        )
+        let url = outputURL.deletingLastPathComponent().appendingPathComponent(
+            "reviewed-chapters.xml"
+        )
+        try MatroskaChapterXMLCodec().serialize(document).write(
+            to: url,
+            options: .withoutOverwriting
+        )
+        return url
     }
 }

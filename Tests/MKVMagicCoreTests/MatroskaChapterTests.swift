@@ -2,27 +2,59 @@ import MKVMagicCore
 import XCTest
 
 final class MatroskaChapterTests: XCTestCase {
+    func testChapterStartsReturnsEveryNestedBoundaryInDocumentOrder() {
+        let document = MatroskaChapterDocument(editions: [
+            MatroskaChapterEdition(chapters: [
+                MatroskaChapterAtom(
+                    start: MediaTime(nanoseconds: 1_000_000_000),
+                    displays: [ChapterDisplay(title: "Parent")],
+                    children: [
+                        MatroskaChapterAtom(
+                            start: MediaTime(nanoseconds: 2_000_000_000),
+                            displays: [ChapterDisplay(title: "Child")]
+                        )
+                    ]
+                ),
+                MatroskaChapterAtom(
+                    start: MediaTime(nanoseconds: 3_000_000_000),
+                    displays: [ChapterDisplay(title: "Next")]
+                ),
+            ])
+        ])
+
+        XCTAssertEqual(
+            document.chapterStarts,
+            [
+                MediaTime(nanoseconds: 1_000_000_000),
+                MediaTime(nanoseconds: 2_000_000_000),
+                MediaTime(nanoseconds: 3_000_000_000),
+            ]
+        )
+    }
+
     func testMatroskaXMLRoundTripsNestedEditionsFlagsDisplaysAndNanoseconds() throws {
         let xml = Data(
-            ("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n"
-                + "<Chapters><EditionEntry><EditionUID>10</EditionUID>"
-                + "<EditionFlagHidden>0</EditionFlagHidden>"
-                + "<EditionFlagDefault>1</EditionFlagDefault>"
-                + "<EditionFlagOrdered>0</EditionFlagOrdered>"
-                + "<ChapterAtom><ChapterUID>100</ChapterUID>"
-                + "<ChapterTimeStart>00:00:00.000000000</ChapterTimeStart>"
-                + "<ChapterTimeEnd>00:05:00.123456789</ChapterTimeEnd>"
-                + "<ChapterFlagHidden>0</ChapterFlagHidden>"
-                + "<ChapterFlagEnabled>1</ChapterFlagEnabled>"
-                + "<ChapterDisplay><ChapterString>Part &amp; One</ChapterString>"
-                + "<ChapterLanguage>eng</ChapterLanguage>"
-                + "<ChapLanguageIETF>en-US</ChapLanguageIETF>"
-                + "<ChapterCountry>US</ChapterCountry></ChapterDisplay>"
-                + "<ChapterAtom><ChapterUID>101</ChapterUID>"
-                + "<ChapterTimeStart>00:00:10.000000001</ChapterTimeStart>"
-                + "<ChapterDisplay><ChapterString>Opening</ChapterString>"
-                + "<ChapterLanguage>eng</ChapterLanguage></ChapterDisplay>"
-                + "</ChapterAtom></ChapterAtom></EditionEntry></Chapters>\n").utf8
+            [
+                "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n",
+                "<Chapters><EditionEntry><EditionUID>10</EditionUID>",
+                "<EditionFlagHidden>0</EditionFlagHidden>",
+                "<EditionFlagDefault>1</EditionFlagDefault>",
+                "<EditionFlagOrdered>0</EditionFlagOrdered>",
+                "<ChapterAtom><ChapterUID>100</ChapterUID>",
+                "<ChapterTimeStart>00:00:00.000000000</ChapterTimeStart>",
+                "<ChapterTimeEnd>00:05:00.123456789</ChapterTimeEnd>",
+                "<ChapterFlagHidden>0</ChapterFlagHidden>",
+                "<ChapterFlagEnabled>1</ChapterFlagEnabled>",
+                "<ChapterDisplay><ChapterString>Part &amp; One</ChapterString>",
+                "<ChapterLanguage>eng</ChapterLanguage>",
+                "<ChapLanguageIETF>en-US</ChapLanguageIETF>",
+                "<ChapterCountry>US</ChapterCountry></ChapterDisplay>",
+                "<ChapterAtom><ChapterUID>101</ChapterUID>",
+                "<ChapterTimeStart>00:00:10.000000001</ChapterTimeStart>",
+                "<ChapterDisplay><ChapterString>Opening</ChapterString>",
+                "<ChapterLanguage>eng</ChapterLanguage></ChapterDisplay>",
+                "</ChapterAtom></ChapterAtom></EditionEntry></Chapters>\n",
+            ].joined().utf8
         )
         let codec = MatroskaChapterXMLCodec()
 
@@ -343,11 +375,21 @@ final class MatroskaChapterTests: XCTestCase {
             editions: [MatroskaChapterEdition(uid: 1, chapters: [parent])]
         )
 
-        let flat = document.flattenedForJellyfin()
+        let flat = document.flattenedForPlayerCompatibility()
         let chapters = try XCTUnwrap(flat.editions.first).chapters
         XCTAssertEqual(chapters.map(\.primaryTitle), ["Chapter 01", "Chapter 02"])
+        XCTAssertEqual(flat.topLevelChapterCount, 2)
         XCTAssertTrue(chapters.allSatisfy(\.children.isEmpty))
         XCTAssertFalse(Set(chapters.map(\.uid)).isSubset(of: [10, 11, 12]))
         XCTAssertNoThrow(try flat.validated())
+        let jellyfinChapters = try XCTUnwrap(
+            document.flattenedForJellyfin().editions.first
+        ).chapters
+        XCTAssertEqual(jellyfinChapters.map(\.primaryTitle), chapters.map(\.primaryTitle))
+        XCTAssertEqual(jellyfinChapters.map(\.start), chapters.map(\.start))
+        XCTAssertEqual(jellyfinChapters.map(\.end), chapters.map(\.end))
+        XCTAssertEqual(jellyfinChapters.map(\.isHidden), chapters.map(\.isHidden))
+        XCTAssertEqual(jellyfinChapters.map(\.isEnabled), chapters.map(\.isEnabled))
+        XCTAssertTrue(jellyfinChapters.allSatisfy(\.children.isEmpty))
     }
 }

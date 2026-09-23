@@ -148,7 +148,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         let help = NSTextField(
             wrappingLabelWithString: "Portable recipes that compile against each inspected file."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
         let scroll = NSScrollView()
         scroll.documentView = workflowTable
         scroll.hasVerticalScroller = true
@@ -198,7 +198,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         nameField.setAccessibilityLabel("Workflow name")
         nameField.setAccessibilityHelp("Name this portable workflow before saving it.")
         let stepLabel = NSTextField(labelWithString: "Steps run from top to bottom")
-        stepLabel.textColor = .secondaryLabelColor
+        stepLabel.textColor = AppPalette.secondaryText
         let scroll = NSScrollView()
         scroll.documentView = stepTable
         scroll.hasVerticalScroller = true
@@ -250,7 +250,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         actions.alignment = .centerY
         actions.spacing = 8
 
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setAccessibilityLabel("Workflow status")
         let statusRow = NSStackView(views: [activityIndicator, statusLabel])
@@ -317,7 +317,7 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         checkbox.state = step.isEnabled ? .on : .off
         checkbox.tag = row
         let detail = NSTextField(wrappingLabelWithString: step.action.explanation)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = AppPalette.secondaryText
         detail.font = .systemFont(ofSize: 11)
         let stack = NSStackView(views: [checkbox, detail])
         stack.orientation = .vertical
@@ -561,10 +561,12 @@ final class WorkflowLibraryViewController: NSViewController, NSTableViewDataSour
         panel.allowsOtherFileTypes = false
         panel.isExtensionHidden = false
         panel.nameFieldStringValue = WorkflowEditorPolicy.exportFilename(for: workflow)
-        guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
+            guard let destination = try OutputSavePanel.choose(panel) else { return }
+            defer { _ = destination.directoryAccess }
+            let url = destination.url
             try JSONSavedWorkflowStore.writePortableFile(workflow, to: url)
-            statusLabel.stringValue = "Exported \(url.lastPathComponent)."
+            statusLabel.stringValue = OutputSavePanel.exportMessage(for: url)
         } catch {
             AccessibleStatusPresentation.present(
                 UserFacingErrorPresentation.message(

@@ -1,6 +1,7 @@
 import AppKit
 import MKVMagicCore
 import MKVMagicExecution
+import MKVMagicSystem
 import UniformTypeIdentifiers
 
 typealias ChapterSuggestionProvider =
@@ -106,6 +107,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     private var roots = [ChapterOutlineItem]()
     private var selectedDisplayIndex = 0
     private var analysisTask: Task<Void, Never>?
+    private var suggestionOptionsController: ChapterSuggestionOptionsWindowController?
     private var suggestionReviewController: ChapterSuggestionReviewWindowController?
     private var thumbnailTask: Task<Void, Never>?
     private var thumbnailWindowController: ChapterThumbnailWindowController?
@@ -169,7 +171,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             wrappingLabelWithString:
                 "Edit a lightweight chapter document, then create a new verified MKV copy. Audio, video, subtitles, tags, and attachments are not encoded or replaced."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
         let content = NSSplitView()
         content.isVertical = true
@@ -178,7 +180,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
         content.addArrangedSubview(makeEditorPane())
         content.setHoldingPriority(.defaultHigh, forSubviewAt: 0)
 
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.maximumNumberOfLines = 2
         statusLabel.setAccessibilityLabel("Chapter Studio status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -286,7 +288,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
 
         let importButton = NSButton(title: "Import…", target: self, action: #selector(importFile))
         let exportButton = NSButton(title: "Export…", target: self, action: #selector(exportFile))
-        countLabel.textColor = .secondaryLabelColor
+        countLabel.textColor = AppPalette.secondaryText
         let toolSpacer = NSView()
         toolSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         let fileTools = NSStackView(views: [
@@ -386,7 +388,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             wrappingLabelWithString:
                 "Times accept HH:MM:SS with up to 9 fractional digits. Empty End lets the player infer the boundary from the next chapter."
         )
-        note.textColor = .secondaryLabelColor
+        note.textColor = AppPalette.secondaryText
 
         let stack = NSStackView(views: [selectionHeading, grid, flags, note])
         stack.orientation = .vertical
@@ -784,64 +786,18 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             return
         }
 
-        let alert = NSAlert()
-        alert.messageText = "Suggest chapter boundaries?"
-        alert.informativeText =
-            "MKV Magic analyzes the file locally with bundled FFmpeg. Review every timestamp before it is added; the source is never changed."
-        alert.addButton(withTitle: "Analyze")
-        alert.addButton(withTitle: "Cancel")
-        let sceneCheck = NSButton(
-            checkboxWithTitle: "Scene changes", target: nil, action: nil)
-        sceneCheck.state = hasVideo ? .on : .off
-        sceneCheck.isEnabled = hasVideo
-        let blackCheck = NSButton(
-            checkboxWithTitle: "Black frames", target: nil, action: nil)
-        blackCheck.state = hasVideo ? .on : .off
-        blackCheck.isEnabled = hasVideo
-        let silenceCheck = NSButton(
-            checkboxWithTitle: "Silence", target: nil, action: nil)
-        silenceCheck.state = hasAudio ? .on : .off
-        silenceCheck.isEnabled = hasAudio
-        let spacingField = NSTextField(string: "60")
-        spacingField.alignment = .right
-        spacingField.setAccessibilityLabel("Minimum seconds between suggestions")
-        let secondsLabel = NSTextField(labelWithString: "seconds apart")
-        let spacingRow = NSStackView(views: [
-            NSTextField(labelWithString: "Keep suggestions at least"), spacingField, secondsLabel,
-        ])
-        spacingRow.orientation = .horizontal
-        spacingRow.alignment = .centerY
-        spacingRow.spacing = 6
-        spacingField.widthAnchor.constraint(equalToConstant: 64).isActive = true
-        let choices = NSStackView(views: [sceneCheck, blackCheck, silenceCheck, spacingRow])
-        choices.orientation = .vertical
-        choices.alignment = .leading
-        choices.spacing = 8
-        choices.edgeInsets = NSEdgeInsets(top: 8, left: 0, bottom: 6, right: 0)
-        alert.accessoryView = choices
-        alert.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .alertFirstButtonReturn else { return }
-            guard let seconds = Double(spacingField.stringValue), seconds.isFinite, seconds >= 0,
-                let spacing = MediaTime(seconds: seconds)
-            else {
-                self.showError("Minimum spacing must be a nonnegative number of seconds.")
-                return
-            }
-            var options = ChapterSuggestionOptions()
-            options.detectsSceneChanges = sceneCheck.state == .on
-            options.detectsBlackFrames = blackCheck.state == .on
-            options.detectsSilence = silenceCheck.state == .on
-            options.minimumSpacing = spacing
-            do {
-                _ = try options.validated()
-                self.runSuggestionAnalysis(options: options)
-            } catch {
-                self.showError(
-                    failure: "Could not use those chapter suggestion settings.",
-                    recovery: "No analysis was started; revise the settings and try again.",
-                    error: error
-                )
-            }
+        let controller = ChapterSuggestionOptionsWindowController(
+            capabilities: ChapterSuggestionCapabilities(
+                hasVideo: hasVideo,
+                hasAudio: hasAudio
+            )
+        )
+        suggestionOptionsController = controller
+        controller.beginSheet(for: window) { [weak self] options in
+            guard let self else { return }
+            self.suggestionOptionsController = nil
+            guard let options else { return }
+            self.runSuggestionAnalysis(options: options)
         }
     }
 
@@ -1105,7 +1061,6 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     @objc private func exportFile() {
-        guard let window = view.window else { return }
         let panel = NSSavePanel()
         panel.title = "Export Chapters"
         panel.prompt = "Export"
@@ -1115,24 +1070,27 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
             UTType.xml,
             UTType(filenameExtension: "txt") ?? .plainText,
         ]
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard let self, response == .OK, let url = panel.url else { return }
-            do {
-                let data =
-                    if url.pathExtension.lowercased() == "txt" {
-                        try SimpleChapterTextCodec().serialize(self.document)
-                    } else {
-                        try MatroskaChapterXMLCodec().serialize(self.document)
-                    }
-                try data.write(to: url, options: .atomic)
-                self.showInfo("Exported \(url.lastPathComponent).")
-            } catch {
-                self.showError(
-                    failure: "Could not export the chapters.",
-                    recovery: "The chapter draft is unchanged; choose another destination.",
-                    error: error
-                )
-            }
+        do {
+            guard
+                let destination = try OutputSavePanel.choose(
+                    panel, sourceURL: preview.source.sourceURL)
+            else { return }
+            defer { _ = destination.directoryAccess }
+            let url = destination.url
+            let data =
+                if url.pathExtension.lowercased() == "txt" {
+                    try SimpleChapterTextCodec().serialize(self.document)
+                } else {
+                    try MatroskaChapterXMLCodec().serialize(self.document)
+                }
+            try LocalExportWriter.write(data, to: url)
+            self.showInfo(OutputSavePanel.exportMessage(for: url))
+        } catch {
+            self.showError(
+                failure: "Could not export the chapters.",
+                recovery: "The chapter draft is unchanged; choose another destination.",
+                error: error
+            )
         }
     }
 
@@ -1161,6 +1119,8 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     func cancelAnalysis() {
+        suggestionOptionsController?.cancel()
+        suggestionOptionsController = nil
         analysisTask?.cancel()
         analysisTask = nil
         suggestionReviewController?.cancel()
@@ -1313,7 +1273,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     private func showError(_ message: String) {
-        statusLabel.textColor = .systemRed
+        statusLabel.textColor = AppPalette.errorText
         AccessibleStatusPresentation.present(
             message,
             in: statusLabel,
@@ -1340,7 +1300,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     private func showInfo(_ message: String) {
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.stringValue = message
     }
 
@@ -1355,7 +1315,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     private func clearStatus() {
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.stringValue = ""
     }
 
@@ -1373,15 +1333,7 @@ final class ChapterStudioViewController: NSViewController, NSOutlineViewDataSour
     }
 
     private func allChapterStarts() -> [MediaTime] {
-        allChapterStarts(in: document)
-    }
-
-    private func allChapterStarts(in document: MatroskaChapterDocument) -> [MediaTime] {
-        document.editions.flatMap { allChapterStarts(in: $0.chapters) }
-    }
-
-    private func allChapterStarts(in chapters: [MatroskaChapterAtom]) -> [MediaTime] {
-        chapters.flatMap { [$0.start] + allChapterStarts(in: $0.children) }
+        document.chapterStarts
     }
 
     private func findChapter(_ id: UUID, in chapters: [MatroskaChapterAtom])

@@ -5,25 +5,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let model: AppModel
     private let updateController: UpdateChecking
     private let outputDestinationPreferences: OutputDestinationPreferences
+    private let appearancePreferences: AppearancePreferences
     private var windowController: NSWindowController?
     private var settingsWindowController: SettingsWindowController?
     private var helpWindowController: HelpWindowController?
+    private var diagnosticReportWindowController: DiagnosticReportWindowController?
     private var thirdPartySoftwareWindowController: ThirdPartySoftwareWindowController?
     private var automaticQueueTask: Task<Void, Never>?
 
     init(
         model: AppModel = AppModel(),
         updateController: UpdateChecking = AppUpdateController(),
-        outputDestinationPreferences: OutputDestinationPreferences = OutputDestinationPreferences()
+        outputDestinationPreferences: OutputDestinationPreferences = OutputDestinationPreferences(),
+        appearancePreferences: AppearancePreferences = AppearancePreferences()
     ) {
         self.model = model
         self.updateController = updateController
         self.outputDestinationPreferences = outputDestinationPreferences
+        self.appearancePreferences = appearancePreferences
         super.init()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        appearancePreferences.apply()
 
         let content = MainViewController(
             model: model,
@@ -32,9 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         NSApp.mainMenu = makeMainMenu(openTarget: content)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic"
-        window.setContentSize(NSSize(width: 1080, height: 680))
         window.minSize = NSSize(width: 820, height: 520)
-        window.center()
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: content.preferredInitialFirstResponder
@@ -43,6 +46,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+        // Activation can change the usable screen area when the menu bar appears.
+        // Constrain content explicitly; AppKit's implicit resize differs by OS.
+        let requestedSize = NSSize(width: 1080, height: 680)
+        let availableSize =
+            window.screen.map {
+                window.contentRect(forFrameRect: $0.visibleFrame).size
+            } ?? requestedSize
+        window.setContentSize(
+            NSSize(
+                width: min(requestedSize.width, availableSize.width),
+                height: min(requestedSize.height, availableSize.height)
+            ))
+        window.center()
         automaticQueueTask = Task { await model.runAutomaticQueueCycleIfEligible() }
     }
 
@@ -73,7 +89,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSettings() {
         let controller =
             settingsWindowController
-            ?? SettingsWindowController(preferences: outputDestinationPreferences)
+            ?? SettingsWindowController(
+                preferences: outputDestinationPreferences,
+                appearancePreferences: appearancePreferences)
         settingsWindowController = controller
         controller.showWindow(nil)
         controller.window?.makeKeyAndOrderFront(nil)
@@ -85,6 +103,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         helpWindowController = controller
         controller.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc func reportProblem() {
+        Task {
+            let snapshot = await model.diagnosticSnapshot()
+            let reports = await model.diagnosticIssueReports(snapshot: snapshot)
+            let controller = DiagnosticReportWindowController(reports: reports, snapshot: snapshot)
+            diagnosticReportWindowController?.close()
+            diagnosticReportWindowController = controller
+            controller.showWindow(nil)
+            controller.window?.makeKeyAndOrderFront(nil)
+        }
     }
 
     @objc func showThirdPartySoftware() {
@@ -250,6 +280,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         )
         help.target = self
         helpMenu.addItem(help)
+        let reportProblem = NSMenuItem(
+            title: "Report a Problem…", action: #selector(reportProblem), keyEquivalent: "")
+        reportProblem.target = self
+        helpMenu.addItem(reportProblem)
         helpMenu.addItem(.separator())
         let thirdPartySoftware = NSMenuItem(
             title: "Third-Party Software…",

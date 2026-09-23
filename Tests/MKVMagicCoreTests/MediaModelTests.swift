@@ -4,6 +4,28 @@ import XCTest
 @testable import MKVMagicCore
 
 final class MediaModelTests: XCTestCase {
+    func testCodecInitializationDigestNormalizesAndRejectsMalformedValues() throws {
+        let uppercase = String(repeating: "AB", count: 32)
+        let digest = try XCTUnwrap(MediaCodecInitializationDigest(sha256: uppercase))
+
+        XCTAssertEqual(digest.sha256, uppercase.lowercased())
+        XCTAssertEqual(
+            try JSONDecoder().decode(
+                MediaCodecInitializationDigest.self,
+                from: JSONEncoder().encode(digest)
+            ),
+            digest
+        )
+        XCTAssertNil(MediaCodecInitializationDigest(sha256: String(repeating: "a", count: 63)))
+        XCTAssertNil(MediaCodecInitializationDigest(sha256: String(repeating: "g", count: 64)))
+        XCTAssertThrowsError(
+            try JSONDecoder().decode(
+                MediaCodecInitializationDigest.self,
+                from: Data("\"not-a-sha-256\"".utf8)
+            )
+        )
+    }
+
     func testMediaTimeUsesNanosecondRoundTrip() throws {
         let time = try XCTUnwrap(MediaTime(seconds: 12.345_678_901))
         XCTAssertEqual(time.nanoseconds, 12_345_678_901)

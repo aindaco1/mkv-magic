@@ -256,6 +256,38 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
         )
     }
 
+    func testCompilesReviewedUntaggedHDAVCToExplicitBT709Once() throws {
+        let sources = [
+            asset(part: 1, tracks: [untaggedVideo(id: 0, width: 1_920, height: 1_080)]),
+            asset(part: 2, tracks: [untaggedVideo(id: 0, width: 1_280, height: 720)]),
+        ]
+        let resolved = try resolve(
+            sources: sources,
+            mapping: mapping(video: [0, 0]),
+            preset: .h264Compatibility
+        )
+
+        let command = try JoinNormalizationCommandBuilder().build(
+            sources: sources,
+            resolvedPlan: resolved,
+            capabilities: capabilities(),
+            outputURL: URL(fileURLWithPath: "/output/reviewed-untagged-sdr.mkv")
+        )
+
+        XCTAssertEqual(command.encodedVideoLaneIndices, [0])
+        XCTAssertEqual(command.arguments.filter { $0 == "h264_videotoolbox" }.count, 1)
+        let graph = try XCTUnwrap(value(after: "-filter_complex", in: command.arguments))
+        XCTAssertEqual(graph.components(separatedBy: "concat=n=2:v=1:a=0").count - 1, 1)
+        XCTAssertEqual(
+            graph.components(
+                separatedBy:
+                    "setparams=range=limited:color_primaries=bt709:color_trc=bt709:colorspace=bt709"
+            ).count - 1,
+            2
+        )
+        XCTAssertFalse(graph.contains("tonemap="))
+    }
+
     func testRejectsCapabilityRegressionMissingFilterAndExistingOutput() throws {
         let sources = incompatibleVideoSources()
         let resolved = try resolve(
@@ -610,6 +642,22 @@ final class JoinNormalizationCommandBuilderTests: XCTestCase {
             masteringDisplayMetadata: hdrMasteringDisplay,
             contentLightLevelMetadata: hdrContentLight,
             hdrFormats: ["HDR10 metadata"]
+        )
+    }
+
+    private func untaggedVideo(id: Int, width: Int, height: Int) -> MediaTrack {
+        MediaTrack(
+            id: id,
+            kind: .video,
+            codec: "h264",
+            codecID: "V_MPEG4/ISO/AVC",
+            profile: "High",
+            level: 40,
+            dimensions: MediaDimensions(width: width, height: height),
+            displayDimensions: MediaDimensions(width: width, height: height),
+            pixelFormat: "yuv420p",
+            bitDepth: 8,
+            frameRate: "24/1"
         )
     }
 

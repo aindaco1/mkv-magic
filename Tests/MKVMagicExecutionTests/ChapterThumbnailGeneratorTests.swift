@@ -65,7 +65,9 @@ final class ChapterThumbnailGeneratorTests: XCTestCase {
         )
         XCTAssertTrue(
             requests.allSatisfy {
-                $0.arguments.contains("scale=w=min(480\\,iw):h=-2:flags=fast_bilinear")
+                $0.arguments.contains(
+                    "scale=w=min(480\\,iw):h=-2:flags=fast_bilinear:out_range=full,format=yuv420p")
+                    && $0.arguments.contains("-color_range") && $0.arguments.contains("pc")
                     && !$0.arguments.contains("sh") && $0.outputLimit == 1_048_576
             }
         )

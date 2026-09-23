@@ -259,7 +259,7 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
         let explanation = NSTextField(
             wrappingLabelWithString: review.explanation
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
         summaryLabel.stringValue = SubtitleCleanupPresentation.selectionSummary(
             appliedCount: appliedChangeIDs.count,
             totalCount: review.changes.count,
@@ -287,10 +287,10 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
             wrappingLabelWithString: review.normalization
         )
         summaryLabel.setAccessibilityLabel("Subtitle cleanup selection summary")
-        normalization.textColor = .secondaryLabelColor
+        normalization.textColor = AppPalette.secondaryText
         normalization.font = .systemFont(ofSize: 11)
         normalization.setAccessibilityLabel("Subtitle normalization details")
-        validationLabel.textColor = .systemRed
+        validationLabel.textColor = AppPalette.errorText
         validationLabel.font = .systemFont(ofSize: 11)
         validationLabel.setAccessibilityLabel("Subtitle cleanup status")
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
@@ -355,12 +355,12 @@ final class SubtitleCleanupViewController: NSViewController, NSTableViewDataSour
                 + SubtitleCleanupPresentation.time(change.end)
         )
         timing.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-        timing.textColor = .secondaryLabelColor
+        timing.textColor = AppPalette.secondaryText
         let detail = NSTextField(
             wrappingLabelWithString: change.detail
         )
         detail.font = .systemFont(ofSize: 11)
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = AppPalette.secondaryText
         detail.maximumNumberOfLines = 2
         let stack = NSStackView(views: [checkbox, timing, detail])
         stack.orientation = .vertical

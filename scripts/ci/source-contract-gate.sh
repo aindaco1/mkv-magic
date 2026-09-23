@@ -14,6 +14,7 @@ actionlint -color
 ./scripts/ci/test-dmg-verification.sh
 ./scripts/ci/test-downloaded-release-verification.sh
 ./scripts/ci/test-loopback-server.sh
+./scripts/ci/test-verification-directory.sh
 ./scripts/ci/test-publication-acceptance.sh
 ./scripts/ci/test-release-build-number.sh
 ./scripts/ci/test-release-ci-provenance.sh
@@ -29,6 +30,7 @@ actionlint -color
 ./scripts/ci/test-universal-mach-o-inventory.sh
 ./scripts/ci/test-reseal-tool-manifests.sh
 ./scripts/ci/test-codeql-build-scope.sh
+python3 -m unittest discover -s scripts/testing/tests -v
 
 shell_files=()
 while IFS= read -r -d '' shell_file; do

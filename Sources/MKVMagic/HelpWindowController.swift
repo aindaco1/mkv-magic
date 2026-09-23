@@ -35,7 +35,7 @@ final class HelpViewController: NSViewController {
             wrappingLabelWithString:
                 "Prepare Matroska and other video files locally, with review before every output."
         )
-        introduction.textColor = .secondaryLabelColor
+        introduction.textColor = AppPalette.secondaryText
 
         topics.isEditable = false
         topics.isRichText = false
@@ -94,9 +94,12 @@ final class HelpViewController: NSViewController {
     private static let helpText = """
         GETTING STARTED
         1. Open media with Command-O, the Choose Files or Folder button, or drag and drop.
-        2. Select a file and choose a task such as metadata, tracks, subtitles, chapters, trim, or join.
+        2. Select a file for common actions. Expand More Tools in the inspector for title/track editing, tags, extraction, attachments, trim, and conversion. For video + subtitle remuxing, add the video and SRT together.
         3. Review the planned stages, encoding impact, destination, and source-safety note.
         4. Save or queue the reviewed job. MKV is the default output container.
+
+        APPEARANCE
+        Open MKV Magic > Settings (Command-comma) and choose System, Light, or Dark. System is the default and follows your Mac automatically. Native focus, selection, and explicit macOS accent choices remain available.
 
         OUTPUT SAFETY
         MKV Magic creates and verifies a separate output before it reports success. By default, it saves automatically beside the source without opening a save panel. In MKV Magic > Settings, you can instead remember one output folder or ask where to save every time. Existing files are never overwritten; automatic outputs receive a number when needed. Originals remain unchanged by default. Moving originals to Trash is explicit, optional, and happens only after verified success.

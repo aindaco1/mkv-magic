@@ -52,9 +52,13 @@ if [[ "${MKV_MAGIC_REQUIRE_DISTRIBUTION:-0}" == 1 ]]; then
     xcrun stapler validate "$mounted_app"
     spctl --assess --type execute --verbose=2 "$mounted_app"
 fi
+native_architecture="$(mkv_magic_native_verification_architecture)"
+requested_architectures="${MKV_MAGIC_VERIFY_ARCHITECTURES:-$native_architecture}"
+mkv_magic_require_native_verification \
+    "$requested_architectures" "$native_architecture" \
+    "${MKV_MAGIC_ALLOW_TRANSLATED_VERIFICATION:-0}"
 verification_architectures="$({
-    mkv_magic_verification_architectures \
-        "${MKV_MAGIC_VERIFY_ARCHITECTURES:-arm64 x86_64}"
+    mkv_magic_verification_architectures "$requested_architectures"
 })"
 while IFS= read -r architecture; do
     if [[ "${MKV_MAGIC_VERIFY_BUNDLED_TOOLS:-0}" == 1 ]]; then

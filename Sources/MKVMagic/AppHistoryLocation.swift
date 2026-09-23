@@ -6,6 +6,11 @@ enum AppHistoryLocationError: Error, Equatable {
 }
 
 enum AppHistoryLocation {
+    static func makeDiagnosticJournal() throws -> DiagnosticJournal {
+        let directory = try makeAppDirectory(fileManager: .default, applicationSupportURL: nil)
+        return DiagnosticJournal(directory: directory.appendingPathComponent("Diagnostics"))
+    }
+
     static func makeStore(
         fileManager: FileManager = .default,
         applicationSupportURL explicitApplicationSupportURL: URL? = nil

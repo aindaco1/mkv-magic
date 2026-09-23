@@ -1,43 +1,15 @@
 import AppKit
 import MKVMagicCore
 
-enum TrackRemovalSheetMode: Equatable {
-    case manual
-    case englishLibraryCleanup
-
-    var windowTitle: String {
-        switch self {
-        case .manual: "Remove Tracks"
-        case .englishLibraryCleanup: "Clean MKV Preview"
-        }
-    }
-
-    var heading: String {
-        switch self {
-        case .manual: "Choose tracks to remove"
-        case .englishLibraryCleanup: "Review English Library suggestions"
-        }
-    }
-
-    var help: String {
-        switch self {
-        case .manual:
-            "Checked tracks will be omitted from a new MKV. Retained streams are copied without encoding; the original file stays untouched."
-        case .englishLibraryCleanup:
-            "Suggested subtitle removals are checked below. Commentary and the only useful English or unknown subtitle are preserved. Nothing changes until you review and run."
-        }
-    }
-}
-
 @MainActor
 final class TrackRemovalWindowController: NSWindowController {
     private let removalViewController: TrackRemovalViewController
     private var completion: ((TrackRemoval?) -> Void)?
 
-    init(asset: MediaAsset, mode: TrackRemovalSheetMode = .manual) {
-        removalViewController = TrackRemovalViewController(asset: asset, mode: mode)
+    init(asset: MediaAsset) {
+        removalViewController = TrackRemovalViewController(asset: asset)
         let window = NSPanel(contentViewController: removalViewController)
-        window.title = mode.windowTitle
+        window.title = "Remove Tracks"
         window.styleMask = [.titled, .closable, .resizable]
         window.setContentSize(NSSize(width: 620, height: 480))
         window.minSize = NSSize(width: 540, height: 420)
@@ -80,8 +52,6 @@ final class TrackRemovalViewController: NSViewController {
     var onPreview: ((TrackRemoval) -> Void)?
 
     private let tracks: [MediaTrack]
-    private let mode: TrackRemovalSheetMode
-    private let suggestions: [UInt64: CleanMKVTrackSuggestion]
     private var checkboxes = [NSButton]()
     private let statusLabel = NSTextField(labelWithString: "")
     private let previewButton = NSButton(
@@ -91,13 +61,8 @@ final class TrackRemovalViewController: NSViewController {
         checkboxes.first(where: \.isEnabled) ?? previewButton
     }
 
-    init(asset: MediaAsset, mode: TrackRemovalSheetMode) {
+    init(asset: MediaAsset) {
         tracks = asset.tracks.filter { $0.kind != .attachment }
-        self.mode = mode
-        suggestions = Dictionary(
-            uniqueKeysWithValues: EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).map {
-                ($0.trackUID, $0)
-            })
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -108,53 +73,32 @@ final class TrackRemovalViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
-        let heading = NSTextField(labelWithString: mode.heading)
+        let heading = NSTextField(labelWithString: "Choose tracks to remove")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let help = NSTextField(
-            wrappingLabelWithString: mode.help
+            wrappingLabelWithString:
+                "Checked tracks will be omitted from a new MKV. Retained streams are copied without encoding; the original file stays untouched."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
-        let rows = NSStackView()
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 9
         checkboxes = tracks.map { track in
-            let suggestion = track.uid.flatMap { suggestions[$0] }
-            let title =
-                TrackEditorPresentation.label(track)
-                + suggestion.map { " — Suggested: \(TrackRemovalPresentation.reason($0.reason))" }
-                .orEmpty
             let checkbox = NSButton(
-                checkboxWithTitle: title,
+                checkboxWithTitle: TrackEditorPresentation.label(track),
                 target: self,
                 action: #selector(selectionChanged)
             )
-            checkbox.state = mode == .englishLibraryCleanup && suggestion != nil ? .on : .off
+            checkbox.state = .off
             checkbox.isEnabled = TrackRemovalPresentation.canRemove(track)
             checkbox.toolTip =
                 checkbox.isEnabled
                 ? "Remove this track from the verified copy."
                 : "This track type or identity cannot be removed safely yet."
             checkbox.setAccessibilityHelp(checkbox.toolTip)
-            rows.addArrangedSubview(checkbox)
             return checkbox
         }
-        let scroll = NSScrollView()
-        scroll.documentView = rows
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        rows.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            rows.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor, constant: 12),
-            rows.trailingAnchor.constraint(
-                equalTo: scroll.contentView.trailingAnchor, constant: -12),
-            rows.topAnchor.constraint(equalTo: scroll.contentView.topAnchor, constant: 10),
-            rows.widthAnchor.constraint(
-                lessThanOrEqualTo: scroll.contentView.widthAnchor, constant: -24),
-        ])
+        let scroll = NativeFormLayout.scrollingChoices(checkboxes)
 
-        statusLabel.textColor = .systemRed
+        statusLabel.textColor = AppPalette.errorText
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 2
         statusLabel.setAccessibilityLabel("Track removal status")
@@ -167,12 +111,8 @@ final class TrackRemovalViewController: NSViewController {
         previewButton.setAccessibilityHelp(
             "Review the selected omissions before creating a verified MKV copy."
         )
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let buttons = NSStackView(views: [statusLabel, spacer, cancelButton, previewButton])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.spacing = 10
+        let buttons = NativeFormLayout.footer(
+            status: statusLabel, buttons: [cancelButton, previewButton])
 
         let stack = NSStackView(views: [heading, help, scroll, buttons])
         stack.orientation = .vertical
@@ -188,15 +128,28 @@ final class TrackRemovalViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            stack.contentWidthConstraint(for: heading),
+            stack.contentWidthConstraint(for: help),
             stack.contentWidthConstraint(for: scroll),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 240),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
             stack.contentWidthConstraint(for: buttons),
         ])
         view = root
+        selectionChanged()
     }
 
     @objc private func selectionChanged() {
-        statusLabel.stringValue = ""
+        do {
+            _ = try currentRemoval()
+            previewButton.isEnabled = true
+            statusLabel.textColor = AppPalette.secondaryText
+            statusLabel.stringValue =
+                "Review these omissions, then use Verify & Run in the main window."
+        } catch {
+            previewButton.isEnabled = false
+            statusLabel.textColor = AppPalette.secondaryText
+            statusLabel.stringValue = UserFacingErrorPresentation.shortReason(error)
+        }
     }
 
     @objc private func cancel() {
@@ -205,17 +158,11 @@ final class TrackRemovalViewController: NSViewController {
 
     @objc private func preview() {
         do {
-            let selected = Set(
-                tracks.indices.compactMap { index in
-                    checkboxes[index].state == .on ? index : nil
-                })
-            let removal = try TrackRemovalPresentation.removal(
-                tracks: tracks,
-                selectedIndexes: selected
-            )
+            let removal = try currentRemoval()
             statusLabel.stringValue = ""
             onPreview?(removal)
         } catch {
+            statusLabel.textColor = AppPalette.errorText
             AccessibleStatusPresentation.present(
                 UserFacingErrorPresentation.message(
                     failure: "Could not prepare track removal.",
@@ -226,6 +173,13 @@ final class TrackRemovalViewController: NSViewController {
                 returningFocusTo: preferredInitialFirstResponder
             )
         }
+    }
+
+    private func currentRemoval() throws -> TrackRemoval {
+        try TrackRemovalPresentation.removal(
+            tracks: tracks,
+            selectedIndexes: Set(checkboxes.indices.filter { checkboxes[$0].state == .on })
+        )
     }
 }
 
@@ -257,13 +211,6 @@ enum TrackRemovalPresentation {
         track.uid != nil && [.video, .audio, .subtitle, .data].contains(track.kind)
     }
 
-    static func reason(_ reason: CleanMKVTrackSuggestion.Reason) -> String {
-        switch reason {
-        case .nonEnglishSubtitle(let language): "non-English (\(language))"
-        case .redundantSDH: "redundant SDH"
-        }
-    }
-
     static func removal(
         tracks: [MediaTrack],
         selectedIndexes: Set<Int>
@@ -285,8 +232,4 @@ enum TrackRemovalPresentation {
         }
         return TrackRemoval(trackUIDs: Set(selectedTracks.compactMap(\.uid)))
     }
-}
-
-extension Optional where Wrapped == String {
-    fileprivate var orEmpty: String { self ?? "" }
 }

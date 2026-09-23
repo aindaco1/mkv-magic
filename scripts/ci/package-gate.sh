@@ -2,7 +2,7 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-gate_root="$(mktemp -d "${TMPDIR:-/tmp}/mkv-magic-package-gate.XXXXXX")"
+gate_root="$("$repo_root/scripts/release/create-verification-directory.sh" mkv-magic-package-gate)"
 cleanup() {
     /bin/rm -rf -- "$gate_root"
 }

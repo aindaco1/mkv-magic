@@ -89,10 +89,13 @@ enum TrimPresentationPolicy {
 
     static func thumbnailTimes(duration: MediaTime) -> [MediaTime] {
         guard duration > .zero else { return [] }
-        let last = max(0, duration.nanoseconds - 1)
+        // Duration is the end of the last frame, not a decodable frame timestamp.
+        // Sample inside five intervals; seeking to duration - 1 ns can produce no
+        // JPEG and used to prevent the entire Trim window from opening.
         let candidates = (0...4).map { part -> MediaTime in
-            let product = last.multipliedReportingOverflow(by: Int64(part))
-            let value = product.overflow ? last : product.partialValue / 4
+            let value =
+                (duration.nanoseconds / 5) * Int64(part)
+                + (duration.nanoseconds % 5) * Int64(part) / 5
             return MediaTime(nanoseconds: value)
         }
         return Array(Set(candidates)).sorted()
@@ -339,7 +342,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
                 ? conversionExplanation
                 : "Set exact numeric in and out points. Fast Trim may move them forward to keyframes; Exact Trim keeps them and encodes video once. The original is never replaced."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         let thumbnailRow = NSStackView(
             views: thumbnails.enumerated().map { makeThumbnailCard(index: $0, entry: $1) }
@@ -468,13 +471,13 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         configureQualityPopup(resetSelection: true)
         refreshAdvancedControls(resetValues: true)
 
-        inputMessage.textColor = .secondaryLabelColor
+        inputMessage.textColor = AppPalette.secondaryText
         inputMessage.font = .systemFont(ofSize: 12)
         inputMessage.setAccessibilityLabel(
             operation == .transcode ? "Conversion input status" : "Trim input status"
         )
         reviewText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        reviewText.textColor = .secondaryLabelColor
+        reviewText.textColor = AppPalette.secondaryText
         reviewText.setAccessibilityLabel(
             operation == .transcode ? "Conversion review summary" : "Trim review summary"
         )
@@ -659,7 +662,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         advancedToggle.isEnabled = false
         rateControlField.isEnabled = false
         av1SpeedField.isEnabled = false
-        inputMessage.textColor = .secondaryLabelColor
+        inputMessage.textColor = AppPalette.secondaryText
         inputMessage.stringValue =
             request.operation == .transcode
             ? "Binding the selected encoders, complete file, tracks, and reviewed chapters…"
@@ -678,7 +681,7 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
                 reviewText.stringValue = TrimPresentationPolicy.reviewSummary(preview)
                 reviewText.textColor =
                     preview.outputRange == preview.requestedRange
-                    ? .labelColor : .systemOrange
+                    ? .labelColor : AppPalette.warningText
                 inputMessage.stringValue =
                     "Review passed. Continue to choose a new MKV; the original stays unchanged."
                 continueButton.isEnabled = true
@@ -739,14 +742,14 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         reviewErrorMessage = nil
         continueButton.isEnabled = false
         reviewText.stringValue = ""
-        inputMessage.textColor = .secondaryLabelColor
+        inputMessage.textColor = AppPalette.secondaryText
     }
 
     private func updateInputState() {
         guard reviewTask == nil else { return }
         guard let duration = source.duration, let request = request() else {
             reviewButton.isEnabled = false
-            inputMessage.textColor = .secondaryLabelColor
+            inputMessage.textColor = AppPalette.secondaryText
             if modeControl.selectedSegment == TrimMode.exact.rawValue,
                 advancedToggle.state == .on,
                 !advancedValuesAreValid()
@@ -763,16 +766,16 @@ private final class TrimViewController: NSViewController, NSTextFieldDelegate {
         let exactUnavailable = request.mode == .exact && request.exactChoice == nil
         reviewButton.isEnabled = !wholeFileIsInvalid && !exactUnavailable
         if let reviewErrorMessage {
-            inputMessage.textColor = .systemRed
+            inputMessage.textColor = AppPalette.errorText
             inputMessage.stringValue = reviewErrorMessage
         } else if wholeFileIsInvalid {
-            inputMessage.textColor = .secondaryLabelColor
+            inputMessage.textColor = AppPalette.secondaryText
             inputMessage.stringValue = "Move the in point or out point to remove part of the file."
         } else if exactUnavailable {
-            inputMessage.textColor = .secondaryLabelColor
+            inputMessage.textColor = AppPalette.secondaryText
             inputMessage.stringValue = "No video encoder passed the active local probe."
         } else if reviewedPreview == nil {
-            inputMessage.textColor = .secondaryLabelColor
+            inputMessage.textColor = AppPalette.secondaryText
             inputMessage.stringValue =
                 operation == .transcode
                 ? conversionInputMessage

@@ -10,6 +10,8 @@ public enum LosslessJoinExecutionError: Error, Equatable, Sendable {
     case invalidChapterTimeline
     case missingStableTrackIdentity
     case staleSource
+    case invalidHeaderNormalization
+    case unsafeHeaderNormalizedVideo
     case unsafeChapterOutput
     case chapterVerificationFailed
     case toolFailed(tool: String, exitCode: Int32, message: String)
@@ -32,6 +34,10 @@ extension LosslessJoinExecutionError: LocalizedError {
             "Every output lane needs a unique stable Matroska track identity before joining."
         case .staleSource:
             "A source changed after the lossless join preview was created."
+        case .invalidHeaderNormalization:
+            "The reviewed H.264 header-normalization plan is no longer valid."
+        case .unsafeHeaderNormalizedVideo:
+            "The packet-copy H.264 header pass did not create a safe, bounded intermediate."
         case .unsafeChapterOutput:
             "mkvextract did not create a safe, bounded chapter document."
         case .chapterVerificationFailed:
@@ -50,17 +56,28 @@ public struct LosslessJoinPreview: Equatable, Sendable {
     public let mapping: JoinTrackMapping
     public let chapters: JoinedChapterComposition
     public let sourceRevisions: [LosslessJoinSourceRevision]
+    public let usesReviewedMKVToolNixWarningTolerance: Bool
+    public let headerNormalizedVideoLaneIndices: [Int]
+
+    public var usesHeaderNormalizedVideoAppend: Bool {
+        !headerNormalizedVideoLaneIndices.isEmpty
+    }
 
     init(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         chapters: JoinedChapterComposition,
-        sourceRevisions: [LosslessJoinSourceRevision]
+        sourceRevisions: [LosslessJoinSourceRevision],
+        usesReviewedMKVToolNixWarningTolerance: Bool,
+        headerNormalizedVideoLaneIndices: [Int]
     ) {
         self.sources = sources
         self.mapping = mapping
         self.chapters = chapters
         self.sourceRevisions = sourceRevisions
+        self.usesReviewedMKVToolNixWarningTolerance =
+            usesReviewedMKVToolNixWarningTolerance
+        self.headerNormalizedVideoLaneIndices = headerNormalizedVideoLaneIndices
     }
 }
 
@@ -78,13 +95,16 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
         mapping: JoinTrackMapping,
         chaptersURL: URL,
         outputURL: URL,
+        usesReviewedMKVToolNixWarningTolerance: Bool = false,
         onProgress: @escaping @Sendable (VerifiedOutputToolProgress) async -> Void = { _ in }
     ) async throws {
         let arguments = try Self.arguments(
             sources: sources,
             mapping: mapping,
             chaptersURL: chaptersURL,
-            outputURL: outputURL
+            outputURL: outputURL,
+            usesReviewedMKVToolNixWarningTolerance:
+                usesReviewedMKVToolNixWarningTolerance
         )
         let result = try await runner.run(
             MKVToolNixProgress.request(
@@ -110,9 +130,15 @@ public struct MKVLosslessJoiner<Runner: CommandRunning>: Sendable {
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
         chaptersURL: URL,
-        outputURL: URL
+        outputURL: URL,
+        usesReviewedMKVToolNixWarningTolerance: Bool = false
     ) throws -> [String] {
-        try LosslessJoinPolicy.validate(sources: sources, mapping: mapping)
+        try LosslessJoinPolicy.validate(
+            sources: sources,
+            mapping: mapping,
+            usesReviewedMKVToolNixWarningTolerance:
+                usesReviewedMKVToolNixWarningTolerance
+        )
         guard safeAbsoluteFileURL(chaptersURL), safeAbsoluteFileURL(outputURL) else {
             throw LosslessJoinExecutionError.invalidPath
         }
@@ -183,6 +209,7 @@ public struct LosslessJoinExecutor<
     Inspector: MediaInspecting
 >: Sendable {
     private let joiner: MKVLosslessJoiner<Runner>
+    private let headerNormalizedJoiner: MKVHeaderNormalizedLosslessJoiner<Runner>
     private let inspector: Inspector
     private let codec = MatroskaChapterXMLCodec()
     private let verifier = LosslessJoinOutputVerifier()
@@ -194,10 +221,17 @@ public struct LosslessJoinExecutor<
         ffprobeURL: URL,
         mkvmergeURL: URL,
         mkvextractURL: URL,
+        mkvpropeditURL: URL,
         runner: Runner,
         inspector: Inspector
     ) {
         joiner = MKVLosslessJoiner(executableURL: mkvmergeURL, runner: runner)
+        headerNormalizedJoiner = MKVHeaderNormalizedLosslessJoiner(
+            ffmpegURL: ffmpegURL,
+            mkvmergeURL: mkvmergeURL,
+            mkvpropeditURL: mkvpropeditURL,
+            runner: runner
+        )
         self.inspector = inspector
         chapterAuditor = MatroskaChapterOutputAuditor(
             mkvextractURL: mkvextractURL,
@@ -213,12 +247,15 @@ public struct LosslessJoinExecutor<
     public func preview(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
-        chapters: JoinedChapterComposition
+        chapters: JoinedChapterComposition,
+        usesReviewedMKVToolNixWarningTolerance: Bool = false
     ) throws -> LosslessJoinPreview {
         try LosslessJoinPolicy.validate(
             sources: sources,
             mapping: mapping,
-            chapters: chapters
+            chapters: chapters,
+            usesReviewedMKVToolNixWarningTolerance:
+                usesReviewedMKVToolNixWarningTolerance
         )
         let revisions: [LosslessJoinSourceRevision]
         do {
@@ -233,11 +270,24 @@ public struct LosslessJoinExecutor<
                 throw LosslessJoinExecutionError.staleSource
             }
         }
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: sources,
+            mapping: mapping
+        )
+        let headerNormalizedVideoLaneIndices = MKVHeaderNormalizedLosslessPolicy.laneIndices(
+            sources: sources,
+            mapping: mapping,
+            report: report,
+            afterExplicitReview: usesReviewedMKVToolNixWarningTolerance
+        )
         return LosslessJoinPreview(
             sources: sources,
             mapping: mapping,
             chapters: chapters,
-            sourceRevisions: revisions
+            sourceRevisions: revisions,
+            usesReviewedMKVToolNixWarningTolerance:
+                usesReviewedMKVToolNixWarningTolerance,
+            headerNormalizedVideoLaneIndices: headerNormalizedVideoLaneIndices
         )
     }
 
@@ -253,7 +303,9 @@ public struct LosslessJoinExecutor<
         try LosslessJoinPolicy.validate(
             sources: preview.sources,
             mapping: preview.mapping,
-            chapters: preview.chapters
+            chapters: preview.chapters,
+            usesReviewedMKVToolNixWarningTolerance:
+                preview.usesReviewedMKVToolNixWarningTolerance
         )
         try Task.checkCancellation()
         try validateCurrent(preview)
@@ -271,13 +323,28 @@ public struct LosslessJoinExecutor<
                     isDirectory: false
                 )
                 try expectedChapters.write(to: chaptersURL, options: .atomic)
-                try await joiner.join(
-                    sources: preview.sources,
-                    mapping: preview.mapping,
-                    chaptersURL: chaptersURL,
-                    outputURL: temporaryOutput,
-                    onProgress: onProgress
-                )
+                if preview.usesHeaderNormalizedVideoAppend {
+                    try await headerNormalizedJoiner.join(
+                        sources: preview.sources,
+                        mapping: preview.mapping,
+                        normalizedVideoLaneIndices:
+                            preview.headerNormalizedVideoLaneIndices,
+                        chaptersURL: chaptersURL,
+                        outputURL: temporaryOutput,
+                        directory: directory,
+                        onProgress: onProgress
+                    )
+                } else {
+                    try await joiner.join(
+                        sources: preview.sources,
+                        mapping: preview.mapping,
+                        chaptersURL: chaptersURL,
+                        outputURL: temporaryOutput,
+                        usesReviewedMKVToolNixWarningTolerance:
+                            preview.usesReviewedMKVToolNixWarningTolerance,
+                        onProgress: onProgress
+                    )
+                }
                 try Task.checkCancellation()
                 try validateCurrent(preview)
                 return temporaryOutput
@@ -338,6 +405,19 @@ public struct LosslessJoinExecutor<
             else {
                 throw LosslessJoinExecutionError.staleSource
             }
+        }
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: preview.sources,
+            mapping: preview.mapping
+        )
+        let currentHeaderNormalizedLanes = MKVHeaderNormalizedLosslessPolicy.laneIndices(
+            sources: preview.sources,
+            mapping: preview.mapping,
+            report: report,
+            afterExplicitReview: preview.usesReviewedMKVToolNixWarningTolerance
+        )
+        guard currentHeaderNormalizedLanes == preview.headerNormalizedVideoLaneIndices else {
+            throw LosslessJoinExecutionError.invalidHeaderNormalization
         }
     }
 
@@ -413,7 +493,8 @@ private enum LosslessJoinPolicy {
     static func validate(
         sources: [MediaAsset],
         mapping: JoinTrackMapping,
-        chapters: JoinedChapterComposition? = nil
+        chapters: JoinedChapterComposition? = nil,
+        usesReviewedMKVToolNixWarningTolerance: Bool = false
     ) throws {
         for source in sources where !safeAbsoluteFileURL(source.sourceURL) {
             throw LosslessJoinExecutionError.invalidPath
@@ -422,7 +503,12 @@ private enum LosslessJoinPolicy {
             sources: sources,
             mapping: mapping
         )
-        guard report.disposition == .losslessCandidate else {
+        guard
+            ReviewedMKVToolNixLosslessAppendPolicy.permitsExecution(
+                of: report,
+                afterExplicitReview: usesReviewedMKVToolNixWarningTolerance
+            )
+        else {
             throw LosslessJoinExecutionError.requiresReview(report.disposition)
         }
         let referenceUIDs = mapping.lanes.compactMap { lane -> UInt64? in
@@ -462,7 +548,7 @@ private enum LosslessJoinPolicy {
     }
 }
 
-private func safeAbsoluteFileURL(_ url: URL) -> Bool {
+func safeAbsoluteFileURL(_ url: URL) -> Bool {
     let standardized = url.standardizedFileURL
     return standardized.isFileURL
         && standardized.path.hasPrefix("/")

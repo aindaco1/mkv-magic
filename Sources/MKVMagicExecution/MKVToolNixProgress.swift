@@ -4,6 +4,7 @@ import MKVMagicSystem
 public enum VerifiedOutputToolPhase: Equatable, Sendable {
     case multiplexing
     case extractingTrack
+    case headerNormalizingJoin
 }
 
 public struct VerifiedOutputToolProgress: Equatable, Sendable {

@@ -342,7 +342,7 @@ public struct JoinNormalizationChoiceResolver: Sendable {
 
         for decision in proposal.decisions {
             switch decision.kind {
-            case .videoTarget, .mixedDynamicRange:
+            case .videoTarget, .mixedDynamicRange, .untaggedSDR:
                 let laneIndex = try requiredLane(for: decision)
                 expectedVideoLanes.insert(laneIndex)
                 guard let lane = videoLanes[laneIndex],

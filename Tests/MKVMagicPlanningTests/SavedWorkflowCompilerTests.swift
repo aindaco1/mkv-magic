@@ -5,6 +5,38 @@ import XCTest
 @testable import MKVMagicPlanning
 
 final class SavedWorkflowCompilerTests: XCTestCase {
+    func testMultipleReviewedSubtitlesCompileIntoExactlyOneLosslessPass() throws {
+        let source = makeMP4Asset()
+        let inputs = ["en", "es", "fr"].map {
+            SavedWorkflowExternalSubtitleInput(
+                sourceURL: URL(fileURLWithPath: "/Media/Feature.\($0).srt"),
+                metadata: ExternalSubtitleTrackMetadata(language: $0), format: .subRip)
+        }
+        let workflow = SavedWorkflow(
+            name: "Batch remux",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ])
+        let resolved = SavedWorkflowResolvedInputs(
+            externalSubtitle: inputs[0], additionalExternalSubtitles: Array(inputs.dropFirst()))
+        let compiled = try SavedWorkflowCompiler().compile(workflow, for: source, inputs: resolved)
+        XCTAssertEqual(compiled.externalSubtitleInputs, inputs)
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvMerge, .verify, .commit])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(
+                workflow, for: source,
+                inputs: SavedWorkflowResolvedInputs(
+                    externalSubtitle: inputs[0], additionalExternalSubtitles: [inputs[0]])))
+        let unsupported = SavedWorkflow(
+            name: "Not yet a plural-sidecar workflow",
+            steps: workflow.steps + [SavedWorkflowStep(action: .clearAllTags)])
+        XCTAssertThrowsError(
+            try SavedWorkflowCompiler().compile(unsupported, for: source, inputs: resolved))
+    }
+
     func testCommentaryMarkingIsConditionalPortableAndOnePropertyStage() throws {
         let workflow = SavedWorkflow(
             name: "Commentary cleanup",
@@ -332,6 +364,25 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         )
         XCTAssertNil(alreadyClean.compiledWorkflow)
         XCTAssertEqual(alreadyClean.stepOutcomes.first?.disposition, .skipped)
+    }
+
+    func testTagRemovalReviewUsesSharedFlattenedStatisticsCounts() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Statistics.mkv"), container: "matroska",
+            tracks: [
+                .init(
+                    id: 0, kind: .video, codec: "h264", uid: 1,
+                    tags: ["_STATISTICS_WRITING_APP": "mkvmerge"])
+            ],
+            globalTagCount: 1, trackTagCount: 0)
+        let preview = try SavedWorkflowCompiler().preview(
+            SavedWorkflow(name: "Tags", steps: [.init(action: .clearAllTags)]), for: asset)
+        let counts = try MatroskaTagPolicy.counts(in: asset)
+        XCTAssertEqual(counts.track, 1)
+        XCTAssertEqual(preview.compiledWorkflow?.operations, [.clearAllTags])
+        XCTAssertEqual(
+            preview.stepOutcomes.first?.detail,
+            "Remove \(counts.global) global and \(counts.track) track Matroska tags")
     }
 
     func testExplicitTagRemovalUnlocksOneVideoConversionForTaggedMKV() throws {
@@ -1074,6 +1125,80 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         }
     }
 
+    func testCommonInputRemuxFusesReviewedSubtitleAndSourceLanguagesInOnePass() throws {
+        let workflow = SavedWorkflow(
+            name: "Remux video with subtitle",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        let source = makeMP4Asset(tracks: [
+            MediaTrack(id: 4, kind: .video, codec: "h264"),
+            MediaTrack(id: 9, kind: .audio, codec: "aac", language: "und"),
+        ])
+        let externalInput = SavedWorkflowExternalSubtitleInput(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.fr.srt"),
+            metadata: ExternalSubtitleTrackMetadata(language: "fr", name: "French"),
+            format: .subRip
+        )
+
+        let compiled = try SavedWorkflowCompiler().compile(
+            workflow,
+            for: source,
+            inputs: SavedWorkflowResolvedInputs(
+                externalSubtitle: externalInput,
+                sourceTrackLanguageOverrides: [9: "en"]
+            )
+        )
+
+        XCTAssertNotNil(compiled.mkvRemuxPlan)
+        XCTAssertEqual(compiled.externalSubtitleInput, externalInput)
+        XCTAssertEqual(compiled.sourceTrackLanguageOverrides, [9: "en"])
+        XCTAssertEqual(compiled.plan.stages.map(\.mechanism), [.mkvMerge, .verify, .commit])
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertTrue(compiled.plan.stages[0].summary.contains("reviewed text subtitle"))
+        XCTAssertTrue(compiled.plan.stages[0].summary.contains("#9=en"))
+        XCTAssertTrue(
+            MediaQueueAutomaticWorkflowPolicy.supports(workflow, inputCount: 2)
+        )
+    }
+
+    func testCommonInputRemuxRejectsInvalidSourceLanguageOverrides() {
+        let workflow = SavedWorkflow(
+            name: "Remux video with subtitle",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        let source = makeMP4Asset()
+        let externalInput = SavedWorkflowExternalSubtitleInput(
+            sourceURL: URL(fileURLWithPath: "/private/media/Movie.fr.srt"),
+            metadata: ExternalSubtitleTrackMetadata(language: "fr"),
+            format: .subRip
+        )
+
+        for overrides in [[4: "en"], [9: "not valid!"]] {
+            XCTAssertThrowsError(
+                try SavedWorkflowCompiler().compile(
+                    workflow,
+                    for: source,
+                    inputs: SavedWorkflowResolvedInputs(
+                        externalSubtitle: externalInput,
+                        sourceTrackLanguageOverrides: overrides
+                    )
+                )
+            ) {
+                XCTAssertEqual(
+                    $0 as? SavedWorkflowCompilationError,
+                    .invalidExternalSubtitleInput
+                )
+            }
+        }
+    }
+
     func testAlreadySimpleFilenameOnlyWorkflowHasNoApplicableOutput() throws {
         let workflow = SavedWorkflow(
             name: "Already named",
@@ -1455,6 +1580,37 @@ final class SavedWorkflowCompilerTests: XCTestCase {
         XCTAssertEqual(
             compiled.plan.stages.map(\.mechanism),
             [.mkvMerge, .mkvPropEdit, .verify, .commit]
+        )
+    }
+
+    func testCleanMKVPresetAppliesMetadataCleanupWithoutSubtitleRemoval() throws {
+        let asset = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Already-English.mkv"),
+            container: "matroska",
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "hevc", uid: 10),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20, language: "en"),
+            ],
+            metadata: ["title": "Remove Me"],
+            globalTagCount: 2,
+            trackTagCount: 1
+        )
+        XCTAssertTrue(EnglishLibraryCleanupPolicy.trackSuggestions(for: asset).isEmpty)
+
+        let preview = try SavedWorkflowCompiler().preview(
+            SavedWorkflowPresetCatalog.cleanMKV,
+            for: asset
+        )
+        let compiled = try XCTUnwrap(preview.compiledWorkflow)
+
+        XCTAssertNil(compiled.trackRemoval)
+        XCTAssertTrue(compiled.removesSegmentTitle)
+        XCTAssertTrue(compiled.clearsAllTags)
+        XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
+        XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
+        XCTAssertEqual(
+            compiled.plan.stages.map(\.mechanism),
+            [.mkvPropEdit, .verify, .commit]
         )
     }
 

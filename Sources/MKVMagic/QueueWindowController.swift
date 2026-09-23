@@ -25,8 +25,8 @@ final class QueueWindowController: NSWindowController {
         queueViewController = content
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic Queue"
-        window.setContentSize(NSSize(width: 840, height: 520))
-        window.minSize = NSSize(width: 700, height: 420)
+        window.setContentSize(NSSize(width: 920, height: 560))
+        window.minSize = NSSize(width: 760, height: 500)
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: content.preferredInitialFirstResponder
@@ -62,6 +62,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
     private let cancelButton = NSButton(title: "Cancel", target: nil, action: nil)
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
+    private let selectedJobDetailLabel = NSTextField(wrappingLabelWithString: "")
     private let statusLabel = NSTextField(wrappingLabelWithString: "")
     private let activityIndicator = ActivityIndicatorPresentation.make(
         label: "Queue activity",
@@ -102,7 +103,9 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             wrappingLabelWithString:
                 "Add to Queue saves a reviewed workflow for automatic starts. Pause blocks new automatic starts; Verify & Run remains an explicit immediate start. Work already running continues to its next safe boundary. Interrupted or failed jobs must be reviewed again before retry."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
+        let selectedJobHeading = NSTextField(labelWithString: "Selected Job Details")
+        selectedJobHeading.font = .systemFont(ofSize: 13, weight: .semibold)
 
         for (identifier, title, width) in [
             ("order", "#", 36.0),
@@ -144,8 +147,16 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         for button in [pauseButton, primaryButton, cancelButton, moveUpButton, moveDownButton] {
             button.bezelStyle = .rounded
         }
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.setAccessibilityLabel("Production queue status")
+        selectedJobDetailLabel.textColor = AppPalette.secondaryText
+        selectedJobDetailLabel.isSelectable = true
+        selectedJobDetailLabel.maximumNumberOfLines = 3
+        selectedJobDetailLabel.lineBreakMode = .byWordWrapping
+        selectedJobDetailLabel.setAccessibilityLabel("Selected queue job details")
+        selectedJobDetailLabel.setAccessibilityHelp(
+            "Explains the selected job state without exposing filenames, paths, or raw tool output."
+        )
         pauseButton.setAccessibilityHelp(
             "Pause or resume new automatic starts without stopping active work."
         )
@@ -168,7 +179,15 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         statusRow.orientation = .horizontal
         statusRow.alignment = .centerY
         statusRow.spacing = 8
-        let stack = NSStackView(views: [heading, help, scroll, statusRow, controls])
+        let stack = NSStackView(views: [
+            heading,
+            help,
+            scroll,
+            selectedJobHeading,
+            selectedJobDetailLabel,
+            statusRow,
+            controls,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = 10
@@ -183,7 +202,9 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
             stack.contentWidthConstraint(for: help),
             stack.contentWidthConstraint(for: scroll),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 260),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 200),
+            stack.contentWidthConstraint(for: selectedJobHeading),
+            stack.contentWidthConstraint(for: selectedJobDetailLabel),
             stack.contentWidthConstraint(for: statusRow),
             stack.contentWidthConstraint(for: controls),
         ])
@@ -329,6 +350,8 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
         pauseButton.isEnabled = true
         statusLabel.stringValue = QueuePresentation.summary(snapshot)
         guard let job = selectedJob else {
+            selectedJobDetailLabel.stringValue =
+                "Select a queue job to see why it is waiting, needs review, or failed."
             primaryButton.isEnabled = false
             primaryButton.setAccessibilityHelp("Select a queue job to choose an action.")
             cancelButton.isEnabled = false
@@ -336,6 +359,7 @@ final class QueueViewController: NSViewController, NSTableViewDataSource, NSTabl
             moveDownButton.isEnabled = false
             return
         }
+        selectedJobDetailLabel.stringValue = QueuePresentation.selectedJobDetail(job)
         switch job.state {
         case .waiting:
             primaryButton.title = "Hold"
@@ -438,6 +462,108 @@ enum QueuePresentation {
         let trashLabel = trashFollowUp == 1 ? "Trash follow-up" : "Trash follow-ups"
         let trash = trashFollowUp > 0 ? " • \(trashFollowUp) \(trashLabel)" : ""
         return "\(active) active • \(pending) pending • \(review) need review\(trash)\(pause)"
+    }
+
+    static func selectedJobDetail(_ job: MediaQueueJob) -> String {
+        if let failure = job.failure {
+            return "Failed during \(stageLabel(failure.lastActiveStage)): "
+                + "\(failureSummary(failure)). Choose Review Again to refresh the inputs, "
+                + "output location, and reviewed plan before retrying."
+        }
+        switch job.state {
+        case .needsReview:
+            return switch job.events.last?.reason {
+            case .staleReview:
+                "Needs review because an input, its permission, or the output location changed."
+            case .interruptedBeforeVerification:
+                "Needs review because the previous run stopped before verification completed."
+            case .automaticExecutionUnavailable:
+                "Needs review because this workflow can no longer start automatically."
+            default:
+                "Needs review before MKV Magic can safely retry it."
+            }
+        case .waiting:
+            return "Waiting for an automatic start with the reviewed inputs and output location."
+        case .held:
+            return "Held. Resume it when you want automatic execution to become eligible again."
+        case .running:
+            return
+                "Running attempt \(job.attemptCount). The reviewed source remains unchanged "
+                + "until verification succeeds."
+        case .cancelling:
+            return "Cancellation requested. Work stops at the next safe boundary."
+        case .succeeded:
+            return "Verified output completed successfully."
+        case .cancelled:
+            return "Cancelled without committing an unverified output."
+        case .failed:
+            return
+                "Execution failed before a privacy-safe diagnostic category was available. "
+                + "Review again before retrying."
+        }
+    }
+
+    private static func stageLabel(_ stage: MediaJobState) -> String {
+        switch stage {
+        case .queued: "queue preparation"
+        case .inspecting: "media inspection"
+        case .planned, .ready: "workflow planning"
+        case .running: "temporary output creation"
+        case .verifying: "output verification"
+        case .committing: "verified output commit"
+        case .succeeded, .cancelled, .failed: "execution"
+        }
+    }
+
+    private static func failureSummary(_ failure: PrivacySafeMediaFailure) -> String {
+        switch failure.category {
+        case .sourceChanged:
+            "a reviewed source changed or became unavailable"
+        case .toolFailed:
+            "a bundled local media tool could not create the temporary output"
+        case .emptyOutput:
+            "the temporary output was empty"
+        case .containerMismatch:
+            "the temporary output was not a valid Matroska file"
+        case .durationMismatch:
+            "the output duration did not match the reviewed source"
+        case .trackMismatch:
+            "the output track structure did not match the reviewed plan"
+        case .trackMetadataMismatch:
+            "the output track metadata did not match the reviewed plan"
+        case .chapterMismatch:
+            "the output chapters did not match the reviewed source"
+        case .titleMismatch:
+            "the output segment title did not match the reviewed plan"
+        case .attachmentMismatch:
+            "the output attachment set did not match the reviewed plan"
+        case .segmentIdentityMismatch:
+            "the output segment identity did not pass verification"
+        case .packetCopyMismatch:
+            "the copied packet payload did not match the source"
+        case .joinBoundaryDecodeFailed:
+            failure.joinBoundaryNumber.map {
+                "the joined output did not decode cleanly across boundary \($0)"
+            } ?? "the joined output did not pass its boundary audit"
+        case .committedOutputAuditFailed:
+            "the final reopen audit failed after commit"
+        case .destinationUnavailable:
+            "the output location became unavailable or unsafe"
+        case .destinationExists:
+            "an item already existed at the output location"
+        case .commitPermissionDenied:
+            "macOS denied permission to commit the verified output"
+        case .commitUnsupported:
+            "the output filesystem did not support the safe commit"
+        case .commitFailed:
+            "the verified output could not be committed"
+        case .historyWriteFailed:
+            "private History could not record the operation"
+        case .verificationFailed:
+            "the temporary output did not pass verification"
+        case .executionFailed:
+            "the operation stopped before a verified output was committed"
+        }
     }
 
     static func stateLabel(_ job: MediaQueueJob) -> String {

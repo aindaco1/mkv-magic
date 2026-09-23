@@ -2,7 +2,7 @@ import MKVMagicCore
 import XCTest
 
 final class JoinedChapterComposerTests: XCTestCase {
-    func testComposesTrimmedNestedSourcesWithGlobalTimesAndBoundaryChild() throws {
+    func testComposesTrimmedNestedSourcesIntoOneFlatGlobalTimeline() throws {
         let originalUIDs: Set<UInt64> = [10, 11, 12, 13, 20]
         let firstSourceChapters = [
             atom(uid: 10, title: "Opening", start: 0, end: 30),
@@ -36,28 +36,153 @@ final class JoinedChapterComposerTests: XCTestCase {
         ])
 
         XCTAssertEqual(result.duration, seconds(110))
-        let parents = try XCTUnwrap(result.document.editions.only).chapters
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
         XCTAssertEqual(
-            parents.map(\.primaryTitle), ["Part 1 — Episode One", "Part 2 — Episode Two"])
-        XCTAssertEqual(parents.map { $0.start.seconds }, [0, 60])
-        XCTAssertEqual(parents.map { $0.end?.seconds }, [60, 110])
-        XCTAssertEqual(parents[0].children.map(\.primaryTitle), ["Opening", "Main"])
-        XCTAssertEqual(parents[0].children.map { $0.start.seconds }, [0, 10])
-        XCTAssertEqual(parents[0].children.map { $0.end?.seconds }, [10, 60])
-        XCTAssertEqual(parents[0].children[1].children.map(\.primaryTitle), ["Scene A", "Scene B"])
-        XCTAssertEqual(
-            parents[0].children[1].children.map { $0.start.seconds },
-            [15, 45]
+            chapters.map(\.primaryTitle),
+            ["Opening", "Scene A", "Scene B", "Chapter 04"]
         )
-        XCTAssertEqual(
-            parents[0].children[1].children.map { $0.end?.seconds },
-            [25, 60]
-        )
-        XCTAssertEqual(parents[1].children.map(\.primaryTitle), ["Chapter 04"])
-        XCTAssertEqual(parents[1].children.first?.start, seconds(60))
-        XCTAssertEqual(parents[1].children.first?.end, seconds(110))
-        XCTAssertTrue(originalUIDs.isDisjoint(with: recursiveUIDs(in: parents)))
+        XCTAssertEqual(chapters.map { $0.start.seconds }, [0, 15, 45, 60])
+        XCTAssertEqual(chapters.map { $0.end?.seconds }, [10, 25, 60, 110])
+        XCTAssertTrue(chapters.allSatisfy(\.children.isEmpty))
+        XCTAssertTrue(originalUIDs.isDisjoint(with: recursiveUIDs(in: chapters)))
         XCTAssertNoThrow(try result.document.validated(mediaDuration: result.duration))
+    }
+
+    func testComposesFlatPlayerCompatibleListFromEveryJoinedLeafChapter() throws {
+        let result = try JoinedChapterComposer().compose(
+            [
+                JoinedChapterSource(
+                    title: "Episode One",
+                    duration: seconds(20),
+                    retainedStart: .zero,
+                    retainedEnd: seconds(20),
+                    selectedEditionChapters: [
+                        atom(uid: 1, title: "Opening", start: 0, end: 10),
+                        atom(uid: 2, title: "Middle", start: 10, end: 20),
+                    ]
+                ),
+                JoinedChapterSource(
+                    title: "Episode Two",
+                    duration: seconds(10),
+                    retainedStart: .zero,
+                    retainedEnd: seconds(10),
+                    selectedEditionChapters: [
+                        atom(uid: 3, title: "Finale", start: 0, end: 10)
+                    ]
+                ),
+            ]
+        )
+
+        XCTAssertEqual(result.document.chapterCount, 3)
+        XCTAssertEqual(result.document.topLevelChapterCount, 3)
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
+        XCTAssertEqual(chapters.map(\.primaryTitle), ["Opening", "Middle", "Finale"])
+        XCTAssertEqual(chapters.map { $0.start.seconds }, [0, 10, 20])
+        XCTAssertTrue(chapters.allSatisfy(\.children.isEmpty))
+        XCTAssertNoThrow(try result.document.validated(mediaDuration: result.duration))
+    }
+
+    func testRenumbersRepeatedConsecutiveChapterSequencesAcrossRealPartCounts() throws {
+        let counts = [42, 43, 46]
+        let sources = counts.enumerated().map { partIndex, count in
+            JoinedChapterSource(
+                title: "Part \(partIndex + 1)",
+                duration: seconds(Int64(count)),
+                retainedStart: .zero,
+                retainedEnd: seconds(Int64(count)),
+                selectedEditionChapters: (1...count).map { ordinal in
+                    atom(
+                        uid: UInt64(partIndex * 100 + ordinal),
+                        title: "Chapter \(ordinal)",
+                        start: Int64(ordinal - 1),
+                        end: Int64(ordinal)
+                    )
+                }
+            )
+        }
+
+        let result = try JoinedChapterComposer().compose(sources)
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
+
+        XCTAssertEqual(chapters.count, 131)
+        XCTAssertEqual(
+            chapters.map(\.primaryTitle),
+            (1...131).map { "Chapter \($0)" }
+        )
+        XCTAssertEqual(chapters.map { Int($0.start.seconds) }, Array(0..<131))
+    }
+
+    func testRenumbersAlternateNumberedDisplaysButPreservesCustomDisplays() throws {
+        func chapter(_ ordinal: Int, start: Int64) -> MatroskaChapterAtom {
+            MatroskaChapterAtom(
+                start: seconds(start),
+                end: seconds(start + 1),
+                displays: [
+                    ChapterDisplay(title: "Chapter 0\(ordinal)", language: "en"),
+                    ChapterDisplay(title: "Chapitre 0\(ordinal)", language: "fr"),
+                    ChapterDisplay(title: ordinal == 1 ? "Opening" : "Closing", language: "und"),
+                ]
+            )
+        }
+        let result = try JoinedChapterComposer().compose([
+            JoinedChapterSource(
+                duration: seconds(2),
+                retainedStart: .zero,
+                retainedEnd: seconds(2),
+                selectedEditionChapters: [chapter(1, start: 0), chapter(2, start: 1)]
+            ),
+            JoinedChapterSource(
+                duration: seconds(2),
+                retainedStart: .zero,
+                retainedEnd: seconds(2),
+                selectedEditionChapters: [chapter(1, start: 0), chapter(2, start: 1)]
+            ),
+        ])
+
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
+        XCTAssertEqual(
+            chapters.map { $0.displays[0].title },
+            [
+                "Chapter 01", "Chapter 02", "Chapter 03", "Chapter 04",
+            ])
+        XCTAssertEqual(
+            chapters.map { $0.displays[1].title },
+            [
+                "Chapitre 01", "Chapitre 02", "Chapitre 03", "Chapitre 04",
+            ])
+        XCTAssertEqual(
+            chapters.map { $0.displays[2].title },
+            [
+                "Opening", "Closing", "Opening", "Closing",
+            ])
+    }
+
+    func testLeavesMixedAndNonconsecutiveChapterTitlesUnchanged() throws {
+        let result = try JoinedChapterComposer().compose([
+            JoinedChapterSource(
+                duration: seconds(2),
+                retainedStart: .zero,
+                retainedEnd: seconds(2),
+                selectedEditionChapters: [
+                    atom(uid: 1, title: "Chapter 1", start: 0, end: 1),
+                    atom(uid: 2, title: "Opening", start: 1, end: 2),
+                ]
+            ),
+            JoinedChapterSource(
+                duration: seconds(2),
+                retainedStart: .zero,
+                retainedEnd: seconds(2),
+                selectedEditionChapters: [
+                    atom(uid: 3, title: "Chapter 1", start: 0, end: 1),
+                    atom(uid: 4, title: "Chapter 3", start: 1, end: 2),
+                ]
+            ),
+        ])
+
+        XCTAssertEqual(
+            try XCTUnwrap(result.document.editions.only).chapters.map(\.primaryTitle),
+            ["Chapter 1", "Opening", "Chapter 1", "Chapter 3"]
+        )
     }
 
     func testClampsCrossingChaptersAndTreatsRetainedEndAsExclusive() throws {
@@ -75,10 +200,10 @@ final class JoinedChapterComposerTests: XCTestCase {
             )
         ])
 
-        let children = try XCTUnwrap(result.document.editions.only?.chapters.only).children
-        XCTAssertEqual(children.map(\.primaryTitle), ["Crosses start", "Crosses end"])
-        XCTAssertEqual(children.map { $0.start.seconds }, [0, 55])
-        XCTAssertEqual(children.map { $0.end?.seconds }, [5, 60])
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
+        XCTAssertEqual(chapters.map(\.primaryTitle), ["Crosses start", "Crosses end"])
+        XCTAssertEqual(chapters.map { $0.start.seconds }, [0, 55])
+        XCTAssertEqual(chapters.map { $0.end?.seconds }, [5, 60])
     }
 
     func testMaterializesImplicitEndsFromNextSiblingAndSourceBoundary() throws {
@@ -102,10 +227,10 @@ final class JoinedChapterComposerTests: XCTestCase {
             )
         ])
 
-        let children = try XCTUnwrap(result.document.editions.only?.chapters.only).children
-        XCTAssertEqual(children.map(\.primaryTitle), ["First", "Second"])
-        XCTAssertEqual(children.map { $0.start.seconds }, [0, 20])
-        XCTAssertEqual(children.map { $0.end?.seconds }, [20, 60])
+        let chapters = try XCTUnwrap(result.document.editions.only).chapters
+        XCTAssertEqual(chapters.map(\.primaryTitle), ["First", "Second"])
+        XCTAssertEqual(chapters.map { $0.start.seconds }, [0, 20])
+        XCTAssertEqual(chapters.map { $0.end?.seconds }, [20, 60])
     }
 
     func testPreservesChapterDisplayAndFlagsWhileRegeneratingIdentity() throws {
@@ -131,16 +256,13 @@ final class JoinedChapterComposerTests: XCTestCase {
             )
         ])
 
-        let parent = try XCTUnwrap(result.document.editions.only?.chapters.only)
-        let child = try XCTUnwrap(parent.children.only)
-        XCTAssertEqual(
-            parent.displays,
-            [ChapterDisplay(title: "Part 1 — Film", language: "en-us", country: "US")])
-        XCTAssertEqual(child.displays, source.displays)
-        XCTAssertTrue(child.isHidden)
-        XCTAssertFalse(child.isEnabled)
-        XCTAssertNotEqual(child.uid, source.uid)
-        XCTAssertNotEqual(child.id, source.id)
+        let chapter = try XCTUnwrap(result.document.editions.only?.chapters.only)
+        XCTAssertEqual(chapter.displays, source.displays)
+        XCTAssertTrue(chapter.children.isEmpty)
+        XCTAssertTrue(chapter.isHidden)
+        XCTAssertFalse(chapter.isEnabled)
+        XCTAssertNotEqual(chapter.uid, source.uid)
+        XCTAssertNotEqual(chapter.id, source.id)
     }
 
     func testRejectsInvalidInputsInvalidSourceTreeAndTimelineOverflow() throws {

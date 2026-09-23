@@ -97,12 +97,20 @@ public struct MatroskaChapterDocument: Codable, Equatable, Hashable, Sendable {
         editions.reduce(0) { $0 + $1.chapters.recursiveCount }
     }
 
+    public var topLevelChapterCount: Int {
+        editions.reduce(0) { $0 + $1.chapters.count }
+    }
+
+    public var chapterStarts: [MediaTime] {
+        editions.flatMap { $0.chapters.recursiveStarts }
+    }
+
     public func validated(mediaDuration: MediaTime? = nil) throws -> Self {
         try ChapterDocumentValidator().validate(self, mediaDuration: mediaDuration)
         return self
     }
 
-    public func flattenedForJellyfin() -> Self {
+    public func flattenedForPlayerCompatibility() -> Self {
         let leaves = editions.flatMap { $0.chapters.leafAtoms }
             .sorted {
                 if $0.start == $1.start { return $0.uid < $1.uid }
@@ -132,6 +140,10 @@ public struct MatroskaChapterDocument: Codable, Equatable, Hashable, Sendable {
                 )
             ]
         )
+    }
+
+    public func flattenedForJellyfin() -> Self {
+        flattenedForPlayerCompatibility()
     }
 
     public static func fixedInterval(
@@ -437,5 +449,9 @@ extension Array where Element == MatroskaChapterAtom {
         flatMap { atom in
             atom.children.isEmpty ? [atom] : atom.children.leafAtoms
         }
+    }
+
+    fileprivate var recursiveStarts: [MediaTime] {
+        flatMap { [$0.start] + $0.children.recursiveStarts }
     }
 }

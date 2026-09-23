@@ -92,7 +92,7 @@ final class PrivacySafeSupportReportTests: XCTestCase {
         XCTAssertEqual(try XCTUnwrap(firstInput).codecs, [.aac, .av1])
         XCTAssertEqual(report.application.version, "unknown")
         XCTAssertEqual(report.application.build, "unknown")
-        XCTAssertTrue(text.contains("mkv-magic-privacy-safe-support-v2"))
+        XCTAssertTrue(text.contains("mkv-magic-privacy-safe-support-v4"))
         XCTAssertTrue(text.contains("av1"))
 
         for secret in [
@@ -198,6 +198,233 @@ final class PrivacySafeSupportReportTests: XCTestCase {
         XCTAssertTrue(text.contains("chapterMismatch"))
         XCTAssertFalse(text.contains("chapter timing or titles"))
         XCTAssertFalse(text.contains("Private Movie.mp4"))
+    }
+
+    func testReportIncludesPrivacySafeQueueFailureWithoutNamesPathsOrRawErrors() throws {
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        let workflow = SavedWorkflow(
+            id: BuiltInWorkflowCatalog.remuxToMKV,
+            name: "Private queued workflow",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ]
+        )
+        let source = MediaQueueFileReference(
+            displayName: "Private Movie.mp4",
+            securityScopedBookmark: Data([1]),
+            reviewedRevision: MediaQueueFileRevision(
+                fileSize: 100,
+                modificationDate: created
+            )
+        )
+        let subtitle = MediaQueueFileReference(
+            displayName: "Private Movie.en.srt",
+            securityScopedBookmark: Data([2]),
+            reviewedRevision: MediaQueueFileRevision(
+                fileSize: 20,
+                modificationDate: created
+            )
+        )
+        let destination = MediaQueueFileReference(
+            displayName: "Secret Destination",
+            securityScopedBookmark: Data([3])
+        )
+        var queueJob = MediaQueueJob(
+            createdAt: created,
+            workflow: .saved(workflow),
+            inputs: [source, subtitle],
+            destinationDirectory: destination,
+            outputDisplayName: "Private Output.mkv",
+            reviewedPlan: ExecutionPlan(
+                stages: [PlanStage(mechanism: .mkvMerge, summary: "Secret plan")],
+                impact: PlanImpact(
+                    videoEncodeCount: 0,
+                    audioEncodeCount: 0,
+                    copiesVideo: true
+                )
+            )
+        )
+        try queueJob.transition(to: .running, at: created)
+        try queueJob.transition(
+            to: .failed,
+            at: created,
+            reason: .executionFailed,
+            failure: PrivacySafeMediaFailure(
+                category: .toolFailed,
+                lastActiveStage: .inspecting
+            )
+        )
+        let queue = MediaQueueSnapshot(jobs: [queueJob], updatedAt: created)
+        let report = PrivacySafeSupportReport.make(
+            applicationVersion: "1.0",
+            applicationBuild: "1",
+            operatingSystem: "macOS test",
+            catalog: try ToolCatalog(
+                rootURL: toolRootURL,
+                architecture: .x86_64,
+                verifyHashes: false
+            ),
+            records: [],
+            queueSnapshot: queue
+        )
+        let queued = try XCTUnwrap(report.queue?.jobs.first)
+        let text = try XCTUnwrap(String(data: report.encoded(), encoding: .utf8))
+
+        XCTAssertEqual(queued.workflow, .remuxToMKV)
+        XCTAssertEqual(queued.state, .failed)
+        XCTAssertEqual(queued.lastEventReason, .executionFailed)
+        XCTAssertEqual(queued.inputCount, 2)
+        XCTAssertEqual(queued.attemptCount, 1)
+        XCTAssertEqual(queued.failureCategory, .toolFailed)
+        XCTAssertEqual(queued.failureStage, .inspecting)
+        for secret in [
+            "Private Movie", "Private queued workflow", "Secret Destination",
+            "Private Output", "Secret plan", "securityScopedBookmark",
+        ] {
+            XCTAssertFalse(text.contains(secret), "Leaked private queue value: \(secret)")
+        }
+    }
+
+    func testReportExportsOnlyAValidatedJoinBoundaryNumber() throws {
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        var record = MediaJobRecord(
+            createdAt: created,
+            workflowID: BuiltInWorkflowCatalog.losslessJoin,
+            workflowName: "Private join name",
+            inputs: [
+                MediaJobInput(displayName: "Private Part 1.mkv"),
+                MediaJobInput(displayName: "Private Part 2.mkv"),
+                MediaJobInput(displayName: "Private Part 3.mkv"),
+            ]
+        )
+        for state in [
+            MediaJobState.inspecting, .planned, .ready, .running, .verifying, .failed,
+        ] {
+            try record.transition(
+                to: state,
+                at: created,
+                message: state == .failed
+                    ? "Verification failed: the joined output did not decode cleanly across boundary 2."
+                    : nil
+            )
+        }
+        let report = PrivacySafeSupportReport.make(
+            applicationVersion: "0.2.2-test.5",
+            applicationBuild: "2",
+            operatingSystem: "macOS test",
+            catalog: try ToolCatalog(
+                rootURL: toolRootURL,
+                architecture: .x86_64,
+                verifyHashes: false
+            ),
+            records: [record]
+        )
+        let job = try XCTUnwrap(report.history.jobs.first)
+        let text = try XCTUnwrap(String(data: report.encoded(), encoding: .utf8))
+
+        XCTAssertEqual(job.failureCategory, .joinBoundaryDecodeFailed)
+        XCTAssertEqual(job.joinBoundaryNumber, 2)
+        XCTAssertTrue(text.contains("joinBoundaryDecodeFailed"))
+        XCTAssertTrue(text.contains("\"joinBoundaryNumber\" : 2"))
+        XCTAssertFalse(text.contains("Private Part"))
+        XCTAssertFalse(text.contains("did not decode cleanly"))
+    }
+
+    func testReportRejectsAnOutOfRangeJoinBoundaryNumber() throws {
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+        var record = MediaJobRecord(
+            createdAt: created,
+            workflowID: BuiltInWorkflowCatalog.losslessJoin,
+            workflowName: "Private join name",
+            inputs: [
+                MediaJobInput(displayName: "Private Part 1.mkv"),
+                MediaJobInput(displayName: "Private Part 2.mkv"),
+            ]
+        )
+        for state in [
+            MediaJobState.inspecting, .planned, .ready, .running, .verifying, .failed,
+        ] {
+            try record.transition(
+                to: state,
+                at: created,
+                message: state == .failed
+                    ? "Verification failed: the joined output did not decode cleanly across boundary 99."
+                    : nil
+            )
+        }
+        let report = PrivacySafeSupportReport.make(
+            applicationVersion: "0.2.2-test.5",
+            applicationBuild: "2",
+            operatingSystem: "macOS test",
+            catalog: try ToolCatalog(
+                rootURL: toolRootURL,
+                architecture: .x86_64,
+                verifyHashes: false
+            ),
+            records: [record]
+        )
+        let job = try XCTUnwrap(report.history.jobs.first)
+
+        XCTAssertEqual(job.failureCategory, .verificationFailed)
+        XCTAssertNil(job.joinBoundaryNumber)
+    }
+
+    func testReportDistinguishesSanitizedCommitFailures() throws {
+        let cases: [(message: String, category: SupportFailureCategory)] = [
+            (
+                "Execution stopped: the output location was unavailable or unsafe.",
+                .destinationUnavailable
+            ),
+            (
+                "Execution stopped: an item already existed at the output location.",
+                .destinationExists
+            ),
+            ("Execution stopped: output commit permission was denied.", .commitPermissionDenied),
+            (
+                "Execution stopped: the output filesystem did not support the verified no-overwrite commit.",
+                .commitUnsupported
+            ),
+            ("Execution stopped: the verified output could not be committed.", .commitFailed),
+            ("Execution stopped: history could not be updated.", .historyWriteFailed),
+            ("Output committed; history finalization failed.", .historyWriteFailed),
+        ]
+        let created = Date(timeIntervalSince1970: 1_800_000_000)
+
+        for (index, item) in cases.enumerated() {
+            var record = MediaJobRecord(
+                createdAt: created.addingTimeInterval(Double(index)),
+                workflowID: BuiltInWorkflowCatalog.subtitleCleanup,
+                workflowName: "Private cleanup name",
+                inputs: [MediaJobInput(displayName: "Private Subtitle.srt")]
+            )
+            for state in [
+                MediaJobState.inspecting, .planned, .ready, .running, .verifying,
+                .committing, .failed,
+            ] {
+                try record.transition(
+                    to: state,
+                    at: record.createdAt,
+                    message: state == .failed ? item.message : nil
+                )
+            }
+            let report = PrivacySafeSupportReport.make(
+                applicationVersion: "1.0",
+                applicationBuild: "1",
+                operatingSystem: "macOS test",
+                catalog: try ToolCatalog(
+                    rootURL: toolRootURL,
+                    architecture: .arm64,
+                    verifyHashes: false
+                ),
+                records: [record]
+            )
+            let text = try XCTUnwrap(String(data: report.encoded(), encoding: .utf8))
+
+            XCTAssertEqual(report.history.jobs.first?.failureCategory, item.category)
+            XCTAssertFalse(text.contains(item.message))
+            XCTAssertFalse(text.contains("Private Subtitle.srt"))
+        }
     }
 
     func testVersionOneReportWithoutFailureCategoryStillDecodes() throws {

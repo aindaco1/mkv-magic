@@ -5,6 +5,162 @@ semantic versioning; public release tags are immutable and signed.
 
 ## Unreleased
 
+- Add a default local development check with Jev calibration and semantic review
+  of synthetic planner, queue, retry, cancellation, real-remux, and presentation
+  evidence from existing tests. Keep inference outside the app; preserve offline
+  CI, deterministic safety checks, and separate native/hardware release acceptance.
+
+- Add reviewed bulk track metadata edits, embedded text-subtitle extraction,
+  and shared beginning/end Fast Trim amounts for MKVs. Reuse private review-bound
+  queue intents, independent verified executors, destinations, and retry checks.
+  Preserve each track's unchosen fields, disclose actual keyframe boundaries,
+  and explain unsupported/no-op files. Keep batch authoring and file intake
+  usable while automatic jobs run without enabling immediate foreground work.
+- Queue reviewed tag-removal, standalone subtitle-cleanup, and chapter-suggestion
+  batches durably. Reuse the existing verified executors, scheduler, and shared
+  admission loop. Bind cleanup to source and reviewed-output hashes, and persist
+  exact reviewed chapter documents privately. Review Again preserves job identity
+  and Tries; changed chapter sources require fresh analysis. Preserve file access
+  throughout retry review, and record cancelled subtitle work as cancelled.
+- Add reviewed folder-wide common-container remux with all confidently matched
+  SRT/ASS/SSA tracks in one zero-encode MKV per video. Share filename/language
+  inference, preview, durable queue admission, and verified execution. Duplicate
+  titles, cuts, dates, years, and episode identities are not guessed. Every
+  sidecar is hashed, restored, and audited independently, including its styles.
+- Add per-item inclusion, editable remux pairings/metadata, and selectable full
+  details to shared batch review. Honor Beside Source across folders as well as
+  the chosen output folder, with unused output names and retained grants. Keep
+  applicable cleanup actions available in mixed selections and show skipped
+  files. Batch preparation and queueing show completed-item progress and cancel.
+
+- Add System (default), Light, and Dark appearance preferences, a neutral native
+  accent, and shared adaptive high-contrast text/status colors. Keep macOS focus,
+  selection, and explicit accent preferences intact.
+- Simplify the empty window and inspector: common actions first, expandable
+  scrollable More Tools, and more space for selectable media details. Segment
+  title preview follows live edits and invalidates outdated reviewed titles.
+- Preserve actionable preparation failures across ordinary UI refreshes; use
+  neutral, explicitly labeled workflow statuses instead of warning-colored
+  already-satisfied steps. Inspector and workflow-review tag counts reuse the
+  tag-action policy, including generated track statistics. Finished preparation
+  and cancelled reviews retire stale progress text without erasing errors.
+- Keep the More Tools arrow synchronized with its expanded state and expose
+  its actual name to accessibility instead of the symbol's "Forward" label.
+- Refill automatic queue slots after each batch instead of leaving later jobs
+  waiting. Reuse admission and preservation checks, honor Pause, and re-read
+  battery/thermal limits before every refill; failed jobs still require review.
+- Preserve restored queue URLs' security scopes through execution instead of
+  normalizing away their bookmark capabilities after admission. This fixes
+  bundled tools losing input access after a relaunch without broadening sandbox
+  permissions or weakening output verification.
+- Fix shared JPEG thumbnail range conversion and sample Trim previews inside
+  the video instead of beyond its last frame. Add real-tool and native appearance,
+  contrast, small-window, validation, and status-persistence regressions.
+
+- Share one serialized History writer across concurrent jobs and History reads.
+  Parallel Clean MKV jobs no longer overwrite each other's lifecycle records
+  and fail with `historyWriteFailed`. Media processing remains concurrent;
+  verification and original-preservation checks are unchanged.
+
+- Make the main-window **Clean MKV** action use the complete shared Clean MKV
+  recipe instead of its former subtitle-only shortcut. Eligible MKVs remain
+  reviewable when no subtitle should be removed: the same zero-encode plan can
+  remove titles, tags, and image attachments; normalize recognized track roles,
+  names, and output filenames; and apply any safe subtitle cleanup. Multiple
+  selected MKVs now use the existing per-file batch workflow review.
+
+- Preserve selected media identities, multi-selection, typed segment titles,
+  and reviewed plans across status/list refreshes. Cancelling Chapter Studio
+  no longer jumps back to the first source; deliberately selecting another
+  source still invalidates the previous plan.
+
+- Keep subtitle/attachment pickers and removal lists within their native window
+  bounds, including long filenames and track names. Share labeled-grid,
+  scrollable-choice, and status-above-actions layout instead of per-sheet fixes.
+  External subtitle languages/names and chapter suggestion spacing now recover
+  as you type; invalid and empty/all-track removal selections cannot advance.
+  Add native interaction, minimum-size light/dark, long-list, and cancellation
+  regressions alongside the existing common-flow suite.
+
+## Earlier 0.3.0 development work (unreleased)
+
+- Keep the track editor's fields, labels, flags, and actions compact and visible.
+  Preview Changes now follows valid edits as you type, select a language, or
+  toggle a flag, clears stale validation, and explains the final Verify & Run
+  save step. Selecting a track alone remains a no-op; originals are unchanged.
+- Accept the same bounded 100 ms packet-copy duration rounding for an appended
+  external subtitle as for the underlying MP4-to-MKV remux. A real 87-minute
+  H.264/AAC MP4 shifted by 53 ms in mkvmerge and is now verified without
+  encoding; anything beyond the shared bound still fails closed. Retried queue
+  jobs retain their identity, increment only when execution starts, and replace
+  the previous privacy-safe failure after a fresh review.
+- Explain failed production-queue jobs in a selectable **Selected Job Details**
+  section. Queue execution now persists only a shared privacy-safe failure
+  category, last active stage, and validated join-boundary number; History and
+  queue export use the same classifier, while filenames, paths, subtitle text,
+  raw tool output, and exact timestamps remain excluded.
+- Let **Suggest Chapters…** operate on multiple selected MKVs. One shared,
+  stable options sheet analyzes each file locally, one combined checklist keeps
+  every boundary associated with its source, and one output review creates
+  collision-safe, independently verified chapter copies while preserving all
+  originals. The same options and review components serve single-file Chapter
+  Studio, fixing the former compressed alert layout without duplicating policy.
+- Keep Universal release verification native to its host so Apple Silicon QA
+  no longer creates a false Intel-component warning; physical Intel acceptance
+  remains required, and translated verification now requires explicit opt-in.
+- Join every retained source chapter into one player-compatible top-level list
+  automatically. Join Files no longer exposes a technical hierarchy choice that
+  could leave players showing only Part parents. Lossless paths and Common
+  Format use the same composer and exact post-output chapter audit. When every
+  source has one same-style, chronologically consecutive numbered chapter
+  sequence, repeated local numbering is continued across the joined timeline;
+  custom and nonconsecutive titles remain unchanged.
+- Replace the decorative sidebar labels with explicit Create, Tools, and Jobs
+  groups whose available destinations are real buttons. Quick Actions now
+  returns focus to file intake, and Queue and History open their working views.
+- Make selected History details readable and selectable in light and dark
+  appearances through one shared read-only text presentation.
+- Let a dragged MP4, M4V, MOV, or chapter-free WebM plus one SRT, ASS, or SSA
+  sidecar become one reviewed, zero-encode remux. Conservative filename suffixes
+  supply editable audio and subtitle language defaults, and one verified
+  `mkvmerge` pass copies the source tracks and adds the reviewed subtitle. The
+  same reviewed plan can be added repeatedly to the production queue, and an
+  automatically running queue job does not block reviewing and enqueueing
+  another already-inspected pair. Each job privately preserves its exact
+  source-audio language choices and sidecar review.
+
+## 0.2.2 - 2026-08-29
+
+- Require a live writable directory grant before using an automatic output
+  destination. When beside-source access is unavailable, obtain an authorized
+  destination through the save panel before processing instead of failing at
+  the final commit.
+- Require one explicitly selected or remembered writable folder for batch
+  subtitle cleanup and saved-workflow queueing, while preserving per-item
+  collision numbering, verification, and failure isolation.
+- Expand privacy-safe support categories to distinguish unavailable or existing
+  destinations, denied commit permission, unsupported no-overwrite commits,
+  other commit failures, and History-write failures without exporting paths,
+  filenames, errno values, or raw errors.
+- Compare structured FFprobe codec-initialization hashes before joining streams.
+  When codec initialization is the only technical mismatch, offer an explicit
+  zero-encode repair before the reviewed one-generation common-format fallback.
+  H.264 lanes are extracted and losslessly remuxed so each Part retains the
+  decoder headers its copied frames require; original packet cadence is retained
+  and first-source track identity is restored explicitly. The output is saved only after strict
+  boundary decoding, exact packet-payload comparison, and the normal track,
+  chapter, duration, source-preservation, and reopen audits all pass.
+- Let that Common Format path handle HD-or-larger untagged 8-bit H.264 as an
+  explicitly reviewed SDR case. The output receives verified BT.709 labels;
+  10-bit, HEVC, SD, HDR-signaled, or conflicting color facts still fail closed.
+- Let **Tags…** operate on multiple selected files. Review all selected items,
+  choose one output folder, then create one collision-safe, independently
+  verified tag-free copy for each ready MKV while skipping tag-free or
+  unsupported inputs and preserving every original.
+- Distinguish a failed join-boundary decode in privacy-safe support reports and
+  include only its validated one-based boundary number. Decoder output, exit
+  codes, filenames, and paths remain excluded.
+
 ## 0.2.1 - 2026-08-29
 
 - Package FFmpeg, FFprobe, MKVToolNix, and their Qt runtime library as one

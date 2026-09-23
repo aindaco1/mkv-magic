@@ -193,7 +193,7 @@ public actor JSONSavedWorkflowStore: SavedWorkflowPersisting {
                 throw SavedWorkflowStoreError.unsafePath
             }
         }
-        try encodePortableFile(workflow).write(to: standardized, options: [.atomic])
+        try LocalExportWriter.write(encodePortableFile(workflow), to: standardized)
     }
 
     private static func validate(_ workflows: [SavedWorkflow]) throws {

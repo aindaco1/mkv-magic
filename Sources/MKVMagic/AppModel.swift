@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import MKVMagicCore
 import MKVMagicExecution
@@ -13,28 +14,46 @@ private enum InspectedAssetRevisionError: Error, LocalizedError {
     }
 }
 
+private enum HistoryExecutionError: Error, LocalizedError {
+    case updateFailed
+
+    var errorDescription: String? {
+        "MKV Magic could not update its private History."
+    }
+}
+
 @MainActor
 final class AppModel {
+    private final class AutomaticQueueFailureTracker {
+        var lastActiveStage: MediaJobState = .inspecting
+    }
+
     private struct HistoryExecution: Sendable {
         let recorder: any JobHistoryRecording
         let jobID: UUID
 
         func record(_ stage: VerifiedOutputExecutionStage) async throws {
-            switch stage {
-            case .verifying:
-                try await recorder.transition(
-                    jobID: jobID,
-                    to: .verifying,
-                    at: Date(),
-                    message: "Re-inspecting output and comparing preserved structure."
-                )
-            case .committing:
-                try await recorder.transition(
-                    jobID: jobID,
-                    to: .committing,
-                    at: Date(),
-                    message: "Verification passed; committing the new output."
-                )
+            await DiagnosticContext.current?.record(
+                stage == .verifying ? .verifying : .committing, .started)
+            do {
+                switch stage {
+                case .verifying:
+                    try await recorder.transition(
+                        jobID: jobID,
+                        to: .verifying,
+                        at: Date(),
+                        message: "Re-inspecting output and comparing preserved structure."
+                    )
+                case .committing:
+                    try await recorder.transition(
+                        jobID: jobID,
+                        to: .committing,
+                        at: Date(),
+                        message: "Verification passed; committing the new output."
+                    )
+                }
+            } catch {
+                throw HistoryExecutionError.updateFailed
             }
         }
     }
@@ -43,12 +62,13 @@ final class AppModel {
         let recorder: any JobQueueManaging
         let jobID: UUID
         let sourceDisposition: MediaQueueSourceDisposition
+        let inputCount: Int
     }
 
     private enum VerifiedEdit {
         case metadata(MatroskaMetadataEdit, workflowID: UUID, workflowName: String)
         case trackRemoval(TrackRemoval, workflowID: UUID, workflowName: String)
-        case saved(CompiledSavedWorkflow, ExternalSubtitleMuxPayload?)
+        case saved(CompiledSavedWorkflow, [ExternalSubtitleMuxPayload])
         case externalSubtitle(ExternalSubtitleFilePreview, ExternalSubtitleTrackMetadata)
         case embeddedSubtitle(EmbeddedSubtitleCleanupPreview, restoringIDs: Set<Int>)
         case chapters(ChapterEditPreview, MatroskaChapterDocument)
@@ -173,7 +193,7 @@ final class AppModel {
 
         var externalInputURLs: [URL] {
             switch self {
-            case .saved(_, let preview): preview.map { [$0.sourceURL] } ?? []
+            case .saved(_, let previews): previews.map(\.sourceURL)
             case .externalSubtitle(let preview, _): [preview.sourceURL]
             default: []
             }
@@ -211,22 +231,29 @@ final class AppModel {
     private(set) var state: State = .ready
     private(set) var activeQueueJobID: UUID?
     private var inspectedAssetRevisions = [UUID: MediaFileRevision]()
+    private let diagnosticSessionID = UUID()
+    private var retainedDiagnosticJournal: DiagnosticJournal?
     var didChange: (() -> Void)?
     var queueDidChange: (() -> Void)?
     private var cachedEncodingCapabilities: FFmpegEncodingCapabilities?
     private let historyRecorderFactory: @Sendable () throws -> any JobHistoryRecording
+    private var historyStore: (any JobHistoryRecording)?
     private let workflowStoreFactory: @Sendable () throws -> any SavedWorkflowPersisting
     private let queueStoreFactory: @Sendable () throws -> any JobQueueManaging
     private let queueEnvironmentReader: any MediaQueueSchedulingEnvironmentReading
     private let trashSource: (URL) throws -> Void
     private var queueStore: (any JobQueueManaging)?
     private var queueAdmissionCoordinator: MediaQueueAdmissionCoordinator?
+    private(set) var isDrainingAutomaticQueue = false
+    private var activeImports = 0
+    var isImportingFiles: Bool { activeImports > 0 }
     private var queueRecoveryStarted = false
     private let encodingBenchmarkStoreFactory:
         @Sendable () throws -> any EncodingBenchmarkPersisting
 
     init(
         initialAssets: [MediaAsset] = [],
+        diagnosticJournal: DiagnosticJournal? = nil,
         historyRecorderFactory: @escaping @Sendable () throws -> any JobHistoryRecording = {
             try AppHistoryLocation.makeStore()
         },
@@ -247,12 +274,54 @@ final class AppModel {
             }
     ) {
         assets = initialAssets
+        retainedDiagnosticJournal = diagnosticJournal
         self.historyRecorderFactory = historyRecorderFactory
         self.workflowStoreFactory = workflowStoreFactory
         self.queueStoreFactory = queueStoreFactory
         self.queueEnvironmentReader = queueEnvironmentReader
         self.trashSource = trashSource
         self.encodingBenchmarkStoreFactory = encodingBenchmarkStoreFactory
+    }
+
+    func makeDiagnosticContext(_ action: DiagnosticAction) -> DiagnosticContext? {
+        if retainedDiagnosticJournal == nil {
+            // Unbundled CLI probes/tests must not contaminate the installed app's
+            // diagnostics. Tests inject an isolated journal explicitly.
+            guard Bundle.main.bundleURL.pathExtension == "app" else { return nil }
+            retainedDiagnosticJournal = try? AppHistoryLocation.makeDiagnosticJournal()
+        }
+        guard let journal = retainedDiagnosticJournal else { return nil }
+        return DiagnosticContext(
+            journal: journal, sessionID: diagnosticSessionID,
+            version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString")
+                as? String ?? "unknown",
+            build: Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
+                ?? "unknown",
+            action: action
+        )
+    }
+
+    func diagnosticSnapshot() async -> DiagnosticSnapshot? {
+        guard let context = makeDiagnosticContext(.application) else { return nil }
+        return await context.journal.snapshot()
+    }
+
+    func diagnosticIssueReports(snapshot suppliedSnapshot: DiagnosticSnapshot? = nil) async
+        -> [DiagnosticIssueReport]
+    {
+        let snapshot: DiagnosticSnapshot?
+        if let suppliedSnapshot {
+            snapshot = suppliedSnapshot
+        } else {
+            snapshot = await diagnosticSnapshot()
+        }
+        guard let snapshot, let architecture = ToolArchitecture.current
+        else { return [] }
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        return DiagnosticIssueReport.from(
+            snapshot, currentSessionID: diagnosticSessionID,
+            operatingSystem: "\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)",
+            architecture: architecture)
     }
 
     func loadEncodingBenchmarkReport() async throws -> EncodingBenchmarkReport? {
@@ -318,7 +387,7 @@ final class AppModel {
     }
 
     func loadHistory() async throws -> [MediaJobRecord] {
-        try await historyRecorderFactory().load()
+        try await historyRecorder().load()
     }
 
     func loadQueue() async throws -> MediaQueueSnapshot {
@@ -378,20 +447,60 @@ final class AppModel {
         return try SecurityScopedBookmarkCodec().resolve(input, access: access)
     }
 
-    func runAutomaticQueueCycle() async throws -> MediaQueueSnapshot {
-        _ = try await loadQueue()
-        let coordinator = try automaticQueueCoordinator()
-        let report = try await coordinator.runCycle(
-            environment: queueEnvironmentReader.read(),
-            supports: MediaQueueAutomaticWorkflowPolicy.supports,
-            execute: { [weak self] admission in
-                guard let self else { throw CancellationError() }
-                return try await self.executeAutomaticQueueAdmission(admission)
-            }
+    func resolveQueueInputsForReview(_ job: MediaQueueJob) throws -> [URL] {
+        try job.inputs.enumerated().map { index, reference in
+            try SecurityScopedBookmarkCodec().resolve(
+                reference,
+                access: index == 0 && job.sourceDisposition == .trashAfterVerifiedSuccess
+                    ? .readWriteFile : .readOnlyFile)
+        }
+    }
+
+    func previewExternalSubtitle(in asset: MediaAsset, at url: URL) async throws
+        -> (preview: ExternalSubtitleFilePreview, match: ExternalSubtitleMatch)
+    {
+        let preview: ExternalSubtitleFilePreview
+        switch url.pathExtension.lowercased() {
+        case "srt": preview = .subRip(try await previewSubtitleCleanup(at: url))
+        case "ass", "ssa": preview = .advanced(try await previewAdvancedSubtitleCleanup(at: url))
+        default: throw ExternalSubtitleMuxError.unsupportedDestination
+        }
+        return (
+            preview,
+            ExternalSubtitleMatcher().match(
+                media: asset, subtitleURL: url, subtitleEnd: preview.subtitleEnd)
         )
-        let recovered = await recoverPendingSourceDispositions(in: report.snapshot)
-        queueDidChange?()
-        return recovered
+    }
+
+    func runAutomaticQueueCycle() async throws -> MediaQueueSnapshot {
+        guard !isDrainingAutomaticQueue else {
+            throw MediaQueueAdmissionCoordinatorError.cycleAlreadyRunning
+        }
+        isDrainingAutomaticQueue = true
+        didChange?()
+        defer {
+            isDrainingAutomaticQueue = false
+            didChange?()
+        }
+
+        var snapshot = try await loadQueue()
+        let coordinator = try automaticQueueCoordinator()
+        while !Task.isCancelled {
+            // Refill freed slots through the same admission checks. Re-read power,
+            // thermal pressure and the persisted queue (including Pause) each batch.
+            let report = try await coordinator.runCycle(
+                environment: queueEnvironmentReader.read(),
+                supports: MediaQueueAutomaticWorkflowPolicy.supports,
+                execute: { [weak self] admission in
+                    guard let self else { throw CancellationError() }
+                    return try await self.executeAutomaticQueueAdmission(admission)
+                }
+            )
+            snapshot = await recoverPendingSourceDispositions(in: report.snapshot)
+            queueDidChange?()
+            guard !report.admittedJobIDs.isEmpty else { break }
+        }
+        return snapshot
     }
 
     func runAutomaticQueueCycleIfEligible() async {
@@ -428,6 +537,8 @@ final class AppModel {
             Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String
             ?? "development"
         let operatingSystem = ProcessInfo.processInfo.operatingSystemVersionString
+        let queueSnapshot = try? await queueRecorder().load()
+        let diagnostics = await diagnosticSnapshot()
         try await Task.detached(priority: .utility) {
             let catalog = try ToolCatalog(rootURL: toolRootURL)
             let report = PrivacySafeSupportReport.make(
@@ -435,7 +546,9 @@ final class AppModel {
                 applicationBuild: applicationBuild,
                 operatingSystem: operatingSystem,
                 catalog: catalog,
-                records: records
+                records: records,
+                queueSnapshot: queueSnapshot,
+                diagnostics: diagnostics
             )
             try PrivacySafeSupportReportWriter.write(report, to: destinationURL)
         }.value
@@ -610,7 +723,11 @@ final class AppModel {
                 mapping: candidate.mapping
             )
             guard currentReport == candidate.report,
-                currentReport.disposition == .losslessCandidate
+                ReviewedMKVToolNixLosslessAppendPolicy.permitsExecution(
+                    of: currentReport,
+                    afterExplicitReview:
+                        candidate.usesReviewedMKVToolNixWarningTolerance
+                )
             else {
                 throw LosslessJoinExecutionError.requiresReview(currentReport.disposition)
             }
@@ -630,13 +747,16 @@ final class AppModel {
                 ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
                 inspector: inspector
             )
             let preview = try executor.preview(
                 sources: candidate.sources,
                 mapping: candidate.mapping,
-                chapters: candidate.chapters
+                chapters: candidate.chapters,
+                usesReviewedMKVToolNixWarningTolerance:
+                    candidate.usesReviewedMKVToolNixWarningTolerance
             )
             for (joinRevision, chapterPreview) in zip(
                 preview.sourceRevisions,
@@ -874,9 +994,17 @@ final class AppModel {
                 inspectionMessage:
                     "Used exact completed inspections and extracted nested chapter documents.",
                 planningMessage:
-                    "Zero encodes; every complete source track maps to one reviewed append lane.",
+                    preview.usesHeaderNormalizedVideoAppend
+                    ? "Zero encodes; the reviewed H.264 lane will be rebuilt from copied packets so each source keeps its own decoder headers."
+                    : preview.usesReviewedMKVToolNixWarningTolerance
+                        ? "Zero encodes; explicitly reviewed MKVToolNix warning-level codec-initialization append, with strict boundary and packet verification required."
+                        : "Zero encodes; every complete source track maps to one reviewed append lane.",
                 runningMessage:
-                    "Appending complete MKV files to one temporary output with reviewed chapters."
+                    preview.usesHeaderNormalizedVideoAppend
+                    ? "Normalizing copied H.264 headers and assembling one temporary MKV without re-encoding frames."
+                    : preview.usesReviewedMKVToolNixWarningTolerance
+                        ? "Attempting the reviewed MKVToolNix-compatible packet append in one temporary output."
+                        : "Appending complete MKV files to one temporary output with reviewed chapters."
             )
             historyExecution = execution
             let (catalog, runner, inspector) = try makeToolExecutionContext()
@@ -885,6 +1013,7 @@ final class AppModel {
                 ffprobeURL: try catalog.url(for: .ffprobe),
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 mkvextractURL: try catalog.url(for: .mkvextract),
+                mkvpropeditURL: try catalog.url(for: .mkvpropedit),
                 runner: runner,
                 inspector: inspector
             )
@@ -916,7 +1045,11 @@ final class AppModel {
                 execution,
                 destinationURL: destinationURL,
                 successMessage:
-                    "Verified exact copied packet payloads, every join boundary, tracks, and nested chapters; committed and reopened output."
+                    preview.usesHeaderNormalizedVideoAppend
+                    ? "The lossless H.264 header-normalized append passed exact packet, clean boundary decode, track, and nested-chapter verification; committed and reopened output."
+                    : preview.usesReviewedMKVToolNixWarningTolerance
+                        ? "The reviewed MKVToolNix-compatible append passed exact packet, clean boundary decode, track, and nested-chapter verification; committed and reopened output."
+                        : "Verified exact copied packet payloads, every join boundary, tracks, and nested chapters; committed and reopened output."
             )
             return output
         } catch {
@@ -942,6 +1075,36 @@ final class AppModel {
             runner: runner,
             inspector: inspector
         ).preview(source: source)
+    }
+
+    func previewRemuxToMKV(
+        source: MediaAsset,
+        subtitlePayload: ExternalSubtitleMuxPayload,
+        subtitleMetadata: ExternalSubtitleTrackMetadata,
+        trackLanguageOverrides: [Int: String]
+    ) throws -> MKVRemuxWithExternalSubtitlePreview {
+        let scopedURLs = [source.sourceURL, subtitlePayload.sourceURL].map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
+        defer {
+            for (url, accessed) in scopedURLs where accessed {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        let (catalog, runner, inspector) = try makeToolExecutionContext()
+        return try MKVRemuxExecutor(
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            ffmpegURL: try catalog.url(for: .ffmpeg),
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            runner: runner,
+            inspector: inspector
+        ).preview(
+            source: source,
+            subtitlePayload: subtitlePayload,
+            subtitleMetadata: subtitleMetadata,
+            trackLanguageOverrides: trackLanguageOverrides
+        )
     }
 
     func previewTimedTextSubtitleConversion(
@@ -1489,8 +1652,41 @@ final class AppModel {
         onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
         onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
+        try await executeRemuxToMKV(
+            preview: preview,
+            externalSubtitlePreview: nil,
+            destinationURL: destinationURL,
+            onProgress: onProgress,
+            onStage: onStage
+        )
+    }
+
+    @discardableResult
+    func executeRemuxToMKV(
+        preview: MKVRemuxWithExternalSubtitlePreview,
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
+    ) async throws -> MediaAsset {
+        try await executeRemuxToMKV(
+            preview: preview.remux,
+            externalSubtitlePreview: preview,
+            destinationURL: destinationURL,
+            onProgress: onProgress,
+            onStage: onStage
+        )
+    }
+
+    private func executeRemuxToMKV(
+        preview: MKVRemuxPreview,
+        externalSubtitlePreview: MKVRemuxWithExternalSubtitlePreview?,
+        destinationURL: URL,
+        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void
+    ) async throws -> MediaAsset {
         let source = preview.source
-        let scopedURLs = [source.sourceURL, destinationURL].map {
+        let externalURLs = externalSubtitlePreview.map { [$0.subtitlePayload.sourceURL] } ?? []
+        let scopedURLs = ([source.sourceURL, destinationURL] + externalURLs).map {
             ($0, $0.startAccessingSecurityScopedResource())
         }
         defer {
@@ -1499,7 +1695,11 @@ final class AppModel {
             }
         }
 
-        state = .executing("Copying compatible streams into one temporary MKV…")
+        state = .executing(
+            externalSubtitlePreview == nil
+                ? "Copying compatible streams into one temporary MKV…"
+                : "Copying streams and adding the reviewed subtitle in one temporary MKV…"
+        )
         didChange?()
         var historyExecution: HistoryExecution?
         do {
@@ -1508,51 +1708,79 @@ final class AppModel {
                 ? "preserve the reviewed chapter table"
                 : "translate the MP4 chapter carrier into verified Matroska chapters"
             let execution = try await beginHistory(
-                inputs: [Self.historyInput(source)],
+                inputs: [Self.historyInput(source)]
+                    + (externalSubtitlePreview.map {
+                        [Self.historyInput(textSubtitleURL: $0.subtitlePayload.sourceURL)]
+                    } ?? []),
                 outputDisplayName: destinationURL.lastPathComponent,
                 workflowID: BuiltInWorkflowCatalog.remuxToMKV,
-                workflowName: "Remux to MKV without encoding",
+                workflowName:
+                    externalSubtitlePreview == nil
+                    ? "Remux to MKV without encoding"
+                    : "Remux to MKV with external subtitle",
                 privacySafePlan: MediaJobPlanFacts(
                     videoEncodeGenerations: 0,
                     audioTracksEncoded: 0
                 ),
                 inspectionMessage: "Used the completed common-media inspection.",
                 planningMessage:
-                    "Zero encodes; packet-copy \(preview.plan.copiedTrackCount) media track(s) and \(chapterCarrierSummary).",
-                runningMessage: "Creating one temporary MKV with the reviewed stream order."
+                    "Zero encodes; packet-copy \(preview.plan.copiedTrackCount) media track(s), \(chapterCarrierSummary)"
+                    + (externalSubtitlePreview == nil
+                        ? "." : ", and append one reviewed text subtitle."),
+                runningMessage:
+                    externalSubtitlePreview == nil
+                    ? "Creating one temporary MKV with the reviewed stream order."
+                    : "Creating one temporary MKV with copied media, reviewed languages, and the subtitle last."
             )
             historyExecution = execution
             let (catalog, runner, inspector) = try makeToolExecutionContext()
-            let output = try await MKVRemuxExecutor(
+            let executor = MKVRemuxExecutor(
                 mkvmergeURL: try catalog.url(for: .mkvmerge),
                 ffmpegURL: try catalog.url(for: .ffmpeg),
                 ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvextractURL: try catalog.url(for: .mkvextract),
                 runner: runner,
                 inspector: inspector
-            ).execute(
-                preview: preview,
-                destinationURL: destinationURL,
-                onProgress: { progress in await onProgress(progress) },
-                onStage: { [weak self] stage in
-                    await onStage(stage)
-                    await MainActor.run {
-                        guard let self else { return }
-                        self.state = .executing(
-                            stage == .verifying
-                                ? "Verifying copied packet payloads, tracks, title, and chapters…"
-                                : "Saving and reopening the verified MKV…"
-                        )
-                        self.didChange?()
-                    }
-                    try await execution.record(stage)
-                }
             )
+            let stageHandler: @Sendable (VerifiedOutputExecutionStage) async throws -> Void = {
+                [weak self] stage in
+                await onStage(stage)
+                await MainActor.run {
+                    guard let self else { return }
+                    self.state = .executing(
+                        stage == .verifying
+                            ? "Verifying copied packet payloads, tracks, title, and chapters…"
+                            : "Saving and reopening the verified MKV…"
+                    )
+                    self.didChange?()
+                }
+                try await execution.record(stage)
+            }
+            let output: MediaAsset
+            if let externalSubtitlePreview {
+                output = try await executor.execute(
+                    preview: externalSubtitlePreview,
+                    destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
+                    onStage: stageHandler
+                )
+            } else {
+                output = try await executor.execute(
+                    preview: preview,
+                    destinationURL: destinationURL,
+                    onProgress: { progress in await onProgress(progress) },
+                    onStage: stageHandler
+                )
+            }
             registerInspectedAsset(output)
             await finishHistory(
                 execution,
                 destinationURL: destinationURL,
                 successMessage:
-                    "Verified exact copied packet payloads, track order and metadata, duration, title, and chapter timing; committed and reopened output."
+                    "Verified exact copied packet payloads, track order and metadata, duration, title, and chapter timing"
+                    + (externalSubtitlePreview == nil
+                        ? "; committed and reopened output."
+                        : ", plus exact subtitle text and timing; committed and reopened output.")
             )
             return output
         } catch {
@@ -1836,6 +2064,26 @@ final class AppModel {
     }
 
     func addFiles(_ urls: [URL]) async {
+        activeImports += 1
+        didChange?()
+        defer {
+            activeImports -= 1
+            didChange?()
+        }
+        let diagnostic = makeDiagnosticContext(.importFiles)
+        await DiagnosticContext.$current.withValue(diagnostic) {
+            await diagnostic?.record(.requested, .started)
+            await inspectFiles(urls)
+            switch state {
+            case .failed, .completedWithWarnings:
+                await diagnostic?.record(.finished, .failed, failure: .unknown)
+            default:
+                await diagnostic?.record(.finished, .succeeded)
+            }
+        }
+    }
+
+    private func inspectFiles(_ urls: [URL]) async {
         let uniqueRoots = Array(Set(urls.map(\.standardizedFileURL))).sorted {
             $0.lastPathComponent.localizedStandardCompare($1.lastPathComponent) == .orderedAscending
         }
@@ -1854,6 +2102,7 @@ final class AppModel {
         do {
             inputURLs = try await LocalMediaFileDiscovery().discover(uniqueRoots)
         } catch {
+            await DiagnosticContext.current?.record(.selection, .failed, failure: .classify(error))
             state = .failed(
                 UserFacingErrorPresentation.message(
                     failure: "Could not scan the selected files.",
@@ -1866,6 +2115,7 @@ final class AppModel {
             return
         }
         guard !inputURLs.isEmpty else {
+            await DiagnosticContext.current?.record(.selection, .failed, failure: .invalidData)
             state = .failed("No supported media or subtitle files were found.")
             didChange?()
             return
@@ -1906,6 +2156,8 @@ final class AppModel {
                 }
                 registerInspectedAsset(asset, revision: revision)
             } catch {
+                await DiagnosticContext.current?.record(
+                    .execution, .failed, failure: .classify(error))
                 let message = UserFacingErrorPresentation.message(
                     failure: "Could not inspect \(url.lastPathComponent).",
                     recovery:
@@ -1988,6 +2240,20 @@ final class AppModel {
     }
 
     @discardableResult
+    func editTrackMetadata(
+        in asset: MediaAsset, edits: [TrackMetadataEdit], destinationURL: URL,
+        expectedSourceRevision: MediaFileRevision,
+        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
+    ) async throws -> MediaAsset {
+        try await executeVerifiedEdit(
+            in: asset, destinationURL: destinationURL,
+            edit: .metadata(
+                .tracks(edits), workflowID: BuiltInWorkflowCatalog.trackMetadata,
+                workflowName: "Edit matching track metadata"),
+            expectedSourceRevision: expectedSourceRevision, onStage: onStage)
+    }
+
+    @discardableResult
     func removeTracks(
         in asset: MediaAsset,
         removal: TrackRemoval,
@@ -2009,27 +2275,6 @@ final class AppModel {
     }
 
     @discardableResult
-    func cleanEnglishLibrary(
-        in asset: MediaAsset,
-        removal: TrackRemoval,
-        destinationURL: URL,
-        onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
-        onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
-    ) async throws -> MediaAsset {
-        try await executeVerifiedEdit(
-            in: asset,
-            destinationURL: destinationURL,
-            edit: .trackRemoval(
-                removal,
-                workflowID: BuiltInWorkflowCatalog.englishLibraryCleanup,
-                workflowName: "English Library Cleanup"
-            ),
-            onProgress: onProgress,
-            onStage: onStage
-        )
-    }
-
-    @discardableResult
     func runSavedWorkflow(
         _ workflow: CompiledSavedWorkflow,
         externalSubtitlePreview: ExternalSubtitleFilePreview? = nil,
@@ -2043,7 +2288,7 @@ final class AppModel {
             destinationURL: destinationURL,
             edit: .saved(
                 workflow,
-                externalSubtitlePreview.map(ExternalSubtitleMuxPayload.original)
+                externalSubtitlePreview.map { [.original($0)] } ?? []
             ),
             onProgress: onProgress,
             onStage: onStage
@@ -2054,17 +2299,17 @@ final class AppModel {
         _ workflow: CompiledSavedWorkflow,
         recipe: SavedWorkflow,
         externalSubtitlePayload: ExternalSubtitleMuxPayload? = nil,
+        additionalExternalSubtitlePayloads: [ExternalSubtitleMuxPayload] = [],
         sourceDisposition: MediaQueueSourceDisposition = .keepOriginal,
         retryingQueueJobID: UUID? = nil,
         expectedSourceRevision: MediaFileRevision? = nil,
         in asset: MediaAsset,
         destinationURL: URL
     ) async throws -> MediaQueueSnapshot {
-        let externalSubtitleReview = try queuedExternalSubtitleReview(
-            workflow: workflow,
-            payload: externalSubtitlePayload
-        )
-        let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
+        let payloads =
+            (externalSubtitlePayload.map { [$0] } ?? []) + additionalExternalSubtitlePayloads
+        let reviews = try queuedExternalSubtitleReviews(workflow: workflow, payloads: payloads)
+        let externalURLs = payloads.map(\.sourceURL)
         guard
             MediaQueueAutomaticWorkflowPolicy.supports(
                 recipe,
@@ -2082,7 +2327,8 @@ final class AppModel {
             recipe: recipe,
             plan: workflow.plan,
             inputURLs: [asset.sourceURL] + externalURLs,
-            externalSubtitleReview: externalSubtitleReview,
+            externalSubtitleReviews: reviews,
+            sourceTrackLanguageOverrides: workflow.sourceTrackLanguageOverrides,
             destinationURL: destinationURL,
             sourceDisposition: sourceDisposition,
             retryingJobID: retryingQueueJobID
@@ -2103,7 +2349,7 @@ final class AppModel {
         try await executeVerifiedEdit(
             in: asset,
             destinationURL: destinationURL,
-            edit: .saved(workflow, externalSubtitlePayload),
+            edit: .saved(workflow, externalSubtitlePayload.map { [$0] } ?? []),
             onProgress: onProgress,
             onStage: onStage
         )
@@ -2122,66 +2368,81 @@ final class AppModel {
         onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
         onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
-        let externalSubtitleReview = try queuedExternalSubtitleReview(
-            workflow: workflow,
-            payload: externalSubtitlePayload
-        )
-        let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
-        let queueExecution = try await beginQueueExecution(
-            recipe: recipe,
-            plan: workflow.plan,
-            inputURLs: [asset.sourceURL] + externalURLs,
-            externalSubtitleReview: externalSubtitleReview,
-            destinationURL: destinationURL,
-            sourceDisposition: sourceDisposition,
-            retryingJobID: retryingQueueJobID
-        )
-        return try await executeVerifiedEdit(
-            in: asset,
-            destinationURL: destinationURL,
-            edit: .saved(workflow, externalSubtitlePayload),
-            queueExecution: queueExecution,
-            expectedSourceRevision: expectedSourceRevision,
-            onProgress: onProgress,
-            onStage: onStage
-        )
+        // Preparation can fail before a queue row or History exists (for
+        // example, a revoked folder bookmark). It is still a visible attempt.
+        var admitted = false
+        do {
+            await DiagnosticContext.current?.record(.queueAdmission, .started)
+            let externalSubtitleReviews = try queuedExternalSubtitleReviews(
+                workflow: workflow,
+                payloads: externalSubtitlePayload.map { [$0] } ?? []
+            )
+            let externalURLs = externalSubtitlePayload.map { [$0.sourceURL] } ?? []
+            let queueExecution = try await beginQueueExecution(
+                recipe: recipe,
+                plan: workflow.plan,
+                inputURLs: [asset.sourceURL] + externalURLs,
+                externalSubtitleReviews: externalSubtitleReviews,
+                destinationURL: destinationURL,
+                sourceDisposition: sourceDisposition,
+                retryingJobID: retryingQueueJobID
+            )
+            await DiagnosticContext.current?.record(.queueAdmission, .succeeded)
+            admitted = true
+            return try await executeVerifiedEdit(
+                in: asset,
+                destinationURL: destinationURL,
+                edit: .saved(workflow, externalSubtitlePayload.map { [$0] } ?? []),
+                queueExecution: queueExecution,
+                expectedSourceRevision: expectedSourceRevision,
+                onProgress: onProgress,
+                onStage: onStage
+            )
+        } catch {
+            if !admitted {
+                await DiagnosticContext.current?.record(
+                    (error as? DiagnosticPreparationError)?.stage ?? .queueAdmission,
+                    .failed, failure: .classify(error))
+                await failHistory(nil, error: error)
+            }
+            throw error
+        }
     }
 
-    private func queuedExternalSubtitleReview(
+    private func queuedExternalSubtitleReviews(
         workflow: CompiledSavedWorkflow,
-        payload: ExternalSubtitleMuxPayload?
-    ) throws -> MediaQueueExternalSubtitleReview? {
-        guard let input = workflow.externalSubtitleInput else {
-            guard payload == nil else {
+        payloads: [ExternalSubtitleMuxPayload]
+    ) throws -> [MediaQueueExternalSubtitleReview] {
+        guard workflow.externalSubtitleInputs.count == payloads.count,
+            payloads.count <= ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo,
+            Set(payloads.map { $0.sourceURL.standardizedFileURL }).count == payloads.count
+        else { throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput }
+        return try zip(workflow.externalSubtitleInputs, payloads).map { input, payload in
+            guard payload.matches(input) else {
                 throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
             }
-            return nil
+            try payload.validateForReview()
+            let restoredCleanupChangeIDs: [Int]?
+            switch payload {
+            case .original:
+                restoredCleanupChangeIDs = nil
+            case .reviewedCleanup(_, let restoringIDs):
+                restoredCleanupChangeIDs = restoringIDs.sorted()
+            }
+            let review = MediaQueueExternalSubtitleReview(
+                format: input.format,
+                metadata: input.metadata,
+                restoredCleanupChangeIDs: restoredCleanupChangeIDs,
+                sourceTrackLanguageOverrides:
+                    workflow.sourceTrackLanguageOverrides.isEmpty
+                    ? nil : workflow.sourceTrackLanguageOverrides,
+                sourceSHA256: payload.preview.sourceSHA256
+            )
+            guard review.hasCanonicalStructure else {
+                throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+            }
+            return review
         }
-        guard let payload,
-            payload.sourceURL.standardizedFileURL == input.sourceURL.standardizedFileURL,
-            payload.format == input.format,
-            payload.reviewedCleanupChangeCount == input.reviewedCleanupChangeCount
-        else {
-            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
-        }
-        try payload.validateForReview()
-        let restoredCleanupChangeIDs: [Int]?
-        switch payload {
-        case .original:
-            restoredCleanupChangeIDs = nil
-        case .reviewedCleanup(_, let restoringIDs):
-            restoredCleanupChangeIDs = restoringIDs.sorted()
-        }
-        let review = MediaQueueExternalSubtitleReview(
-            format: input.format,
-            metadata: input.metadata,
-            restoredCleanupChangeIDs: restoredCleanupChangeIDs,
-            sourceSHA256: payload.preview.sourceSHA256
-        )
-        guard review.hasCanonicalStructure else {
-            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
-        }
-        return review
     }
 
     @discardableResult
@@ -2368,7 +2629,11 @@ final class AppModel {
             )
             return result
         } catch {
-            await failHistory(historyExecution, error: error)
+            if Self.isCancellation(error) {
+                await cancelHistory(historyExecution)
+            } else {
+                await failHistory(historyExecution, error: error)
+            }
             throw error
         }
     }
@@ -2382,6 +2647,26 @@ final class AppModel {
         onProgress: @escaping @MainActor @Sendable (VerifiedOutputToolProgress) -> Void = { _ in },
         onStage: @escaping @MainActor @Sendable (VerifiedOutputExecutionStage) -> Void = { _ in }
     ) async throws -> MediaAsset {
+        if DiagnosticContext.current == nil, let diagnostic = makeDiagnosticContext(.verifyAndRun) {
+            return try await DiagnosticContext.$current.withValue(diagnostic) {
+                await diagnostic.record(.execution, .started)
+                do {
+                    let output = try await executeVerifiedEdit(
+                        in: asset, destinationURL: destinationURL, edit: edit,
+                        queueExecution: queueExecution,
+                        expectedSourceRevision: expectedSourceRevision,
+                        onProgress: onProgress, onStage: onStage)
+                    await diagnostic.record(.finished, .succeeded)
+                    return output
+                } catch {
+                    let failure = DiagnosticFailure.classify(error)
+                    await diagnostic.record(
+                        .finished, failure == .cancelled ? .cancelled : .failed,
+                        failure: failure)
+                    throw error
+                }
+            }
+        }
         if case .saved(let workflow, _) = edit,
             workflow.videoConversionChoice != nil || workflow.audioConversionPreset != nil,
             cachedEncodingCapabilities == nil
@@ -2427,6 +2712,7 @@ final class AppModel {
                     source: asset,
                     edit: metadataEdit,
                     destinationURL: destinationURL,
+                    expectedSourceRevision: expectedSourceRevision,
                     onStage: { stage in
                         await onStage(stage)
                         try await execution.record(stage)
@@ -2448,7 +2734,11 @@ final class AppModel {
                         try await execution.record(stage)
                     }
                 )
-            case .saved(let workflow, let externalSubtitlePayload):
+            case .saved(let workflow, let externalSubtitlePayloads):
+                guard externalSubtitlePayloads.count <= 1 || workflow.mkvRemuxPlan != nil else {
+                    throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+                }
+                let externalSubtitlePayload = externalSubtitlePayloads.first
                 if let remuxPlan = workflow.mkvRemuxPlan {
                     let sourceRevision =
                         try expectedSourceRevision
@@ -2457,21 +2747,53 @@ final class AppModel {
                         mkvmergeURL: try catalog.url(for: .mkvmerge),
                         ffmpegURL: try catalog.url(for: .ffmpeg),
                         ffprobeURL: try catalog.url(for: .ffprobe),
+                        mkvextractURL: try catalog.url(for: .mkvextract),
                         runner: runner,
                         inspector: inspector
                     )
-                    output = try await executor.execute(
-                        preview: MKVRemuxPreview(
-                            plan: remuxPlan,
-                            sourceRevision: sourceRevision
-                        ),
-                        destinationURL: destinationURL,
-                        onProgress: { progress in await onProgress(progress) },
-                        onStage: { stage in
-                            await onStage(stage)
-                            try await execution.record(stage)
-                        }
+                    let remuxPreview = MKVRemuxPreview(
+                        plan: remuxPlan,
+                        sourceRevision: sourceRevision
                     )
+                    let stageHandler:
+                        @Sendable (VerifiedOutputExecutionStage) async throws -> Void =
+                            { stage in
+                                await onStage(stage)
+                                try await execution.record(stage)
+                            }
+                    _ = try queuedExternalSubtitleReviews(
+                        workflow: workflow, payloads: externalSubtitlePayloads)
+                    if !externalSubtitlePayloads.isEmpty {
+                        let previews = zip(
+                            workflow.externalSubtitleInputs, externalSubtitlePayloads
+                        ).map {
+                            externalSubtitleInput, externalSubtitlePayload in
+                            MKVRemuxWithExternalSubtitlePreview(
+                                remux: remuxPreview,
+                                subtitlePayload: externalSubtitlePayload,
+                                subtitleMetadata: externalSubtitleInput.metadata,
+                                trackLanguageOverrides:
+                                    workflow.sourceTrackLanguageOverrides
+                            )
+                        }
+                        output = try await executor.execute(
+                            previews: previews,
+                            destinationURL: destinationURL,
+                            onProgress: { progress in await onProgress(progress) },
+                            onStage: stageHandler
+                        )
+                    } else {
+                        guard externalSubtitlePayload == nil else {
+                            throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
+                        }
+                        output = try await executor.execute(
+                            preview: remuxPreview,
+                            destinationURL: destinationURL,
+                            trackLanguageOverrides: workflow.sourceTrackLanguageOverrides,
+                            onProgress: { progress in await onProgress(progress) },
+                            onStage: stageHandler
+                        )
+                    }
                 } else if workflow.videoConversionChoice != nil {
                     let executor = SavedWorkflowVideoConversionExecutor(
                         ffmpegURL: try catalog.url(for: .ffmpeg),
@@ -2654,7 +2976,7 @@ final class AppModel {
         recipe: SavedWorkflow,
         plan: ExecutionPlan,
         inputURLs: [URL],
-        externalSubtitleReview: MediaQueueExternalSubtitleReview?,
+        externalSubtitleReviews: [MediaQueueExternalSubtitleReview],
         destinationURL: URL,
         sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
@@ -2663,7 +2985,7 @@ final class AppModel {
             recipe: recipe,
             plan: plan,
             inputURLs: inputURLs,
-            externalSubtitleReview: externalSubtitleReview,
+            externalSubtitleReviews: externalSubtitleReviews,
             destinationURL: destinationURL,
             sourceDisposition: sourceDisposition,
             retryingJobID: retryingJobID
@@ -2683,10 +3005,36 @@ final class AppModel {
         recipe: SavedWorkflow,
         plan: ExecutionPlan,
         inputURLs: [URL],
-        externalSubtitleReview: MediaQueueExternalSubtitleReview?,
+        externalSubtitleReviews: [MediaQueueExternalSubtitleReview],
+        sourceTrackLanguageOverrides: [Int: String] = [:],
         destinationURL: URL,
         sourceDisposition: MediaQueueSourceDisposition,
         retryingJobID: UUID?
+    ) async throws -> QueueExecution {
+        let intent: MediaQueueWorkflowIntent =
+            if externalSubtitleReviews.count > 1 {
+                .savedWithExternalSubtitles(recipe, externalSubtitleReviews)
+            } else if let review = externalSubtitleReviews.first {
+                .savedWithExternalSubtitle(recipe, review)
+            } else if !sourceTrackLanguageOverrides.isEmpty {
+                .savedWithSourceLanguages(recipe, sourceTrackLanguageOverrides)
+            } else {
+                .saved(recipe)
+            }
+        return try await prepareQueueExecution(
+            intent: intent, plan: plan, inputURLs: inputURLs,
+            destinationURL: destinationURL, sourceDisposition: sourceDisposition,
+            retryingJobID: retryingJobID)
+    }
+
+    private func prepareQueueExecution(
+        intent workflowIntent: MediaQueueWorkflowIntent,
+        plan: ExecutionPlan,
+        inputURLs: [URL],
+        destinationURL: URL,
+        sourceDisposition: MediaQueueSourceDisposition,
+        retryingJobID: UUID?,
+        expectedPrimaryRevision: MediaQueueFileRevision? = nil
     ) async throws -> QueueExecution {
         _ = try await loadQueue()
         let recorder = try queueRecorder()
@@ -2695,19 +3043,25 @@ final class AppModel {
             let access: SecurityScopedBookmarkAccess =
                 index == 0 && sourceDisposition == .trashAfterVerifiedSuccess
                 ? .readWriteFile : .readOnlyFile
-            return try codec.makeReference(for: inputURL, access: access)
-        }
-        let destinationDirectory = try codec.makeReference(
-            for: destinationURL.deletingLastPathComponent(),
-            access: .readWriteDirectory
-        )
-        let timestamp = Date()
-        let workflowIntent: MediaQueueWorkflowIntent =
-            if let externalSubtitleReview {
-                .savedWithExternalSubtitle(recipe, externalSubtitleReview)
-            } else {
-                .saved(recipe)
+            return try DiagnosticPreparationError.perform(
+                stage: .selection, fallback: .bookmarkUnavailable
+            ) {
+                try codec.makeReference(for: inputURL, access: access)
             }
+        }
+        let destinationDirectory = try DiagnosticPreparationError.perform(
+            stage: .destination, fallback: .destinationUnavailable
+        ) {
+            try codec.makeReference(
+                for: destinationURL.deletingLastPathComponent(), access: .readWriteDirectory)
+        }
+        if let expectedPrimaryRevision,
+            inputs.first?.reviewedRevision != expectedPrimaryRevision
+        {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
+        }
+        try Task.checkCancellation()
+        let timestamp = Date()
         let jobID: UUID
         if let retryingJobID {
             _ = try await recorder.approveReplan(
@@ -2737,7 +3091,8 @@ final class AppModel {
         return QueueExecution(
             recorder: recorder,
             jobID: jobID,
-            sourceDisposition: sourceDisposition
+            sourceDisposition: sourceDisposition,
+            inputCount: inputURLs.count
         )
     }
 
@@ -2925,9 +3280,23 @@ final class AppModel {
                 jobID: execution.jobID,
                 to: .failed,
                 at: Date(),
-                reason: .executionFailed
+                reason: .executionFailed,
+                failure: Self.privacySafeQueueFailure(
+                    for: error,
+                    lastActiveStage: .running,
+                    inputCount: execution.inputCount
+                )
             )
         }
+    }
+
+    private func historyRecorder() throws -> any JobHistoryRecording {
+        if let historyStore { return historyStore }
+        // One actor must own every read/modify/write of the shared History file.
+        // Per-job actors can overwrite another concurrent job's transitions.
+        let recorder = try historyRecorderFactory()
+        historyStore = recorder
+        return recorder
     }
 
     private func queueRecorder() throws -> any JobQueueManaging {
@@ -2947,8 +3316,56 @@ final class AppModel {
     private func executeAutomaticQueueAdmission(
         _ admission: MediaQueueAdmission
     ) async throws -> MediaQueueAutomaticExecutionOutcome {
-        guard let workflow = admission.job.workflow.savedWorkflow,
-            MediaQueueAutomaticWorkflowPolicy.supports(admission.job),
+        let diagnostic = makeDiagnosticContext(.automaticQueue)
+        return try await DiagnosticContext.$current.withValue(diagnostic) {
+            await diagnostic?.record(.execution, .started)
+            let outcome: MediaQueueAutomaticExecutionOutcome
+            do {
+                outcome = try await runAutomaticQueueAdmission(admission)
+            } catch {
+                await diagnostic?.record(
+                    .finished, Self.isCancellation(error) ? .cancelled : .failed,
+                    failure: .classify(error))
+                throw error
+            }
+            switch outcome {
+            case .cancelled: await diagnostic?.record(.finished, .cancelled, failure: .cancelled)
+            case .verifiedSuccess: await diagnostic?.record(.finished, .succeeded)
+            case .needsReview:
+                await diagnostic?.record(.finished, .blocked, failure: .missingReview)
+            case .failed: await diagnostic?.record(.finished, .failed, failure: .unknown)
+            }
+            return outcome
+        }
+    }
+
+    private func runAutomaticQueueAdmission(
+        _ admission: MediaQueueAdmission
+    ) async throws -> MediaQueueAutomaticExecutionOutcome {
+        let failureTracker = AutomaticQueueFailureTracker()
+        do {
+            return try await performAutomaticQueueAdmission(
+                admission,
+                failureTracker: failureTracker
+            )
+        } catch {
+            if Self.isCancellation(error) { throw error }
+            await DiagnosticContext.current?.record(.execution, .failed, failure: .classify(error))
+            return .failed(
+                Self.privacySafeQueueFailure(
+                    for: error,
+                    lastActiveStage: failureTracker.lastActiveStage,
+                    inputCount: admission.job.inputs.count
+                )
+            )
+        }
+    }
+
+    private func performAutomaticQueueAdmission(
+        _ admission: MediaQueueAdmission,
+        failureTracker: AutomaticQueueFailureTracker
+    ) async throws -> MediaQueueAutomaticExecutionOutcome {
+        guard MediaQueueAutomaticWorkflowPolicy.supports(admission.job),
             let sourceURL = admission.inputURLs.first,
             let reviewedRevision = admission.job.inputs.first?.reviewedRevision
         else {
@@ -2964,26 +3381,48 @@ final class AppModel {
             return .needsReview
         }
 
+        if case .reviewedEdit(let review) = admission.job.workflow {
+            let prepared: ReviewedBatchEdit
+            do {
+                prepared = try await restoreReviewedEdit(review, sourceURL: sourceURL)
+                guard try prepared.reviewedIntent() == review,
+                    ReviewedEditPlanner().plan(review).hasSameReviewedWork(
+                        as: admission.job.reviewedPlan),
+                    try prepared.validatedSourceRevision() == exactRevision
+                else { return .needsReview }
+            } catch let error as MatroskaTagPolicyError where error == .noTags {
+                return .needsReview
+            }
+            failureTracker.lastActiveStage = .running
+            try await prepared.execute(using: self, destinationURL: admission.outputURL) { stage in
+                failureTracker.lastActiveStage = stage == .verifying ? .verifying : .committing
+            }
+            return .verifiedSuccess
+        }
+        guard let workflow = admission.job.workflow.savedWorkflow else { return .needsReview }
+
         let (_, _, inspector) = try makeToolExecutionContext()
         let asset = try await inspector.inspect(sourceURL)
-        let resolvedExternalSubtitle:
+        var resolvedExternalSubtitles = [
             (
                 input: SavedWorkflowExternalSubtitleInput,
                 payload: ExternalSubtitleMuxPayload
-            )?
-        if let review = admission.job.workflow.externalSubtitleReview {
-            guard admission.inputURLs.count == 2 else { return .needsReview }
+            )
+        ]()
+        let reviews = admission.job.workflow.externalSubtitleReviews
+        guard admission.inputURLs.count == reviews.count + 1 else { return .needsReview }
+        for (index, review) in reviews.enumerated() {
             do {
-                resolvedExternalSubtitle = try await automaticExternalSubtitle(
-                    review: review,
-                    sourceURL: admission.inputURLs[1]
-                )
+                resolvedExternalSubtitles.append(
+                    try await automaticExternalSubtitle(
+                        review: review,
+                        sourceURL: admission.inputURLs[index + 1]
+                    ))
             } catch {
                 return .needsReview
             }
-        } else {
-            resolvedExternalSubtitle = nil
         }
+        failureTracker.lastActiveStage = .planned
         let availableVideoPresets: [VideoPreset]
         let availableAudioPresets: [AudioTranscodePreset]
         if SavedWorkflowCompiler().needsEncodingCapabilities(for: workflow, asset: asset) {
@@ -3000,9 +3439,12 @@ final class AppModel {
                 workflow,
                 for: asset,
                 inputs: SavedWorkflowResolvedInputs(
-                    externalSubtitle: resolvedExternalSubtitle?.input,
+                    externalSubtitle: resolvedExternalSubtitles.first?.input,
+                    sourceTrackLanguageOverrides:
+                        admission.job.workflow.sourceTrackLanguageOverrides,
                     availableVideoPresets: availableVideoPresets,
-                    availableAudioPresets: availableAudioPresets
+                    availableAudioPresets: availableAudioPresets,
+                    additionalExternalSubtitles: resolvedExternalSubtitles.dropFirst().map(\.input)
                 )
             )
         } catch is SavedWorkflowCompilationError {
@@ -3020,13 +3462,120 @@ final class AppModel {
         guard (try? MediaFileRevisionReader().read(sourceURL)) == exactRevision else {
             return .needsReview
         }
+        failureTracker.lastActiveStage = .running
         _ = try await executeVerifiedEdit(
             in: asset,
             destinationURL: admission.outputURL,
-            edit: .saved(compiled, resolvedExternalSubtitle?.payload),
-            expectedSourceRevision: exactRevision
+            edit: .saved(compiled, resolvedExternalSubtitles.map(\.payload)),
+            expectedSourceRevision: exactRevision,
+            onStage: { stage in
+                failureTracker.lastActiveStage =
+                    switch stage {
+                    case .verifying: .verifying
+                    case .committing: .committing
+                    }
+            }
         )
         return .verifiedSuccess
+    }
+
+    @discardableResult
+    func enqueueReviewedEdit(
+        _ prepared: ReviewedBatchEdit, destinationURL: URL, retryingJobID: UUID? = nil
+    ) async throws -> MediaQueueSnapshot {
+        let access = SecurityScopedResourceAccess(url: prepared.sourceURL)
+        defer { withExtendedLifetime(access) {} }
+        let revision = try prepared.validatedSourceRevision()
+        let review = try prepared.reviewedIntent()
+        guard review.hasCanonicalStructure,
+            destinationURL.pathExtension.lowercased() == review.outputExtension
+        else { throw JobQueueStoreError.malformedQueue }
+        let execution = try await prepareQueueExecution(
+            intent: .reviewedEdit(review), plan: ReviewedEditPlanner().plan(review),
+            inputURLs: [prepared.sourceURL], destinationURL: destinationURL,
+            sourceDisposition: .keepOriginal, retryingJobID: retryingJobID,
+            expectedPrimaryRevision: revision.atMillisecondPrecision)
+        queueDidChange?()
+        return try await execution.recorder.load()
+    }
+
+    /// Refresh the existing operation for explicit re-review. Chapter timestamps
+    /// are never carried onto a changed source: that requires new analysis.
+    func reviewedEditForRetry(_ job: MediaQueueJob) async throws -> ReviewedQueueEditRetry {
+        guard case .reviewedEdit(let review) = job.workflow, review.hasCanonicalStructure else {
+            throw JobQueueStoreError.malformedQueue
+        }
+        let sourceURL = try resolvePrimaryQueueInput(job)
+        let access = SecurityScopedResourceAccess(url: sourceURL)
+        let prepared = try await restoreReviewedEdit(review, sourceURL: sourceURL)
+        switch review {
+        case .tagRemoval, .subtitleCleanup: break
+        default:
+            guard
+                try prepared.validatedSourceRevision().atMillisecondPrecision
+                    == job.inputs.first?.reviewedRevision,
+                try prepared.reviewedIntent() == review
+            else { throw SavedWorkflowExecutionError.sourceChangedSinceReview }
+        }
+        return ReviewedQueueEditRetry(edit: prepared, sourceAccess: access)
+    }
+
+    private func restoreReviewedEdit(
+        _ review: MediaQueueReviewedEdit, sourceURL: URL
+    ) async throws -> ReviewedBatchEdit {
+        switch review {
+        case .subtitleCleanup(let format, let sourceHash, _, let restoringIDs):
+            guard sourceURL.pathExtension.lowercased() == format.filenameExtension else {
+                throw SubtitleCleanupExecutionError.unsupportedFormat
+            }
+            let preview: ExternalSubtitleFilePreview
+            switch format {
+            case .subRip: preview = .subRip(try await previewSubtitleCleanup(at: sourceURL))
+            case .ass, .ssa:
+                preview = .advanced(try await previewAdvancedSubtitleCleanup(at: sourceURL))
+            }
+            return .subtitleCleanup(
+                preview, restoringIDs: preview.sourceSHA256 == sourceHash ? Set(restoringIDs) : [])
+        case .tagRemoval, .chapters, .trackMetadata, .subtitleExtraction, .fastTrim:
+            let (source, revision) = try await inspectBatchSource(sourceURL)
+            switch review {
+            case .tagRemoval: return .tagRemoval(try await previewMatroskaTags(in: source))
+            case .chapters(_, let desired):
+                return .chapters(try await previewChapters(in: source), desired)
+            case .trackMetadata(_, let edits):
+                return .trackMetadata(
+                    ReviewedTrackMetadata(source: source, edits: edits, sourceRevision: revision))
+            case .subtitleExtraction(let uid, _, _):
+                return .subtitleExtraction(
+                    try await previewMatroskaTextSubtitleExtraction(in: source, trackUID: uid))
+            case .fastTrim(let requested, _, _):
+                return .fastTrim(try await previewBatchFastTrim(in: source, range: requested))
+            case .subtitleCleanup: preconditionFailure("Handled above")
+            }
+        }
+    }
+
+    /// Refresh file-specific identities before presenting a new batch review.
+    func inspectBatchSource(_ url: URL) async throws -> (MediaAsset, MediaFileRevision) {
+        let access = SecurityScopedResourceAccess(url: url)
+        defer { withExtendedLifetime(access) {} }
+        let revision = try MediaFileRevisionReader().read(url)
+        let (_, _, inspector) = try makeToolExecutionContext()
+        let asset = try await inspector.inspect(url)
+        guard try MediaFileRevisionReader().read(url) == revision else {
+            throw SavedWorkflowExecutionError.sourceChangedSinceReview
+        }
+        return (asset, revision)
+    }
+
+    func previewBatchFastTrim(in source: MediaAsset, range: MediaTrimRange) async throws
+        -> FastTrimPreview
+    {
+        let preview = try await previewTrim(
+            in: source, request: TrimReviewRequest(mode: .fast, range: range, exactChoice: nil),
+            capabilities: .unavailable)
+        guard case .fast(let fast) = preview else { throw ExactTrimPlanningError.invalidChoice }
+        return fast
     }
 
     private func automaticExternalSubtitle(
@@ -3082,7 +3631,7 @@ final class AppModel {
         planningMessage: String,
         runningMessage: String
     ) async throws -> HistoryExecution {
-        let recorder = try historyRecorderFactory()
+        let recorder = try historyRecorder()
         var job = MediaJobRecord(
             createdAt: Date(),
             workflowID: workflowID,
@@ -3185,6 +3734,27 @@ final class AppModel {
     }
 
     static func sanitizedFailureMessage(for error: Error) -> String {
+        if let transactionError = error as? OutputTransactionError {
+            return switch transactionError {
+            case .unsafeSource:
+                "Execution stopped because the source changed or became unavailable."
+            case .unsafeDestination:
+                "Execution stopped: the output location was unavailable or unsafe."
+            case .destinationExists:
+                "Execution stopped: an item already existed at the output location."
+            case .commitFailed(let code) where code == EACCES || code == EPERM || code == EROFS:
+                "Execution stopped: output commit permission was denied."
+            case .commitFailed(let code) where code == ENOTSUP || code == EOPNOTSUPP:
+                "Execution stopped: the output filesystem did not support the verified no-overwrite commit."
+            case .commitFailed:
+                "Execution stopped: the verified output could not be committed."
+            case .invalidState, .cloneFailed:
+                "Edit stopped before a verified commit."
+            }
+        }
+        if error is HistoryExecutionError || error is JobHistoryStoreError {
+            return "Execution stopped: history could not be updated."
+        }
         if let verificationError = error as? MKVRemuxVerificationError {
             return switch verificationError {
             case .emptyOutput: "Verification failed: the temporary MKV was empty."
@@ -3284,15 +3854,32 @@ final class AppModel {
             return switch executionError {
             case .staleSource:
                 "Execution stopped because a source changed after review."
-            case .toolFailed:
-                "Execution stopped: mkvmerge could not create the temporary joined MKV."
+            case .toolFailed(let tool, _, _):
+                sanitizedLosslessJoinToolFailure(tool)
+            case .unsafeHeaderNormalizedVideo:
+                "Execution stopped because an H.264 packet-copy intermediate failed its safety checks."
             case .unsafeChapterOutput, .chapterVerificationFailed:
                 "Verification failed: chapter timing or titles did not match the reviewed join."
             case .committedOutputAuditFailed:
                 "Output committed, but its final reopen audit failed."
             case .unsupportedDestination, .invalidPath, .requiresReview,
-                .invalidChapterTimeline, .missingStableTrackIdentity:
+                .invalidChapterTimeline, .missingStableTrackIdentity,
+                .invalidHeaderNormalization:
                 "Execution stopped because the reviewed lossless join was no longer valid."
+            }
+        }
+        if let auditError = error as? JoinOutputAuditError {
+            return switch auditError {
+            case .decodeFailed(let boundaryIndex, _, _) where boundaryIndex >= 0:
+                "Verification failed: the joined output did not decode cleanly across boundary "
+                    + "\(boundaryIndex + 1)."
+            case .truncatedDecodeDiagnostics(let boundaryIndex) where boundaryIndex >= 0:
+                "Verification failed: join-boundary diagnostics exceeded the safety limit at "
+                    + "boundary \(boundaryIndex + 1)."
+            case .invalidTimeline, .invalidLanePlan, .unsafeInput, .decodeFailed,
+                .truncatedDecodeDiagnostics, .packetFingerprintFailed,
+                .packetFingerprintBatchFailed, .packetCountChanged, .packetPayloadChanged:
+                "Verification failed: the joined output did not pass its boundary and packet audit."
             }
         }
         if let executionError = error as? JoinFinalAssemblyExecutionError,
@@ -3311,6 +3898,27 @@ final class AppModel {
             return "Output committed, but its final reopen audit failed."
         }
         return "Edit stopped before a verified commit."
+    }
+
+    static func privacySafeQueueFailure(
+        for error: Error,
+        lastActiveStage: MediaJobState,
+        inputCount: Int
+    ) -> PrivacySafeMediaFailure {
+        PrivacySafeMediaFailureClassifier.classify(
+            sanitizedMessage: sanitizedFailureMessage(for: error),
+            lastActiveStage: lastActiveStage,
+            inputCount: inputCount
+        )
+    }
+
+    private static func sanitizedLosslessJoinToolFailure(_ tool: String) -> String {
+        let allowedTools = Set(["ffmpeg", "mkvmerge", "mkvextract", "mkvpropedit"])
+        guard allowedTools.contains(tool) else {
+            return
+                "Execution stopped: a local media tool could not create the temporary joined MKV."
+        }
+        return "Execution stopped: \(tool) could not create the temporary joined MKV."
     }
 
     nonisolated private static func historyInput(_ asset: MediaAsset) -> MediaJobInput {

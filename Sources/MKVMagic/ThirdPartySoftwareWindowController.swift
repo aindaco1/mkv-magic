@@ -248,7 +248,7 @@ final class ThirdPartySoftwareViewController: NSViewController {
             wrappingLabelWithString:
                 "Review the notices and full license texts shipped inside this copy of MKV Magic."
         )
-        introduction.textColor = .secondaryLabelColor
+        introduction.textColor = AppPalette.secondaryText
 
         documentPicker.addItems(withTitles: documents.map(\.title))
         documentPicker.target = self

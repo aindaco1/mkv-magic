@@ -104,6 +104,13 @@ public struct SavedWorkflowExternalSubtitleInput: Equatable, Sendable {
 
 public struct SavedWorkflowResolvedInputs: Equatable, Sendable {
     public let externalSubtitle: SavedWorkflowExternalSubtitleInput?
+    public let additionalExternalSubtitles: [SavedWorkflowExternalSubtitleInput]
+    public var externalSubtitles: [SavedWorkflowExternalSubtitleInput] {
+        (externalSubtitle.map { [$0] } ?? []) + additionalExternalSubtitles
+    }
+    /// Per-run source audio language choices. These remain review-bound input
+    /// rather than portable recipe data because track IDs belong to one file.
+    public let sourceTrackLanguageOverrides: [Int: String]
     /// Ordered by the active local recommendation. Paths and probe details never
     /// enter the portable recipe.
     public let availableVideoPresets: [VideoPreset]
@@ -111,10 +118,14 @@ public struct SavedWorkflowResolvedInputs: Equatable, Sendable {
 
     public init(
         externalSubtitle: SavedWorkflowExternalSubtitleInput? = nil,
+        sourceTrackLanguageOverrides: [Int: String] = [:],
         availableVideoPresets: [VideoPreset] = [],
-        availableAudioPresets: [AudioTranscodePreset] = []
+        availableAudioPresets: [AudioTranscodePreset] = [],
+        additionalExternalSubtitles: [SavedWorkflowExternalSubtitleInput] = []
     ) {
         self.externalSubtitle = externalSubtitle
+        self.additionalExternalSubtitles = additionalExternalSubtitles
+        self.sourceTrackLanguageOverrides = sourceTrackLanguageOverrides
         self.availableVideoPresets = availableVideoPresets
         self.availableAudioPresets = availableAudioPresets
     }
@@ -175,6 +186,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     public let suggestedOutputFilename: String?
     public let videoConversionChoice: ExactTrimChoice?
     public let mkvRemuxPlan: ResolvedMKVRemuxPlan?
+    public let sourceTrackLanguageOverrides: [Int: String]
 
     public init(
         workflowID: UUID,
@@ -186,7 +198,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         externalSubtitleCleanupChangeCount: Int? = nil,
         suggestedOutputFilename: String? = nil,
         videoConversionChoice: ExactTrimChoice? = nil,
-        mkvRemuxPlan: ResolvedMKVRemuxPlan? = nil
+        mkvRemuxPlan: ResolvedMKVRemuxPlan? = nil,
+        sourceTrackLanguageOverrides: [Int: String] = [:]
     ) {
         self.workflowID = workflowID
         self.workflowName = workflowName
@@ -198,6 +211,7 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
         self.suggestedOutputFilename = suggestedOutputFilename
         self.videoConversionChoice = videoConversionChoice
         self.mkvRemuxPlan = mkvRemuxPlan
+        self.sourceTrackLanguageOverrides = sourceTrackLanguageOverrides
     }
 
     public var trackRemoval: TrackRemoval? {
@@ -233,7 +247,11 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
     }
 
     public var externalSubtitleInput: SavedWorkflowExternalSubtitleInput? {
-        for operation in operations {
+        externalSubtitleInputs.first
+    }
+
+    public var externalSubtitleInputs: [SavedWorkflowExternalSubtitleInput] {
+        operations.compactMap { operation in
             if case .addExternalSubtitle(let url, let metadata, let format) = operation {
                 return SavedWorkflowExternalSubtitleInput(
                     sourceURL: url,
@@ -242,8 +260,8 @@ public struct CompiledSavedWorkflow: Equatable, Sendable {
                     reviewedCleanupChangeCount: externalSubtitleCleanupChangeCount
                 )
             }
+            return nil
         }
-        return nil
     }
 
     public var createsUnchangedCopy: Bool {
@@ -357,6 +375,11 @@ public struct SavedWorkflowCompiler: Sendable {
             throw SavedWorkflowCompilationError.noEnabledSteps
         }
         let enabledActions = Set(enabledSteps.map(\.action))
+        let sourceTrackLanguageOverrides = try Self.validatedSourceTrackLanguageOverrides(
+            inputs.sourceTrackLanguageOverrides,
+            enabledActions: enabledActions,
+            asset: asset
+        )
         let enabledVideoConversions = enabledSteps.filter { $0.action.isVideoConversion }
         guard enabledVideoConversions.count <= 1 else {
             throw SavedWorkflowCompilationError.multipleVideoConversions
@@ -400,28 +423,32 @@ public struct SavedWorkflowCompiler: Sendable {
             throw SavedWorkflowCompilationError.unsupportedContainer
         }
         if mkvRemuxPlan != nil {
-            let compatibleActions: Set<SavedWorkflowAction> = [.remuxToMKV, .normalizeFilename]
+            let compatibleActions: Set<SavedWorkflowAction> = [
+                .remuxToMKV,
+                .normalizeFilename,
+                .addExternalSubtitle,
+                .cleanExternalSubtitleText,
+            ]
             guard enabledActions.isSubset(of: compatibleActions) else {
                 throw SavedWorkflowCompilationError.remuxCannotCombineWithOtherActions
             }
         }
-        let clearsAllTagsWillRun: Bool
+        let tagCountsToClear: MatroskaTagCounts?
         if enabledActions.contains(.clearAllTags) {
             do {
-                _ = try MatroskaTagPolicy.counts(in: asset)
-                clearsAllTagsWillRun = true
+                tagCountsToClear = try MatroskaTagPolicy.counts(in: asset)
             } catch MatroskaTagPolicyError.noTags {
-                clearsAllTagsWillRun = false
+                tagCountsToClear = nil
             } catch MatroskaTagPolicyError.unavailableCounts {
                 throw SavedWorkflowCompilationError.unavailableMatroskaTagCounts
             } catch {
                 throw SavedWorkflowCompilationError.unsupportedContainer
             }
         } else {
-            clearsAllTagsWillRun = false
+            tagCountsToClear = nil
         }
         let conversionPlanningAsset =
-            clearsAllTagsWillRun ? assetWithClearedTagFacts(asset) : asset
+            tagCountsToClear != nil ? assetWithClearedTagFacts(asset) : asset
         let imageAttachmentRemoval: MatroskaAttachmentRemoval?
         if enabledActions.contains(.removeImageAttachments) {
             do {
@@ -550,6 +577,18 @@ public struct SavedWorkflowCompiler: Sendable {
         {
             throw SavedWorkflowCompilationError.externalSubtitleCleanupRequiresAddStep
         }
+        // Multiple sidecars currently share the packet-copy common-container
+        // remux. Other recipes retain their explicitly reviewed single-sidecar
+        // contract rather than silently dropping extra inputs.
+        if inputs.externalSubtitles.count > 1 {
+            guard
+                inputs.externalSubtitles.count
+                    <= ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo,
+                enabledActions == [.remuxToMKV, .addExternalSubtitle],
+                Set(inputs.externalSubtitles.map { $0.sourceURL.standardizedFileURL }).count
+                    == inputs.externalSubtitles.count
+            else { throw SavedWorkflowCompilationError.invalidExternalSubtitleInput }
+        }
 
         var operations = [WorkflowOperation]()
         var stepOutcomes = [SavedWorkflowStepOutcome]()
@@ -634,16 +673,14 @@ public struct SavedWorkflowCompiler: Sendable {
                     )
                 }
             case .clearAllTags:
-                if clearsAllTagsWillRun {
+                if let counts = tagCountsToClear {
                     operations.append(.clearAllTags)
-                    let globalCount = asset.globalTagCount ?? 0
-                    let trackCount = asset.trackTagCount ?? 0
                     stepOutcomes.append(
                         outcome(
                             for: step,
                             disposition: .applied,
                             detail:
-                                "Remove \(globalCount) global and \(trackCount) track Matroska tags"
+                                "Remove \(counts.global) global and \(counts.track) track Matroska tags"
                         )
                     )
                 } else {
@@ -839,25 +876,30 @@ public struct SavedWorkflowCompiler: Sendable {
                 guard let input = inputs.externalSubtitle else {
                     throw SavedWorkflowCompilationError.missingExternalSubtitleInput
                 }
-                guard input.sourceURL.standardizedFileURL != asset.sourceURL.standardizedFileURL,
-                    input.sourceURL.pathExtension.lowercased()
-                        == input.format.filenameExtension
-                else {
-                    throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
-                }
-                operations.append(
-                    .addExternalSubtitle(
-                        url: input.sourceURL,
-                        metadata: input.metadata,
-                        format: input.format
+                for subtitle in inputs.externalSubtitles {
+                    guard
+                        subtitle.sourceURL.standardizedFileURL
+                            != asset.sourceURL.standardizedFileURL,
+                        subtitle.sourceURL.pathExtension.lowercased()
+                            == subtitle.format.filenameExtension,
+                        (try? ChapterLanguage.canonical(subtitle.metadata.language)) != nil
+                    else { throw SavedWorkflowCompilationError.invalidExternalSubtitleInput }
+                    operations.append(
+                        .addExternalSubtitle(
+                            url: subtitle.sourceURL,
+                            metadata: subtitle.metadata,
+                            format: subtitle.format
+                        )
                     )
-                )
+                }
                 stepOutcomes.append(
                     outcome(
                         for: step,
                         disposition: .applied,
                         detail:
-                            "Add one reviewed \(input.format.displayName) subtitle as the last track"
+                            inputs.externalSubtitles.count == 1
+                            ? "Add one reviewed \(input.format.displayName) subtitle as the last track"
+                            : "Add \(inputs.externalSubtitles.count) reviewed text subtitles in the displayed order"
                     )
                 )
             case .cleanExternalSubtitleText:
@@ -1003,16 +1045,32 @@ public struct SavedWorkflowCompiler: Sendable {
         let plan: ExecutionPlan
         if let mkvRemuxPlan {
             let trackNoun = mkvRemuxPlan.copiedTrackCount == 1 ? "track" : "tracks"
+            let externalSubtitleSummary =
+                enabledActions.contains(.addExternalSubtitle)
+                ? (inputs.externalSubtitles.count == 1
+                    ? " and add one reviewed text subtitle"
+                    : " and add \(inputs.externalSubtitles.count) reviewed text subtitles") : ""
+            let sourceLanguageSummary =
+                sourceTrackLanguageOverrides.isEmpty
+                ? ""
+                : "; apply reviewed source languages "
+                    + sourceTrackLanguageOverrides.sorted { $0.key < $1.key }.map {
+                        "#\($0.key)=\($0.value)"
+                    }.joined(separator: ", ")
             plan = ExecutionPlan(
                 stages: [
                     PlanStage(
                         mechanism: .mkvMerge,
                         summary:
                             "Packet-copy \(mkvRemuxPlan.copiedTrackCount) compatible media \(trackNoun) into one MKV"
+                            + externalSubtitleSummary + sourceLanguageSummary
                     ),
                     PlanStage(
                         mechanism: .verify,
-                        summary: "Verify copied packet payloads, tracks, and chapters"
+                        summary:
+                            enabledActions.contains(.addExternalSubtitle)
+                            ? "Verify copied packet payloads, tracks, chapters, and the reviewed subtitle"
+                            : "Verify copied packet payloads, tracks, and chapters"
                     ),
                     PlanStage(
                         mechanism: .commit,
@@ -1057,19 +1115,29 @@ public struct SavedWorkflowCompiler: Sendable {
                 audioEncodeCount: audioEncodeCount
             )
         }
+        var summaries = stepOutcomes.filter { $0.disposition == .applied }.map(\.detail)
+        if !sourceTrackLanguageOverrides.isEmpty {
+            summaries.append(
+                "Apply reviewed source languages "
+                    + sourceTrackLanguageOverrides.sorted { $0.key < $1.key }.map {
+                        "#\($0.key)=\($0.value)"
+                    }.joined(separator: ", ")
+            )
+        }
         let compiled = CompiledSavedWorkflow(
             workflowID: workflow.id,
             workflowName: workflow.name,
             operations: operations,
             plan: plan,
-            summaries: stepOutcomes.filter { $0.disposition == .applied }.map(\.detail),
+            summaries: summaries,
             stepOutcomes: stepOutcomes,
             externalSubtitleCleanupChangeCount: enabledActions.contains(
                 .cleanExternalSubtitleText
             ) ? inputs.externalSubtitle?.reviewedCleanupChangeCount : nil,
             suggestedOutputFilename: suggestedOutputFilename,
             videoConversionChoice: videoConversionChoice,
-            mkvRemuxPlan: mkvRemuxPlan
+            mkvRemuxPlan: mkvRemuxPlan,
+            sourceTrackLanguageOverrides: sourceTrackLanguageOverrides
         )
         return SavedWorkflowCompilationPreview(
             workflowID: workflow.id,
@@ -1077,6 +1145,29 @@ public struct SavedWorkflowCompiler: Sendable {
             stepOutcomes: stepOutcomes,
             compiledWorkflow: compiled
         )
+    }
+
+    private static func validatedSourceTrackLanguageOverrides(
+        _ overrides: [Int: String],
+        enabledActions: Set<SavedWorkflowAction>,
+        asset: MediaAsset
+    ) throws -> [Int: String] {
+        guard !overrides.isEmpty else { return [:] }
+        guard enabledActions.contains(.addExternalSubtitle) || enabledActions.contains(.remuxToMKV)
+        else {
+            throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
+        }
+        let audioTrackIDs = Set(asset.tracks.filter { $0.kind == .audio }.map(\.id))
+        guard Set(overrides.keys).isSubset(of: audioTrackIDs) else {
+            throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
+        }
+        do {
+            return try overrides.reduce(into: [Int: String]()) { result, entry in
+                result[entry.key] = try ChapterLanguage.canonical(entry.value)
+            }
+        } catch {
+            throw SavedWorkflowCompilationError.invalidExternalSubtitleInput
+        }
     }
 
     private func outcome(

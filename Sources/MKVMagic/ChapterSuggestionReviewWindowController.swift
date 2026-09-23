@@ -1,25 +1,81 @@
 import AppKit
 import MKVMagicCore
 
+struct ChapterSuggestionReviewGroup: Identifiable, Equatable, Sendable {
+    let id: UUID
+    let sourceName: String
+    let suggestions: [ChapterSuggestion]
+
+    init(id: UUID, sourceName: String, suggestions: [ChapterSuggestion]) {
+        self.id = id
+        self.sourceName = sourceName
+        self.suggestions = suggestions
+    }
+}
+
+struct ReviewedChapterSuggestionGroup: Equatable, Sendable {
+    let id: UUID
+    let suggestions: [ChapterSuggestion]
+}
+
 @MainActor
 final class ChapterSuggestionReviewWindowController: NSWindowController {
     private let reviewViewController: ChapterSuggestionReviewViewController
-    private var completion: (([ChapterSuggestion]) -> Void)?
+    private let singleGroupID: UUID?
+    private var completion: (([ReviewedChapterSuggestionGroup]) -> Void)?
 
     init(suggestions: [ChapterSuggestion]) {
-        reviewViewController = ChapterSuggestionReviewViewController(suggestions: suggestions)
-        let window = NSPanel(contentViewController: reviewViewController)
+        let id = UUID()
+        singleGroupID = id
+        reviewViewController = ChapterSuggestionReviewViewController(
+            groups: [
+                ChapterSuggestionReviewGroup(
+                    id: id,
+                    sourceName: "",
+                    suggestions: suggestions
+                )
+            ],
+            explanation:
+                "These timestamps were detected locally. Uncheck false positives; you can rename or nest every added chapter afterward.",
+            actionTitle: "Add Selected"
+        )
+        let window = Self.makeWindow(content: reviewViewController)
+        window.minSize = NSSize(width: 680, height: 400)
+        super.init(window: window)
+        configureCallbacks()
+    }
+
+    init(groups: [ChapterSuggestionReviewGroup]) {
+        singleGroupID = nil
+        reviewViewController = ChapterSuggestionReviewViewController(
+            groups: groups,
+            explanation:
+                "Every timestamp was detected locally. Uncheck false positives for any file before MKV Magic prepares separate verified chapter copies.",
+            actionTitle: "Continue with Selected"
+        )
+        let window = Self.makeWindow(content: reviewViewController)
+        super.init(window: window)
+        configureCallbacks()
+    }
+
+    private static func makeWindow(
+        content: ChapterSuggestionReviewViewController
+    ) -> NSPanel {
+        let window = NSPanel(contentViewController: content)
         window.title = "Review Chapter Suggestions"
         window.styleMask = [.titled, .closable, .resizable]
-        window.setContentSize(NSSize(width: 680, height: 520))
+        window.setContentSize(NSSize(width: 760, height: 520))
         window.minSize = NSSize(width: 560, height: 400)
         window.configureMKVMagicKeyboardNavigation(
-            startingAt: reviewViewController.preferredInitialFirstResponder
+            startingAt: content.preferredInitialFirstResponder
         )
-        super.init(window: window)
+        return window
+    }
+
+    private func configureCallbacks() {
         reviewViewController.onCancel = { [weak self] in self?.finish(with: []) }
-        reviewViewController.onAdd = { [weak self] suggestions in
-            self?.finish(with: suggestions)
+        reviewViewController.onAdd = { [weak self] groups in
+            self?.finish(with: groups)
         }
     }
 
@@ -32,9 +88,31 @@ final class ChapterSuggestionReviewWindowController: NSWindowController {
         for parentWindow: NSWindow,
         completion: @escaping ([ChapterSuggestion]) -> Void
     ) {
-        self.completion = completion
-        guard let window else {
+        guard let singleGroupID else {
             completion([])
+            return
+        }
+        self.completion = { groups in
+            completion(groups.first { $0.id == singleGroupID }?.suggestions ?? [])
+        }
+        beginSheet(for: parentWindow)
+    }
+
+    func beginBatchSheet(
+        for parentWindow: NSWindow,
+        completion: @escaping ([ReviewedChapterSuggestionGroup]) -> Void
+    ) {
+        guard singleGroupID == nil else {
+            completion([])
+            return
+        }
+        self.completion = completion
+        beginSheet(for: parentWindow)
+    }
+
+    private func beginSheet(for parentWindow: NSWindow) {
+        guard let window else {
+            completion?([])
             return
         }
         parentWindow.beginSheet(window)
@@ -44,13 +122,13 @@ final class ChapterSuggestionReviewWindowController: NSWindowController {
         finish(with: [])
     }
 
-    private func finish(with suggestions: [ChapterSuggestion]) {
+    private func finish(with groups: [ReviewedChapterSuggestionGroup]) {
         guard let completion else { return }
         if let window {
             window.sheetParent?.endSheet(window)
         }
         self.completion = nil
-        completion(suggestions)
+        completion(groups)
     }
 }
 
@@ -59,19 +137,38 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
     NSTableViewDataSource, NSTableViewDelegate
 {
     var onCancel: (() -> Void)?
-    var onAdd: (([ChapterSuggestion]) -> Void)?
+    var onAdd: (([ReviewedChapterSuggestionGroup]) -> Void)?
 
-    private let suggestions: [ChapterSuggestion]
+    private struct Row {
+        let groupID: UUID
+        let sourceName: String
+        let suggestion: ChapterSuggestion
+    }
+
+    private let groups: [ChapterSuggestionReviewGroup]
+    private let explanationText: String
+    private let rows: [Row]
     private var selectedRows: Set<Int>
     private let tableView = NSTableView()
     private let selectionLabel = NSTextField(labelWithString: "")
-    private let addButton = NSButton(title: "Add Selected", target: nil, action: nil)
+    private let addButton: NSButton
 
     var preferredInitialFirstResponder: NSView { tableView }
 
-    init(suggestions: [ChapterSuggestion]) {
-        self.suggestions = suggestions
-        selectedRows = Set(suggestions.indices)
+    init(
+        groups: [ChapterSuggestionReviewGroup],
+        explanation: String,
+        actionTitle: String
+    ) {
+        self.groups = groups
+        explanationText = explanation
+        rows = groups.flatMap { group in
+            group.suggestions.map {
+                Row(groupID: group.id, sourceName: group.sourceName, suggestion: $0)
+            }
+        }
+        selectedRows = Set(rows.indices)
+        addButton = NSButton(title: actionTitle, target: nil, action: nil)
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -85,27 +182,35 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         let heading = NSTextField(labelWithString: "Review before adding")
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let explanation = NSTextField(
-            wrappingLabelWithString:
-                "These timestamps were detected locally. Uncheck false positives; you can rename or nest every added chapter afterward."
+            wrappingLabelWithString: explanationText
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         let useColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Use"))
         useColumn.title = "Use"
         useColumn.width = 56
         useColumn.minWidth = 48
         useColumn.maxWidth = 72
+        tableView.addTableColumn(useColumn)
+        if groups.count > 1 {
+            let sourceColumn = NSTableColumn(
+                identifier: NSUserInterfaceItemIdentifier("Source"))
+            sourceColumn.title = "File"
+            sourceColumn.width = 190
+            sourceColumn.minWidth = 120
+            tableView.addTableColumn(sourceColumn)
+        }
         let timeColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Time"))
         timeColumn.title = "Time"
         timeColumn.width = 150
         timeColumn.minWidth = 120
+        tableView.addTableColumn(timeColumn)
         let signalColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("Signal"))
         signalColumn.title = "Detected boundary"
         signalColumn.width = 400
         signalColumn.minWidth = 240
-        tableView.addTableColumn(useColumn)
-        tableView.addTableColumn(timeColumn)
         tableView.addTableColumn(signalColumn)
+        tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         tableView.dataSource = self
         tableView.delegate = self
         tableView.rowHeight = 26
@@ -118,13 +223,15 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         let scroll = NSScrollView()
         scroll.documentView = tableView
         scroll.hasVerticalScroller = true
+        scroll.hasHorizontalScroller = groups.count > 1
+        scroll.autohidesScrollers = true
         scroll.borderType = .bezelBorder
 
         let selectAll = NSButton(
             title: "Select All", target: self, action: #selector(selectAllRows))
         let selectNone = NSButton(
             title: "Select None", target: self, action: #selector(selectNoRows))
-        selectionLabel.textColor = .secondaryLabelColor
+        selectionLabel.textColor = AppPalette.secondaryText
         selectionLabel.setAccessibilityLabel("Selected chapter suggestion count")
         let selectionSpacer = NSView()
         selectionSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -176,7 +283,7 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        suggestions.count
+        rows.count
     }
 
     func tableView(
@@ -184,10 +291,11 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
         viewFor tableColumn: NSTableColumn?,
         row: Int
     ) -> NSView? {
-        guard suggestions.indices.contains(row), let identifier = tableColumn?.identifier else {
+        guard rows.indices.contains(row), let identifier = tableColumn?.identifier else {
             return nil
         }
-        let suggestion = suggestions[row]
+        let item = rows[row]
+        let suggestion = item.suggestion
         switch identifier.rawValue {
         case "Use":
             let checkbox =
@@ -206,13 +314,15 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
                 identifier: identifier,
                 value: ChapterTimestamp.format(suggestion.time, digits: 3)
             )
+        case "Source":
+            return labelCell(identifier: identifier, value: item.sourceName)
         default:
             return labelCell(identifier: identifier, value: suggestion.signalDescription)
         }
     }
 
     @objc private func toggleRow(_ sender: NSButton) {
-        guard suggestions.indices.contains(sender.tag) else { return }
+        guard rows.indices.contains(sender.tag) else { return }
         if sender.state == .on {
             selectedRows.insert(sender.tag)
         } else {
@@ -222,7 +332,7 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
     }
 
     @objc private func selectAllRows() {
-        selectedRows = Set(suggestions.indices)
+        selectedRows = Set(rows.indices)
         tableView.reloadData()
         updateSelectionState()
     }
@@ -234,7 +344,14 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
     }
 
     @objc private func addSelected() {
-        onAdd?(selectedRows.sorted().map { suggestions[$0] })
+        let selected = selectedRows.sorted().map { rows[$0] }
+        onAdd?(
+            groups.compactMap { group in
+                let suggestions = selected.filter { $0.groupID == group.id }.map(\.suggestion)
+                guard !suggestions.isEmpty else { return nil }
+                return ReviewedChapterSuggestionGroup(id: group.id, suggestions: suggestions)
+            }
+        )
     }
 
     @objc private func cancel() {
@@ -243,7 +360,7 @@ private final class ChapterSuggestionReviewViewController: NSViewController,
 
     private func updateSelectionState() {
         selectionLabel.stringValue =
-            "\(selectedRows.count) of \(suggestions.count) selected"
+            "\(selectedRows.count) of \(rows.count) selected"
         addButton.isEnabled = !selectedRows.isEmpty
     }
 

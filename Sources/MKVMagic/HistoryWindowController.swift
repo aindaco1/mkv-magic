@@ -67,14 +67,14 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         let help = NSTextField(
             labelWithString: "Verified jobs and their sanitized execution progress."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
         let exportHelp = NSTextField(
             wrappingLabelWithString:
-                "The optional report contains coarse media facts, encode counts, lifecycle states, privacy-safe failure categories, "
+                "The optional report contains coarse media facts, encode counts, lifecycle states, privacy-safe History and queue failure categories, "
                 + "and app/tool versions. It excludes filenames, paths, titles, subtitle text, "
                 + "custom workflow names, raw tool output, and exact timestamps."
         )
-        exportHelp.textColor = .secondaryLabelColor
+        exportHelp.textColor = AppPalette.secondaryText
 
         for (identifier, title, width) in [
             ("workflow", "Workflow", 170.0),
@@ -103,22 +103,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
         let detailHeading = NSTextField(labelWithString: "Selected Job Details")
         detailHeading.font = .systemFont(ofSize: 13, weight: .semibold)
-        detailText.isEditable = false
-        detailText.isSelectable = true
-        detailText.drawsBackground = true
-        detailText.backgroundColor = .textBackgroundColor
-        detailText.textColor = .labelColor
-        detailText.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        detailText.textContainerInset = NSSize(width: 8, height: 8)
-        detailText.string = HistoryPresentation.emptyDetail
+        ReadOnlyTextViewPresentation.configure(detailText, drawsBackground: true)
+        ReadOnlyTextViewPresentation.present(HistoryPresentation.emptyDetail, in: detailText)
         detailText.setAccessibilityLabel("Selected job progress")
         detailText.setAccessibilityHelp(
             "Read-only ordered stages and sanitized messages for the selected job."
         )
-        let detailScroll = NSScrollView()
-        detailScroll.documentView = detailText
-        detailScroll.hasVerticalScroller = true
-        detailScroll.borderType = .bezelBorder
+        let detailScroll = ReadOnlyTextViewPresentation.scrollView(
+            containing: detailText,
+            borderType: .bezelBorder
+        )
 
         exportButton.target = self
         exportButton.action = #selector(exportPrivacySafeReport)
@@ -127,7 +121,7 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
         exportButton.setAccessibilityHelp(
             "Choose a local destination for a bounded report without media names or paths."
         )
-        exportStatus.textColor = .secondaryLabelColor
+        exportStatus.textColor = AppPalette.secondaryText
         exportStatus.lineBreakMode = .byTruncatingMiddle
         exportStatus.setAccessibilityLabel("Report export status")
         let exportRow = NSStackView(views: [exportButton, activityIndicator, exportStatus])
@@ -192,43 +186,41 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
     }
 
     @objc private func exportPrivacySafeReport() {
-        guard let window = view.window, let onExport else { return }
+        guard let onExport else { return }
         let panel = NSSavePanel()
         panel.title = "Export Privacy-Safe Support Report"
         panel.prompt = "Export"
         panel.nameFieldStringValue = "MKV-Magic-Support-Report.json"
         panel.allowedContentTypes = [.json]
         panel.canCreateDirectories = true
-        panel.message =
-            "Review and share this local report only if you choose. It contains no media names or paths."
-        panel.beginSheetModal(for: window) { [weak self] response in
-            guard response == .OK, let self, let destinationURL = panel.url else { return }
-            self.exportButton.isEnabled = false
-            ActivityIndicatorPresentation.set(self.activityIndicator, active: true)
-            self.exportStatus.stringValue = "Building report…"
+        do {
+            guard let destination = try OutputSavePanel.choose(panel) else { return }
+            exportButton.isEnabled = false
+            ActivityIndicatorPresentation.set(activityIndicator, active: true)
+            exportStatus.stringValue = "Building report…"
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 defer {
+                    _ = destination.directoryAccess
                     ActivityIndicatorPresentation.set(self.activityIndicator, active: false)
+                    self.exportButton.isEnabled = true
                 }
                 do {
-                    try await onExport(destinationURL)
-                    self.exportStatus.stringValue = "Privacy-safe report exported."
-                } catch {
-                    self.exportButton.isEnabled = true
-                    AccessibleStatusPresentation.present(
-                        UserFacingErrorPresentation.message(
-                            failure: "Could not export the report.",
-                            recovery: "History is unchanged; choose another destination.",
-                            error: error
-                        ),
-                        in: self.exportStatus,
-                        returningFocusTo: self.exportButton
-                    )
-                }
-                self.exportButton.isEnabled = true
+                    try await onExport(destination.url)
+                    self.exportStatus.stringValue = OutputSavePanel.exportMessage(
+                        for: destination.url)
+                } catch { self.presentExportError(error) }
             }
-        }
+        } catch { presentExportError(error) }
+    }
+
+    private func presentExportError(_ error: Error) {
+        AccessibleStatusPresentation.present(
+            UserFacingErrorPresentation.message(
+                failure: "Could not export the report.",
+                recovery: "History is unchanged; check the output folder in Settings.", error: error
+            ),
+            in: exportStatus, returningFocusTo: exportButton)
     }
 
     private func makeCell(identifier: NSUserInterfaceItemIdentifier) -> NSTableCellView {
@@ -249,10 +241,16 @@ final class HistoryViewController: NSViewController, NSTableViewDataSource, NSTa
 
     private func renderSelectedRecord() {
         guard tableView.selectedRow >= 0, tableView.selectedRow < records.count else {
-            detailText.string = HistoryPresentation.emptyDetail
+            ReadOnlyTextViewPresentation.present(
+                HistoryPresentation.emptyDetail,
+                in: detailText
+            )
             return
         }
-        detailText.string = HistoryPresentation.detail(for: records[tableView.selectedRow])
+        ReadOnlyTextViewPresentation.present(
+            HistoryPresentation.detail(for: records[tableView.selectedRow]),
+            in: detailText
+        )
     }
 }
 

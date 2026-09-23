@@ -11,6 +11,7 @@ let package = Package(
         .library(name: "MKVMagicPlanning", targets: ["MKVMagicPlanning"]),
         .library(name: "MKVMagicExecution", targets: ["MKVMagicExecution"]),
         .executable(name: "MKVMagic", targets: ["MKVMagic"]),
+        .executable(name: "MKVMagicReportService", targets: ["MKVMagicReportService"]),
         .executable(
             name: "MKVMagicPerformanceProbe",
             targets: ["MKVMagicPerformanceProbe"]
@@ -25,6 +26,13 @@ let package = Package(
     ],
     targets: [
         .target(name: "MKVMagicCore"),
+        .target(
+            name: "MKVMagicReporting", dependencies: ["MKVMagicSystem"],
+            linkerSettings: [.linkedFramework("Security")]),
+        .executableTarget(name: "MKVMagicReportService", dependencies: ["MKVMagicReporting"]),
+        .testTarget(
+            name: "MKVMagicReportingTests",
+            dependencies: ["MKVMagicReporting", "MKVMagicReportService"]),
         .target(
             name: "MKVMagicSystem",
             dependencies: ["MKVMagicCore"],
@@ -64,6 +72,7 @@ let package = Package(
                 "MKVMagicMedia",
                 "MKVMagicPlanning",
                 "MKVMagicSystem",
+                "MKVMagicReporting",
                 .product(name: "Sparkle", package: "Sparkle"),
             ],
             exclude: ["Info.plist"],

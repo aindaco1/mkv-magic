@@ -17,6 +17,54 @@ mkv_magic_verification_architectures() {
     esac
 }
 
+mkv_magic_native_verification_architecture_for() {
+    if [[ $# -ne 2 ]]; then
+        echo "usage: mkv_magic_native_verification_architecture_for <machine-architecture> <arm64-capable>" >&2
+        return 64
+    fi
+    local machine_architecture="$1"
+    local arm64_capable="$2"
+    if [[ "$arm64_capable" == 1 ]]; then
+        printf 'arm64\n'
+        return
+    fi
+    case "$machine_architecture" in
+        arm64) printf 'arm64\n' ;;
+        x86_64) printf 'x86_64\n' ;;
+        *)
+            echo "unsupported verification host architecture" >&2
+            return 64
+            ;;
+    esac
+}
+
+mkv_magic_native_verification_architecture() {
+    local arm64_capable
+    arm64_capable="$(/usr/sbin/sysctl -in hw.optional.arm64 2>/dev/null || true)"
+    mkv_magic_native_verification_architecture_for \
+        "$(/usr/bin/uname -m)" "$arm64_capable"
+}
+
+mkv_magic_require_native_verification() {
+    if [[ $# -ne 3 ]]; then
+        echo "usage: mkv_magic_require_native_verification <architecture-list> <native-architecture> <allow-translated>" >&2
+        return 64
+    fi
+    local architecture_list="$1"
+    local native_architecture="$2"
+    local allow_translated="$3"
+    local architectures
+    architectures="$(mkv_magic_verification_architectures "$architecture_list")" || return
+    local architecture
+    while IFS= read -r architecture; do
+        if [[ "$architecture" != "$native_architecture" && \
+              "$allow_translated" != 1 ]]; then
+            echo "refusing translated $architecture verification on a $native_architecture host; use physical hardware or explicitly set MKV_MAGIC_ALLOW_TRANSLATED_VERIFICATION=1" >&2
+            return 1
+        fi
+    done <<< "$architectures"
+}
+
 canonical_existing_path() {
     local input_path="$1"
     local directory

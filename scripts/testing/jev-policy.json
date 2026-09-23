@@ -1,0 +1,1 @@
+{"calibration_examples": 24, "calibration_report_sha256": "b98f70820b24e1be2b08ca5336388a0694d214afa5208cd41583be70e28a2bc6", "calibration_sha256": "f2476ef0cbd3a1ace5dd0297508cfbf06b94651c14255ca636c4cc523313d45f", "minimum_margin": 0.1, "protocol_sha256": "7cc2b8a9655463453590a9a336a1f05cff663141ca7eaaf59210daee38b7338d", "resolved_models": ["jev-1.13.0"]}

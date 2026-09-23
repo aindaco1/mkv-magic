@@ -40,6 +40,9 @@ compare_entitlements() {
 
 compare_entitlements \
     "$app_path" "$repo_root/Configuration/MKVMagic.entitlements" app
+compare_entitlements \
+    "$app_path/Contents/XPCServices/MKVMagicReportService.xpc" \
+    "$repo_root/Configuration/ReportService.entitlements" reporter
 
 tool_root="$app_path/Contents/Resources/Tools"
 if [[ -d "$tool_root" ]]; then

@@ -77,7 +77,7 @@ final class AttachmentPickerViewController: NSViewController {
             wrappingLabelWithString:
                 "MKV Magic copies one embedded font, image, or other attachment into a separate file. The MKV remains unchanged."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
         attachmentPopup.addItems(withTitles: attachments.map(Self.title))
         attachmentPopup.setAccessibilityLabel("Matroska attachment")
         attachmentPopup.setAccessibilityHelp(
@@ -88,16 +88,15 @@ final class AttachmentPickerViewController: NSViewController {
         ])
         selector.rowSpacing = 8
         selector.columnSpacing = 12
-        selector.column(at: 0).xPlacement = .trailing
-        selector.column(at: 1).width = 430
+        NativeFormLayout.configureLabeledGrid(selector)
 
         let note = NSTextField(
             wrappingLabelWithString:
                 "Review extracts privately. Save repeats the extraction and commits only the exact reviewed bytes after reopening the result."
         )
-        note.textColor = .secondaryLabelColor
+        note.textColor = AppPalette.secondaryText
         note.font = .systemFont(ofSize: 11)
-        validationLabel.textColor = .systemRed
+        validationLabel.textColor = AppPalette.errorText
         validationLabel.font = .systemFont(ofSize: 11)
         validationLabel.setAccessibilityLabel("Attachment selection status")
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancelAction))
@@ -110,12 +109,7 @@ final class AttachmentPickerViewController: NSViewController {
         review.setAccessibilityHelp(
             "Extract the selected attachment privately and prepare an exact verified save plan."
         )
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let actions = NSStackView(views: [validationLabel, spacer, cancel, review])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
-        actions.spacing = 8
+        let actions = NativeFormLayout.footer(status: validationLabel, buttons: [cancel, review])
 
         let stack = NSStackView(views: [heading, explanation, selector, note, actions])
         stack.orientation = .vertical
@@ -131,7 +125,9 @@ final class AttachmentPickerViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor),
+            stack.contentWidthConstraint(for: heading),
+            stack.contentWidthConstraint(for: explanation),
             stack.contentWidthConstraint(for: selector),
             stack.contentWidthConstraint(for: note),
             stack.contentWidthConstraint(for: actions),

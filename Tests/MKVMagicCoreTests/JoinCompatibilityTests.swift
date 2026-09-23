@@ -23,6 +23,50 @@ final class JoinCompatibilityTests: XCTestCase {
         XCTAssertTrue(report.requiresAuthoritativeMKVToolNixValidation)
     }
 
+    func testCodecInitializationMismatchRequiresNormalizationBeforeLosslessJoin() throws {
+        let reference = h264Video(
+            id: 0,
+            initializationSHA256: String(repeating: "a", count: 64)
+        )
+        let candidate = h264Video(
+            id: 10,
+            initializationSHA256: String(repeating: "b", count: 64)
+        )
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: [
+                asset(index: 0, tracks: [reference]),
+                asset(index: 1, tracks: [candidate]),
+            ],
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+            ])
+        )
+
+        XCTAssertEqual(reference.profile, candidate.profile)
+        XCTAssertEqual(reference.level, candidate.level)
+        XCTAssertEqual(reference.dimensions, candidate.dimensions)
+        XCTAssertEqual(reference.pixelFormat, candidate.pixelFormat)
+        XCTAssertEqual(reference.frameRate, candidate.frameRate)
+        XCTAssertEqual(report.disposition, .normalizationRequired)
+        XCTAssertEqual(report.issues.count, 1)
+        XCTAssertEqual(report.issues.first?.severity, .normalizationRequired)
+        XCTAssertEqual(report.issues.first?.reason, .codecInitialization)
+        XCTAssertEqual(report.issues.first?.sourceIndex, 1)
+        XCTAssertTrue(ReviewedMKVToolNixLosslessAppendPolicy.canOffer(for: report))
+        XCTAssertFalse(
+            ReviewedMKVToolNixLosslessAppendPolicy.permitsExecution(
+                of: report,
+                afterExplicitReview: false
+            )
+        )
+        XCTAssertTrue(
+            ReviewedMKVToolNixLosslessAppendPolicy.permitsExecution(
+                of: report,
+                afterExplicitReview: true
+            )
+        )
+    }
+
     func testVideoAndAudioParameterDifferencesRequireNormalization() throws {
         let referenceVideo = video(id: 0)
         let changedVideo = MediaTrack(
@@ -80,6 +124,7 @@ final class JoinCompatibilityTests: XCTestCase {
                 .color, .hdr, .sampleRate, .channels, .channelLayout,
             ]))
         XCTAssertTrue(report.issues.allSatisfy { $0.sourceIndex == 1 })
+        XCTAssertFalse(ReviewedMKVToolNixLosslessAppendPolicy.canOffer(for: report))
     }
 
     func testMetadataFrameRateAndMissingSubtitleRequireConfirmationWithoutEncoding() throws {
@@ -521,6 +566,28 @@ final class JoinCompatibilityTests: XCTestCase {
                 transfer: "bt709",
                 matrix: "bt709"
             )
+        )
+    }
+
+    private func h264Video(id: Int, initializationSHA256: String) -> MediaTrack {
+        MediaTrack(
+            id: id,
+            kind: .video,
+            codec: "h264",
+            codecID: "V_MPEG4/ISO/AVC",
+            profile: "High",
+            level: 31,
+            codecInitializationDigest: MediaCodecInitializationDigest(
+                sha256: initializationSHA256
+            ),
+            language: "und",
+            title: "Main Video",
+            isDefault: true,
+            dimensions: MediaDimensions(width: 1_920, height: 1_080),
+            displayDimensions: MediaDimensions(width: 1_920, height: 1_080),
+            pixelFormat: "yuv420p",
+            bitDepth: 8,
+            frameRate: "24000/1001"
         )
     }
 

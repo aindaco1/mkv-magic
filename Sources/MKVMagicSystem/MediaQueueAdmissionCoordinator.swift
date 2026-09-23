@@ -30,6 +30,13 @@ public struct MediaQueueAdmission: Equatable, Sendable {
         self.destinationDirectoryURL = destinationDirectoryURL
         self.outputURL = outputURL
     }
+
+    /// Resolution already validates and standardizes these URLs. Preserve their
+    /// attached bookmark capabilities: standardizing again after the resolver's
+    /// temporary access ends can discard the security scope on macOS.
+    var securityScopedResourceURLs: [URL] {
+        Array(Set(inputURLs + [destinationDirectoryURL]))
+    }
 }
 
 public struct MediaQueueAdmissionResolver: Sendable {
@@ -97,7 +104,7 @@ public struct MediaQueueAdmissionResolver: Sendable {
 
 public enum MediaQueueAutomaticExecutionOutcome: Equatable, Sendable {
     case verifiedSuccess
-    case failed
+    case failed(PrivacySafeMediaFailure)
     case cancelled
     case needsReview
 }
@@ -263,12 +270,13 @@ public actor MediaQueueAdmissionCoordinator {
                 at: Date(),
                 reason: nil
             )
-        case .failed:
+        case .failed(let failure):
             _ = try await store.transition(
                 jobID: jobID,
                 to: .failed,
                 at: Date(),
-                reason: .executionFailed
+                reason: .executionFailed,
+                failure: failure
             )
         case .cancelled:
             if state == .running {
@@ -299,9 +307,9 @@ public actor MediaQueueAdmissionCoordinator {
         _ admission: MediaQueueAdmission,
         using execute: Executor
     ) async -> MediaQueueAutomaticExecutionOutcome {
-        let urls = admission.inputURLs + [admission.destinationDirectoryURL]
-        let uniqueURLs = Array(Set(urls.map(\.standardizedFileURL)))
-        let accesses = uniqueURLs.map { ($0, $0.startAccessingSecurityScopedResource()) }
+        let accesses = admission.securityScopedResourceURLs.map {
+            ($0, $0.startAccessingSecurityScopedResource())
+        }
         defer {
             for (url, accessed) in accesses where accessed {
                 url.stopAccessingSecurityScopedResource()
@@ -314,7 +322,7 @@ public actor MediaQueueAdmissionCoordinator {
         } catch is CancellationError {
             return .cancelled
         } catch {
-            return .failed
+            return .failed(.executionFailed())
         }
     }
 

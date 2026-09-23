@@ -1,5 +1,29 @@
 # MKV Magic troubleshooting
 
+## Verify & Run does nothing, or History has no failure
+
+In builds with the new diagnostic journal, choose **Help > Report a Problem…**
+after reproducing the problem. **Export Local Diagnostics…** works independently
+of History and the media tools. Early errors are shown in the main window and
+recorded with a typed failure category; older builds cannot reconstruct them.
+You can optionally review a sanitized report and choose **Send Reviewed Report**
+directly in the app. No browser or system crash-file import is required. Nothing is sent merely
+by opening the window. See [support diagnostics](SUPPORT_DIAGNOSTICS.md) for
+privacy, retention, and current relay availability.
+
+## Saving asks again or access to Movies/Desktop is denied
+
+Output settings apply to all media outputs and exports. Choose a default folder
+in Settings to save there automatically, or use Beside Source. Only Ask Every Time
+shows a save dialog. Source-less reports and workflows remember an export folder.
+
+macOS distinguishes permission for one output file from permission for its folder.
+Verified temporary copies and queued jobs need folder access. If prompted, select
+the indicated output folder and choose **Allow Access**. This permission is
+remembered for later saves. If access was revoked or the folder moved, choose it
+again in Settings; do not grant broad Full Disk Access or disable the sandbox.
+Automatic saves add a number when a filename is already present.
+
 MKV Magic is intentionally conservative: when it cannot prove that an output
 matches the reviewed plan, it refuses the result and keeps the original. Start
 with the visible status in the app, then check the relevant section below.
@@ -16,6 +40,12 @@ with the visible status in the app, then check the relevant section below.
   notarized, and stapled.
 - MKV Magic does not need Homebrew, a separate FFmpeg, or a separate
   MKVToolNix. Reinstall the complete app if bundled tools are reported missing.
+- The official Universal app runs natively on both Apple Silicon and Intel. If
+  an Apple Silicon test Mac reports that MKV Magic includes an Intel-based
+  component, confirm the app came from the official DMG and has not been forced
+  to open with Rosetta. A maintainer's deliberate Rosetta verification can also
+  leave this macOS warning behind; normal release verification no longer uses
+  translated execution, and physical Intel hardware owns Intel acceptance.
 
 ## A file or folder does not appear
 
@@ -48,6 +78,24 @@ control. The most common prerequisites are:
   preserved, extracted, removed, or muxed unchanged, but image-to-text OCR is
   not in v1.
 
+For the direct sidecar flow, select or drag exactly one compatible MP4, M4V,
+MOV, or chapter-free WebM and exactly one SRT, ASS, or SSA. Select both rows if
+they were added separately, then choose **Remux Video + Subtitle…**. Review the
+audio and subtitle language fields before running; filename inference is only a
+default and never blocks manual correction.
+
+## Preview and save a track edit
+
+In **Edit a Track…**, choose the track, then change its name, language, or a
+playback flag. Selecting a different track alone is not a change. Equivalent
+language codes such as `eng` and `en` are also treated as unchanged.
+**Preview Changes** becomes available as soon as a valid value differs from
+the source. Correct any language error shown below the form; the feedback
+updates while you type or choose a language.
+
+After **Preview Changes**, use **Verify & Run** in the main window to create
+and save a new verified MKV copy. Preview does not write to the source file.
+
 ## Process more than one file
 
 - Command-click or Shift-click rows in the inspected-media list to select a
@@ -60,9 +108,10 @@ control. The most common prerequisites are:
   separately for each source. Workflows that require choosing an external
   subtitle remain single-file operations because that pairing needs individual
   review.
-- Output saves automatically beside each source by default. Use **MKV Magic →
-  Settings…** to remember one default output folder or ask where to save every
-  time. A batch review can still choose one folder for its ready outputs.
+- Output saves beside a source automatically only while macOS grants access to
+  that directory. Otherwise the save panel asks before work starts. Use **MKV
+  Magic → Settings…** to remember one default output folder or ask where to save
+  every time. Batch review requires one selected or remembered output folder.
   Existing destinations are never overwritten; MKV Magic adds a numeric suffix
   to the new output name.
 
@@ -72,6 +121,10 @@ control. The most common prerequisites are:
   is deliberately rejected.
 - Choose a new destination. MKV Magic never silently overwrites an existing
   file.
+- If a job reached **Committing** and then stopped, choose a local writable
+  folder through the save panel. A privacy-safe report distinguishes denied
+  permission from a destination filesystem that cannot provide the required
+  no-overwrite commit operation.
 - Confirm the destination volume has enough free space. Work is prepared on
   the destination volume so the verified commit can be atomic.
 - Keep the original available until the app reports that the new output was
@@ -89,6 +142,9 @@ control. The most common prerequisites are:
   reconsidered when the app launches, a job is resumed, or work is added.
 - Interrupted, failed, stale, or changed-input jobs require review again. MKV
   Magic does not silently retry a plan whose inputs may have changed.
+- **Tries** counts media executions, not review or destination prompts. A
+  freshly reviewed retry keeps the existing row and advances the count when
+  temporary-output creation starts.
 - Verify & Run remains an explicit immediate action after its current plan is
   reviewed.
 
@@ -130,6 +186,13 @@ control. The most common prerequisites are:
 - Join uses hard boundaries only. If track layouts are ambiguous, resolve the
   native mapping table. Incompatible sources must be converted to one reviewed
   common format; video normalization is fused into one encoded generation.
+  MKV Magic also compares the decoder initialization data that FFprobe reports.
+  This catches streams whose visible H.264 or HEVC properties look identical but
+  cannot be appended cleanly. When the only mismatch is H.264 initialization and
+  frame cadence is preserved, **verified lossless repair** applies a packet-copy
+  header filter in a private remux so every Part retains the headers it needs. No
+  frames are encoded. Strict packet and boundary audits still reject the output
+  before commit if repair is not clean; Common Format remains the fallback.
 
 ## The original was moved to Trash
 
@@ -145,8 +208,12 @@ Jellyfin/Plex playback checks.
 3. Choose **Export Privacy-Safe Report…** and save the JSON locally.
 4. Open the report yourself before sharing it.
 
-The report is bounded and includes a fixed privacy-safe failure category for
-failed jobs. It omits filenames, paths, media/track/chapter titles,
+The report is bounded and includes fixed privacy-safe failure categories for
+failed History and production-queue jobs. Queue entries also include their last
+active coarse stage, attempt count, and state. A join-boundary decode failure
+includes only the validated one-based boundary number so adjacent source parts
+can be identified locally.
+It omits filenames, paths, media/track/chapter titles,
 subtitle text, custom workflow names, raw tool output, security bookmarks,
 credentials, persistent identifiers, and exact timestamps. It is never
 uploaded automatically.

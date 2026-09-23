@@ -76,6 +76,79 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         XCTAssertEqual(h264Fallback.videoLanes[0].outputBitDepth, 8)
     }
 
+    func testCodecInitializationMismatchUsesOneVideoGeneration() throws {
+        let sources = [
+            asset(
+                part: 1,
+                tracks: [
+                    video(
+                        id: 0,
+                        initializationSHA256: String(repeating: "a", count: 64)
+                    )
+                ]
+            ),
+            asset(
+                part: 2,
+                tracks: [
+                    video(
+                        id: 10,
+                        initializationSHA256: String(repeating: "b", count: 64)
+                    )
+                ]
+            ),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+            ])
+        )
+
+        XCTAssertTrue(proposal.blockers.isEmpty)
+        XCTAssertEqual(proposal.impact.videoEncodeCount, 1)
+        XCTAssertEqual(proposal.videoLanes[0].sourceActions, [.encodeOnce, .encodeOnce])
+        XCTAssertTrue(proposal.decisions.contains { $0.kind == .videoTarget })
+    }
+
+    func testUntaggedEightBitHDAVCUsesReviewedBT709Normalization() throws {
+        let sources = [
+            asset(
+                part: 1,
+                tracks: [
+                    untaggedVideo(
+                        id: 0,
+                        initializationSHA256: String(repeating: "a", count: 64)
+                    )
+                ]
+            ),
+            asset(
+                part: 2,
+                tracks: [
+                    untaggedVideo(
+                        id: 10,
+                        initializationSHA256: String(repeating: "b", count: 64)
+                    )
+                ]
+            ),
+        ]
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: JoinTrackMapping(lanes: [
+                JoinTrackLane(kind: .video, trackIDsBySource: [0, 10])
+            ]),
+            preferredVideoPreset: .h264Compatibility
+        )
+
+        XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
+        XCTAssertEqual(proposal.videoLanes[0].recommendedDynamicRange, .sdr)
+        XCTAssertEqual(proposal.videoLanes[0].dynamicRangeChoices, [.sdr])
+        XCTAssertTrue(
+            proposal.decisions.contains {
+                $0.kind == .untaggedSDR && $0.summary.contains("untagged 8-bit H.264")
+            }
+        )
+    }
+
     func testAudioMismatchPreservesLargestLayoutWithOneAACLaneEncode() throws {
         let sources = [
             asset(part: 1, tracks: [video(id: 0), audio(id: 1, channels: 2)]),
@@ -341,7 +414,8 @@ final class JoinNormalizationPlannerTests: XCTestCase {
         codec: String = "h264",
         codecID: String = "V_MPEG4/ISO/AVC",
         width: Int = 1_920,
-        height: Int = 1_080
+        height: Int = 1_080,
+        initializationSHA256: String? = nil
     ) -> MediaTrack {
         MediaTrack(
             id: id,
@@ -350,6 +424,9 @@ final class JoinNormalizationPlannerTests: XCTestCase {
             codecID: codecID,
             profile: codec == "h264" ? "High" : "Main 10",
             level: codec == "h264" ? 40 : 153,
+            codecInitializationDigest: initializationSHA256.flatMap(
+                MediaCodecInitializationDigest.init(sha256:)
+            ),
             dimensions: MediaDimensions(width: width, height: height),
             displayDimensions: MediaDimensions(width: width, height: height),
             pixelFormat: codec == "h264" ? "yuv420p" : "yuv420p10le",
@@ -396,6 +473,28 @@ final class JoinNormalizationPlannerTests: XCTestCase {
                     maxFrameAverageLightLevel: 400
                 ) : nil,
             hdrFormats: ["HDR10 metadata"]
+        )
+    }
+
+    private func untaggedVideo(
+        id: Int,
+        initializationSHA256: String
+    ) -> MediaTrack {
+        MediaTrack(
+            id: id,
+            kind: .video,
+            codec: "h264",
+            codecID: "V_MPEG4/ISO/AVC",
+            profile: "High",
+            level: 40,
+            codecInitializationDigest: MediaCodecInitializationDigest(
+                sha256: initializationSHA256
+            ),
+            dimensions: MediaDimensions(width: 1_920, height: 1_080),
+            displayDimensions: MediaDimensions(width: 1_920, height: 1_080),
+            pixelFormat: "yuv420p",
+            bitDepth: 8,
+            frameRate: "24000/1001"
         )
     }
 

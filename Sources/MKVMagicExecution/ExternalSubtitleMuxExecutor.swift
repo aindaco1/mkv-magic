@@ -1,6 +1,8 @@
+import CryptoKit
 import Foundation
 import MKVMagicCore
 import MKVMagicMedia
+import MKVMagicPlanning
 import MKVMagicSystem
 
 public enum ExternalSubtitleMuxError: Error, Equatable, Sendable {
@@ -87,7 +89,7 @@ public enum ExternalSubtitleFilePreview: Equatable, Sendable {
         }
     }
 
-    fileprivate var normalizedOriginalData: Data {
+    var normalizedOriginalData: Data {
         switch self {
         case .subRip(let preview):
             Data(SubRipCodec().serialize(preview.cleanup.original).utf8)
@@ -98,7 +100,7 @@ public enum ExternalSubtitleFilePreview: Equatable, Sendable {
         }
     }
 
-    fileprivate func validateCurrent() throws {
+    func validateCurrent() throws {
         switch self {
         case .subRip(let preview):
             try SubtitleCleanupExecutor().validateCurrent(preview)
@@ -142,7 +144,13 @@ public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
         try validateCurrent()
     }
 
-    fileprivate var normalizedData: Data {
+    public func matches(_ input: SavedWorkflowExternalSubtitleInput) -> Bool {
+        sourceURL.standardizedFileURL == input.sourceURL.standardizedFileURL
+            && format == input.format
+            && reviewedCleanupChangeCount == input.reviewedCleanupChangeCount
+    }
+
+    var normalizedData: Data {
         switch self {
         case .original(let preview):
             return preview.normalizedOriginalData
@@ -155,7 +163,10 @@ public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
         }
     }
 
-    fileprivate var subtitleEnd: SubRipTimestamp {
+    /// Binds a queued cleanup to the exact reviewed bytes, including after an app update.
+    public var normalizedSHA256: Data { Data(SHA256.hash(data: normalizedData)) }
+
+    var subtitleEnd: SubRipTimestamp {
         switch self {
         case .original(let preview): return preview.subtitleEnd
         case .reviewedCleanup(.subRip(let preview), let restoringIDs):
@@ -167,14 +178,19 @@ public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
         }
     }
 
-    fileprivate var subRipDocumentForAudit: SubRipDocument? {
+    var subRipDocumentForAudit: SubRipDocument? {
         guard case .reviewedCleanup(.subRip(let preview), let restoringIDs) = self else {
             return nil
         }
         return preview.cleanup.document(restoringCueIDs: restoringIDs)
     }
 
-    fileprivate var advancedDocumentForAudit: AdvancedSubStationAlphaDocument? {
+    var originalSubRipDocument: SubRipDocument? {
+        guard case .original(.subRip(let preview)) = self else { return nil }
+        return preview.cleanup.original
+    }
+
+    var advancedDocumentForAudit: AdvancedSubStationAlphaDocument? {
         switch self {
         case .original(.advanced(let preview)):
             return preview.cleanup.original
@@ -185,7 +201,7 @@ public enum ExternalSubtitleMuxPayload: Equatable, Sendable {
         }
     }
 
-    fileprivate func validateCurrent() throws {
+    func validateCurrent() throws {
         try preview.validateCurrent()
         guard case .reviewedCleanup(let preview, let restoringIDs) = self else { return }
         let validIDs: Set<Int>
@@ -255,12 +271,6 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
         attachmentRemoval: MatroskaAttachmentRemoval? = nil,
         outputURL: URL
     ) throws -> [String] {
-        let language = try TrackLanguageTag.canonical(metadata.language)
-        if let name = metadata.name {
-            guard !name.contains("\0"), name.utf8.count <= 4_096 else {
-                throw ExternalSubtitleMuxError.invalidTrackName
-            }
-        }
         var arguments = [
             "--output", outputURL.path,
             "--abort-on-warnings",
@@ -283,16 +293,10 @@ public struct MKVExternalSubtitleMuxer<Runner: CommandRunning>: Sendable {
                 ).selectorArguments
             )
         }
-        arguments.append(contentsOf: [
-            source.sourceURL.path,
-            "--language", "0:\(language)",
-            "--default-track-flag", "0:\(metadata.isDefault ? "yes" : "no")",
-            "--forced-display-flag", "0:\(metadata.isForced ? "yes" : "no")",
-            "--hearing-impaired-flag", "0:\(metadata.isHearingImpaired ? "yes" : "no")",
-        ])
-        if let name = metadata.name {
-            arguments.append(contentsOf: ["--track-name", "0:\(name)"])
-        }
+        arguments.append(source.sourceURL.path)
+        arguments.append(
+            contentsOf: try ExternalSubtitleTrackArgumentBuilder.arguments(metadata: metadata)
+        )
         arguments.append(subtitleURL.path)
         let trackOrder = (retainedTracks.map { "0:\($0.id)" } + ["1:0"]).joined(separator: ",")
         arguments.append(contentsOf: ["--track-order", trackOrder])
@@ -512,116 +516,111 @@ public struct ExternalSubtitleMuxExecutor<Runner: CommandRunning, Inspector: Med
         outputURL: URL,
         payload: ExternalSubtitleMuxPayload
     ) async throws {
-        if let subRipDocument = payload.subRipDocumentForAudit {
-            try await verifySubRipSubtitlePayload(
-                outputURL: outputURL,
-                intended: subRipDocument
-            )
-        }
-        if let advancedDocument = payload.advancedDocumentForAudit {
-            try await verifyAdvancedSubtitlePayload(
-                outputURL: outputURL,
-                original: advancedDocument
-            )
-        }
-    }
-
-    private func verifySubRipSubtitlePayload(
-        outputURL: URL,
-        intended: SubRipDocument
-    ) async throws {
-        guard let mkvextractURL else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        let auditURL = outputURL.deletingLastPathComponent()
-            .appendingPathComponent("external-subtitle-audit.srt")
-        let extractedData = try await extractAddedSubtitle(
-            outputURL: outputURL,
-            auditURL: auditURL,
+        try await ExternalSubtitlePayloadAuditor(
             mkvextractURL: mkvextractURL,
-            allowedExtensions: ["srt"]
-        )
-        let extracted: SubRipDocument
-        do {
-            extracted = try SubRipCodec().parse(
-                SubtitleTextDecoder().decode(extractedData)
-            ).document
-        } catch {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        guard SubRipMuxPayloadVerifier().verify(intended: intended, extracted: extracted) else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
+            runner: runner,
+            inspector: inspector
+        ).verify(outputURL: outputURL, payload: payload)
     }
+}
 
-    private func verifyAdvancedSubtitlePayload(
+struct ExternalSubtitlePayloadAuditor<Runner: CommandRunning, Inspector: MediaInspecting> {
+    let mkvextractURL: URL?
+    let runner: Runner
+    let inspector: Inspector
+
+    func verify(
         outputURL: URL,
-        original: AdvancedSubStationAlphaDocument
+        payload: ExternalSubtitleMuxPayload,
+        auditOriginalSubRip: Bool = false,
+        trackOffsetFromEnd: Int = 0
     ) async throws {
-        guard let mkvextractURL else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        let auditURL = outputURL.deletingLastPathComponent()
-            .appendingPathComponent("external-subtitle-audit.ass")
-        let extractedData = try await extractAddedSubtitle(
-            outputURL: outputURL,
-            auditURL: auditURL,
-            mkvextractURL: mkvextractURL,
-            allowedExtensions: ["ass"]
-        )
-        let extracted: AdvancedSubStationAlphaDocument
-        do {
-            extracted = try AdvancedSubStationAlphaCodec().parse(
-                SubtitleTextDecoder().decode(extractedData)
-            ).document
-        } catch {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        guard
-            AdvancedSubtitleMuxPayloadVerifier().verify(
-                original: original,
-                extracted: extracted
+        if let document = payload.subRipDocumentForAudit
+            ?? (auditOriginalSubRip ? payload.originalSubRipDocument : nil)
+        {
+            let extractedData = try await extractAddedSubtitle(
+                outputURL: outputURL,
+                filenameExtension: "srt",
+                trackOffsetFromEnd: trackOffsetFromEnd
             )
-        else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            let extracted: SubRipDocument
+            do {
+                extracted = try SubRipCodec().parse(
+                    SubtitleTextDecoder().decode(extractedData)
+                ).document
+            } catch {
+                throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            }
+            guard SubRipMuxPayloadVerifier().verify(intended: document, extracted: extracted)
+            else { throw ExternalSubtitleMuxError.subtitleVerificationFailed }
+        }
+        if let document = payload.advancedDocumentForAudit {
+            let extractedData = try await extractAddedSubtitle(
+                outputURL: outputURL,
+                filenameExtension: "ass",
+                trackOffsetFromEnd: trackOffsetFromEnd
+            )
+            let extracted: AdvancedSubStationAlphaDocument
+            do {
+                extracted = try AdvancedSubStationAlphaCodec().parse(
+                    SubtitleTextDecoder().decode(extractedData)
+                ).document
+            } catch {
+                throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            }
+            guard
+                AdvancedSubtitleMuxPayloadVerifier().verify(
+                    original: document,
+                    extracted: extracted
+                )
+            else { throw ExternalSubtitleMuxError.subtitleVerificationFailed }
         }
     }
 
     private func extractAddedSubtitle(
         outputURL: URL,
-        auditURL: URL,
-        mkvextractURL: URL,
-        allowedExtensions: Set<String>
+        filenameExtension: String,
+        trackOffsetFromEnd: Int
     ) async throws -> Data {
+        guard let mkvextractURL else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
         let preliminaryOutput = try await inspector.inspect(outputURL)
-        guard let addedTrack = preliminaryOutput.tracks.filter({ $0.kind != .attachment }).last,
+        let tracks = preliminaryOutput.tracks.filter { $0.kind != .attachment }
+        guard trackOffsetFromEnd >= 0, trackOffsetFromEnd < tracks.count else {
+            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+        }
+        let addedTrack = tracks[tracks.count - 1 - trackOffsetFromEnd]
+        guard
             addedTrack.kind == .subtitle
-        else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        defer { try? FileManager.default.removeItem(at: auditURL) }
-        let result = try await runner.run(
-            CommandRequest(
-                executableURL: mkvextractURL,
-                arguments: ["tracks", outputURL.path, "\(addedTrack.id):\(auditURL.path)"],
-                timeout: 120,
-                outputLimit: 1_048_576
+        else { throw ExternalSubtitleMuxError.subtitleVerificationFailed }
+        return try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-subtitle-audit"
+        ) { directory in
+            let auditURL = directory.appendingPathComponent(
+                "external-subtitle-audit.\(filenameExtension)"
             )
-        )
-        guard result.exitCode == 0 else {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
-        }
-        let extractedData: Data
-        do {
-            extractedData = try SafeSubtitleTextFile.read(
-                auditURL,
-                allowedExtensions: allowedExtensions,
-                maximumInputBytes: AdvancedSubtitleCleanupExecutor.maximumInputBytes
+            let result = try await runner.run(
+                CommandRequest(
+                    executableURL: mkvextractURL,
+                    arguments: ["tracks", outputURL.path, "\(addedTrack.id):\(auditURL.path)"],
+                    timeout: 120,
+                    outputLimit: 1_048_576
+                )
             )
-        } catch {
-            throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            guard result.exitCode == 0 else {
+                throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            }
+            do {
+                return try SafeSubtitleTextFile.read(
+                    auditURL,
+                    allowedExtensions: [filenameExtension],
+                    maximumInputBytes: AdvancedSubtitleCleanupExecutor.maximumInputBytes
+                )
+            } catch {
+                throw ExternalSubtitleMuxError.subtitleVerificationFailed
+            }
         }
-        return extractedData
     }
 }
 

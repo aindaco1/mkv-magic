@@ -101,7 +101,7 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             wrappingLabelWithString:
                 "Each row becomes one output track. Choose which same-type track continues that lane in every Part. Selecting a track already used in another row swaps the two cells, so no source track is duplicated or discarded."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
         let laneColumn = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("lane"))
         laneColumn.title = "Output lane"
@@ -137,7 +137,7 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
             wrappingLabelWithString:
                 "A “No track” cell is an explicit gap, not a deletion. Gaps and incompatible choices remain visible in the compatibility review and may require normalization."
         )
-        note.textColor = .secondaryLabelColor
+        note.textColor = AppPalette.secondaryText
         note.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
 
         resetButton.target = self
@@ -312,7 +312,7 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
                 in: statusLabel,
                 returningFocusTo: sender
             )
-            statusLabel.textColor = .systemRed
+            statusLabel.textColor = AppPalette.errorText
             tableView.reloadData()
         }
     }
@@ -339,7 +339,7 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
                 in: statusLabel,
                 returningFocusTo: tableView
             )
-            statusLabel.textColor = .systemRed
+            statusLabel.textColor = AppPalette.errorText
         }
     }
 
@@ -350,7 +350,8 @@ final class JoinTrackMappingViewController: NSViewController, NSTableViewDataSou
         let gapSummary = gapCount == 1 ? "1 explicit gap" : "\(gapCount) explicit gaps"
         statusLabel.stringValue =
             "\(mapping.lanes.count) output lanes · \(gapSummary) · every source track assigned once"
-        statusLabel.textColor = requiresResolution ? .systemOrange : .secondaryLabelColor
+        statusLabel.textColor =
+            requiresResolution ? AppPalette.warningText : AppPalette.secondaryText
         resetButton.isEnabled = mapping != initialMapping
         useButton.isEnabled = true
     }

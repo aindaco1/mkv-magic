@@ -489,14 +489,14 @@ final class OutputVerificationTests: XCTestCase {
         )
     }
 
-    func testTrackRemovalVerifierRejectsMaterialDurationChange() throws {
+    func testTrackRemovalVerifierRejectsDurationChangeBeyondPacketCopyTolerance() throws {
         let video = MediaTrack(id: 0, kind: .video, codec: "av1", uid: 10)
         let audio = MediaTrack(id: 1, kind: .audio, codec: "aac", uid: 20)
         let original = asset(title: "Movie", tracks: [video, audio])
         let output = asset(
             title: "Movie",
             tracks: [video],
-            duration: MediaTime(seconds: 9.9)!,
+            duration: MediaTime(nanoseconds: 9_899_999_999),
             segmentUID: "2233",
             encoder: "mkvmerge"
         )
@@ -546,6 +546,52 @@ final class OutputVerificationTests: XCTestCase {
                 ),
                 subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
             ))
+    }
+
+    func testExternalSubtitleVerifierUsesTheSharedPacketCopyDurationTolerance() throws {
+        let audio = MediaTrack(
+            id: 0, kind: .audio, codec: "aac", uid: 20, language: "en")
+        let added = MediaTrack(
+            id: 1,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            uid: 30,
+            language: "en"
+        )
+        let original = asset(title: "Movie", tracks: [audio])
+        let verifier = ExternalSubtitleMuxOutputVerifier()
+
+        XCTAssertNoThrow(
+            try verifier.verify(
+                original: original,
+                output: asset(
+                    title: "Movie",
+                    tracks: [audio, added],
+                    duration: MediaTime(nanoseconds: 10_100_000_000),
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                original: original,
+                output: asset(
+                    title: "Movie",
+                    tracks: [audio, added],
+                    duration: MediaTime(nanoseconds: 10_100_000_001),
+                    segmentUID: "2233",
+                    encoder: "mkvmerge"
+                ),
+                expectedMetadata: ExternalSubtitleTrackMetadata(language: "en"),
+                subtitleEnd: SubRipTimestamp(milliseconds: 9_500)
+            )
+        ) { error in
+            XCTAssertEqual(error as? OutputVerificationError, .durationChanged)
+        }
     }
 
     func testExternalSubtitleVerifierAcceptsReviewedRemovalAndTitleDeletionTogether() throws {

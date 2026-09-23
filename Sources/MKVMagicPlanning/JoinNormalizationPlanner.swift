@@ -35,6 +35,7 @@ public enum JoinVideoDynamicRangeTarget: String, Codable, Hashable, Sendable {
 public enum JoinNormalizationDecisionKind: String, Codable, Hashable, Sendable {
     case videoTarget
     case mixedDynamicRange
+    case untaggedSDR
     case audioTarget
     case attachmentPolicy
     case trackMetadata
@@ -427,6 +428,7 @@ public struct JoinNormalizationPlanner: Sendable {
         }
 
         let dynamicRanges = presentTracks.map(dynamicRange)
+        let dynamicRangeSet = Set(dynamicRanges)
         var recommendedDynamicRange: JoinVideoDynamicRangeTarget?
         var dynamicRangeChoices = [JoinVideoDynamicRangeTarget]()
         if dynamicRanges.contains(.dolbyVision) {
@@ -445,7 +447,7 @@ public struct JoinNormalizationPlanner: Sendable {
                         "Video lane \(laneIndex + 1) has unknown or unsupported dynamic-range metadata."
                 )
             )
-        } else if Set(dynamicRanges) == [.hdr10] {
+        } else if dynamicRangeSet == [.hdr10] {
             recommendedDynamicRange = .hdr10
             dynamicRangeChoices = [.hdr10]
             let signals = presentTracks.compactMap(MediaHDR10Signal.init(track:))
@@ -467,10 +469,22 @@ public struct JoinNormalizationPlanner: Sendable {
                     )
                 )
             }
-        } else if Set(dynamicRanges) == [.sdr] {
+        } else if !dynamicRangeSet.isEmpty,
+            dynamicRangeSet.isSubset(of: [.sdr, .untaggedSDR])
+        {
             recommendedDynamicRange = .sdr
             dynamicRangeChoices = [.sdr]
-        } else if Set(dynamicRanges) == [.sdr, .hdr10] {
+            if dynamicRangeSet.contains(.untaggedSDR) {
+                decisions.append(
+                    JoinNormalizationDecisionRequirement(
+                        kind: .untaggedSDR,
+                        laneIndex: laneIndex,
+                        summary:
+                            "Confirm treating the reviewed untagged 8-bit H.264 Parts in video lane \(laneIndex + 1) as SDR; the one-generation output will carry explicit BT.709 color labels."
+                    )
+                )
+            }
+        } else if dynamicRangeSet == [.sdr, .hdr10] {
             recommendedDynamicRange = .sdr
             dynamicRangeChoices = [.sdr]
             decisions.append(
@@ -479,6 +493,14 @@ public struct JoinNormalizationPlanner: Sendable {
                     laneIndex: laneIndex,
                     summary:
                         "Confirm local HDR10-to-SDR tone mapping for only the HDR Parts in mixed-range video lane \(laneIndex + 1); SDR Parts remain BT.709."
+                )
+            )
+        } else {
+            blockers.append(
+                JoinNormalizationBlocker(
+                    laneIndex: laneIndex,
+                    summary:
+                        "Video lane \(laneIndex + 1) combines dynamic-range signals that cannot be normalized safely."
                 )
             )
         }
@@ -615,7 +637,9 @@ public struct JoinNormalizationPlanner: Sendable {
         blockers: inout [JoinNormalizationBlocker]
     ) -> JoinSubtitleLaneProposal {
         let hasCodecMismatch = issues.contains {
-            $0.severity == .normalizationRequired && ($0.reason == .codec || $0.reason == .profile)
+            $0.severity == .normalizationRequired
+                && ($0.reason == .codec || $0.reason == .codecInitialization
+                    || $0.reason == .profile)
         }
         let isMissing = tracks.contains(where: { $0 == nil })
         if isMissing {
@@ -747,6 +771,7 @@ public struct JoinNormalizationPlanner: Sendable {
 
     private enum DynamicRange: Hashable {
         case sdr
+        case untaggedSDR
         case hdr10
         case dolbyVision
         case otherHDR
@@ -766,6 +791,7 @@ public struct JoinNormalizationPlanner: Sendable {
         if MediaHDR10Signal(track: track) != nil { return .hdr10 }
         if !formats.isEmpty { return .otherHDR }
         if MediaHDR10Signal.isBT709SDR(track) { return .sdr }
+        if MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(track) { return .untaggedSDR }
         if track.colorInfo != nil { return .otherHDR }
         return .unknown
     }

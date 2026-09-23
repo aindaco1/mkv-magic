@@ -67,6 +67,31 @@ final class MediaQueueAdmissionCoordinatorTests: XCTestCase {
         }
     }
 
+    func testAdmissionPreservesOriginalScopedURLsWhileDeduplicatingAccesses() throws {
+        let source = try makeSource("Input.mkv")
+        let job = try makeJob(
+            id: id(1), name: "Preserve access", sourceURL: source,
+            outputName: "Output.mkv")
+        // A distinct URL representation stands in for attached bookmark data,
+        // which ordinary unsandboxed XCTest cannot reliably observe. The signed
+        // cold-relaunch regression additionally checks real child-process access.
+        let input = try XCTUnwrap(URL(string: "Input.mkv", relativeTo: rootURL))
+        let destination = try XCTUnwrap(URL(string: "./", relativeTo: rootURL))
+        let admission = MediaQueueAdmission(
+            job: job, inputURLs: [input, input], destinationDirectoryURL: destination,
+            outputURL: rootURL.appendingPathComponent("Output.mkv")
+        )
+
+        let resources = admission.securityScopedResourceURLs
+        XCTAssertEqual(resources.count, 2)
+        let retainedInput = try XCTUnwrap(resources.first { $0 == input })
+        let retainedDestination = try XCTUnwrap(resources.first { $0 == destination })
+        XCTAssertEqual(retainedInput.relativeString, input.relativeString)
+        XCTAssertEqual(retainedInput.baseURL, input.baseURL)
+        XCTAssertEqual(retainedDestination.relativeString, destination.relativeString)
+        XCTAssertEqual(retainedDestination.baseURL, destination.baseURL)
+    }
+
     func testCoordinatorAdmitsOnlySupportedFreshJobsAndPersistsReviewReasons() async throws {
         let freshSource = try makeSource("Fresh.mkv")
         let staleSource = try makeSource("Stale.mkv")
@@ -234,12 +259,16 @@ final class MediaQueueAdmissionCoordinatorTests: XCTestCase {
             report.outcomes,
             [
                 jobs[0].id: .verifiedSuccess,
-                jobs[1].id: .failed,
+                jobs[1].id: .failed(.executionFailed()),
                 jobs[2].id: .cancelled,
                 jobs[3].id: .needsReview,
             ]
         )
         XCTAssertTrue(report.snapshot.jobs.allSatisfy { $0.attemptCount == 1 })
+        XCTAssertEqual(
+            report.snapshot.jobs[1].failure,
+            .executionFailed()
+        )
     }
 
     func testPerJobCancellationStopsTheExecutorAndConcurrentCycleIsRefused() async throws {

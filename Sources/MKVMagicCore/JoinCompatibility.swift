@@ -148,6 +148,7 @@ public enum JoinCompatibilityIssueReason: String, Equatable, Hashable, Sendable 
     case unsupportedTrackKind
     case missingTrack
     case codec
+    case codecInitialization
     case profile
     case level
     case dimensions
@@ -210,6 +211,43 @@ public struct JoinCompatibilityReport: Equatable, Sendable {
         self.issues = issues
         self.requiresAuthoritativeMKVToolNixValidation =
             requiresAuthoritativeMKVToolNixValidation
+    }
+}
+
+/// Identifies the narrow codec-initialization-only case eligible for explicit
+/// lossless review. Execution chooses the supported packet-copy repair and must
+/// still run the complete boundary and packet-payload audits.
+public enum ReviewedMKVToolNixLosslessAppendPolicy {
+    private static let reviewableMetadataReasons: Set<JoinCompatibilityIssueReason> = [
+        .language, .role, .title, .flags,
+    ]
+
+    public static func canOffer(for report: JoinCompatibilityReport) -> Bool {
+        guard report.disposition == .normalizationRequired,
+            report.issues.contains(where: {
+                $0.severity == .normalizationRequired
+                    && $0.reason == .codecInitialization
+            })
+        else { return false }
+
+        return report.issues.allSatisfy { issue in
+            switch issue.severity {
+            case .normalizationRequired:
+                issue.reason == .codecInitialization
+            case .confirmationRequired:
+                reviewableMetadataReasons.contains(issue.reason)
+            case .unsupported:
+                false
+            }
+        }
+    }
+
+    public static func permitsExecution(
+        of report: JoinCompatibilityReport,
+        afterExplicitReview: Bool
+    ) -> Bool {
+        report.disposition == .losslessCandidate
+            || (afterExplicitReview && canOffer(for: report))
     }
 }
 
@@ -583,6 +621,12 @@ public struct JoinCompatibilityAnalyzer: Sendable {
         var reasons = [(JoinCompatibilityIssueSeverity, JoinCompatibilityIssueReason)]()
 
         compareCodec(referenceTrack, candidateTrack, into: &reasons)
+        if let referenceInitialization = referenceTrack.codecInitializationDigest,
+            let candidateInitialization = candidateTrack.codecInitializationDigest,
+            referenceInitialization != candidateInitialization
+        {
+            reasons.append((.normalizationRequired, .codecInitialization))
+        }
         if knownMismatch(referenceTrack.profile, candidateTrack.profile) {
             reasons.append((.normalizationRequired, .profile))
         }
@@ -845,6 +889,7 @@ private enum JoinTrackPolicy {
             codec: usableCodecID(track.codecID) ?? normalized(track.codec),
             profile: normalized(track.profile),
             level: track.level,
+            codecInitializationDigest: track.codecInitializationDigest,
             channels: track.channels,
             channelLayout: normalized(track.channelLayout),
             sampleRate: track.sampleRate,
@@ -907,6 +952,7 @@ private struct JoinTrackFullFingerprint: Hashable {
     let codec: String
     let profile: String
     let level: Int?
+    let codecInitializationDigest: MediaCodecInitializationDigest?
     let channels: Int?
     let channelLayout: String
     let sampleRate: Int?

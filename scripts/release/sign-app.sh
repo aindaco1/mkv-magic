@@ -82,6 +82,8 @@ codesign "${common_flags[@]}" --preserve-metadata=entitlements \
 codesign "${common_flags[@]}" "$current/Autoupdate"
 codesign "${common_flags[@]}" "$current/Updater.app"
 codesign "${common_flags[@]}" "$framework"
+codesign "${common_flags[@]}" --entitlements "$repo_root/Configuration/ReportService.entitlements" \
+    "$app_path/Contents/XPCServices/MKVMagicReportService.xpc"
 
 xattr -cr "$app_path"
 codesign "${common_flags[@]}" \

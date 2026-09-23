@@ -83,7 +83,7 @@ fi
 prior_app="$(cd "$(dirname "$prior_app_input")" && pwd -P)/$(basename "$prior_app_input")"
 candidate_zip="$(cd "$(dirname "$candidate_zip_input")" && pwd -P)/$(basename "$candidate_zip_input")"
 private_key_file="$(cd "$(dirname "$private_key_input")" && pwd -P)/$(basename "$private_key_input")"
-work_root="$(mktemp -d "${TMPDIR:-/tmp}/mkv-magic-update-replacement.XXXXXX")"
+work_root="$("$repo_root/scripts/release/create-verification-directory.sh" mkv-magic-update-replacement)"
 server_pid=''
 cleanup() {
     if [[ -n "$server_pid" ]] && kill -0 "$server_pid" 2>/dev/null; then
@@ -169,13 +169,21 @@ if [[ ! "$sparkle_revision" =~ ^[0-9a-f]{40}$ || "$sparkle_version" != 2.9.5 || 
     echo "pinned Sparkle checkout is unavailable or inconsistent" >&2
     exit 1
 fi
-xcodebuild \
+# The acceptance driver targets the same minimum OS as MKV Magic. Xcode 27
+# rejects Sparkle's upstream 10.13 deployment target when building this tool.
+if ! xcodebuild \
     -project "$sparkle_checkout/Sparkle.xcodeproj" \
     -scheme sparkle-cli \
     -configuration Release \
+    -destination 'generic/platform=macOS' \
     -derivedDataPath "$cli_build_root" \
     CODE_SIGNING_ALLOWED=NO \
-    build >"$work_root/sparkle-cli-build.log"
+    MACOSX_DEPLOYMENT_TARGET=13.0 \
+    build >"$work_root/sparkle-cli-build.log" 2>&1; then
+    sed -n '/error:/p' "$work_root/sparkle-cli-build.log" >&2
+    echo "pinned Sparkle updater driver build failed" >&2
+    exit 1
+fi
 sparkle_cli_app="$cli_build_root/Build/Products/Release/sparkle.app"
 sparkle_cli="$sparkle_cli_app/Contents/MacOS/sparkle"
 if [[ ! -x "$sparkle_cli" || -L "$sparkle_cli" || \

@@ -346,7 +346,7 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
                 indexedTracks: indexedTracks
             )
             arguments.append(
-                contentsOf: try trackMetadataArguments(
+                contentsOf: try sharedTrackMetadataArguments(
                     inputTrackID: lane.inputTrackID,
                     metadata: metadata,
                     laneIndex: lane.laneIndex
@@ -354,7 +354,7 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
             )
         }
         arguments.append(
-            contentsOf: trackSelectionArguments(
+            contentsOf: try sharedTrackSelectionArguments(
                 tracks: normalizedTracks
             ))
         arguments.append(contentsOf: [
@@ -374,7 +374,7 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
                             indexedTracks: indexedTracks
                         )
                         arguments.append(
-                            contentsOf: try trackMetadataArguments(
+                            contentsOf: try sharedTrackMetadataArguments(
                                 inputTrackID: lane.inputTrackID,
                                 metadata: metadata,
                                 laneIndex: lane.laneIndex
@@ -392,7 +392,9 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
                 else {
                     throw JoinFinalAssemblyCommandError.inconsistentPlan
                 }
-                arguments.append(contentsOf: trackSelectionArguments(tracks: copyTracks))
+                arguments.append(
+                    contentsOf: try sharedTrackSelectionArguments(tracks: copyTracks)
+                )
                 arguments.append(
                     contentsOf: try attachmentArguments(
                         sourceIndex: sourceIndex,
@@ -506,54 +508,29 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
         return track
     }
 
-    private func trackMetadataArguments(
+    private func sharedTrackMetadataArguments(
         inputTrackID: Int,
         metadata: MediaTrack,
         laneIndex: Int
     ) throws -> [String] {
-        let title = metadata.title ?? ""
-        guard inputTrackID >= 0, safeUserText(title) else {
-            throw JoinFinalAssemblyCommandError.invalidTrackMetadata(
-                laneIndex: laneIndex
-            )
-        }
-        let language: String
         do {
-            language = try TrackLanguageTag.canonical(metadata.language ?? "und")
+            return try MKVTrackArgumentBuilder.metadata(
+                trackID: inputTrackID,
+                track: metadata
+            )
         } catch {
             throw JoinFinalAssemblyCommandError.invalidTrackMetadata(
                 laneIndex: laneIndex
             )
         }
-        return [
-            "--track-name", "\(inputTrackID):\(title)",
-            "--language", "\(inputTrackID):\(language)",
-            "--default-track-flag", "\(inputTrackID):\(flag(metadata.isDefault))",
-            "--forced-display-flag", "\(inputTrackID):\(flag(metadata.isForced))",
-            "--track-enabled-flag", "\(inputTrackID):\(flag(metadata.isEnabled))",
-            "--commentary-flag", "\(inputTrackID):\(flag(metadata.isCommentary))",
-            "--hearing-impaired-flag", "\(inputTrackID):\(flag(metadata.isHearingImpaired))",
-            "--visual-impaired-flag", "\(inputTrackID):\(flag(metadata.isVisualImpaired))",
-            "--original-flag", "\(inputTrackID):\(flag(metadata.isOriginal))",
-            "--text-descriptions-flag", "\(inputTrackID):\(flag(metadata.isTextDescription))",
-        ]
     }
 
-    private func trackSelectionArguments(tracks: [MediaTrack]) -> [String] {
-        var arguments = [String]()
-        for (kind, some, none) in [
-            (MediaTrackKind.video, "--video-tracks", "--no-video"),
-            (.audio, "--audio-tracks", "--no-audio"),
-            (.subtitle, "--subtitle-tracks", "--no-subtitles"),
-        ] {
-            let ids = tracks.filter { $0.kind == kind }.map(\.id)
-            if ids.isEmpty {
-                arguments.append(none)
-            } else {
-                arguments.append(contentsOf: [some, ids.map(String.init).joined(separator: ",")])
-            }
+    private func sharedTrackSelectionArguments(tracks: [MediaTrack]) throws -> [String] {
+        do {
+            return try MKVTrackArgumentBuilder.selection(tracks: tracks)
+        } catch {
+            throw JoinFinalAssemblyCommandError.inconsistentPlan
         }
-        return arguments
     }
 
     private func attachmentArguments(
@@ -605,10 +582,8 @@ public struct JoinFinalAssemblyCommandBuilder: Sendable {
         }?.value
     }
 
-    private func flag(_ value: Bool) -> String { value ? "1" : "0" }
-
     private func safeUserText(_ value: String) -> Bool {
-        !value.contains("\0") && value.utf8.count <= 4_096
+        MKVTrackArgumentBuilder.isSafeText(value)
     }
 
     private func safeExistingRegularFile(_ rawURL: URL) -> Bool {

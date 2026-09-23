@@ -54,6 +54,41 @@ private enum StageObserverError: Error, Equatable {
 }
 
 final class SegmentTitleEditExecutorTests: XCTestCase {
+    func testReviewedRevisionIsCheckedBeforePreparationAndAgainBeforeCommit() async throws {
+        for changeBeforeStart in [true, false] {
+            try await PrivateTemporaryDirectory.withDirectory(prefix: "reviewed-metadata-guard") {
+                root in
+                let sourceURL = root.appendingPathComponent("Source.mkv")
+                let destination = root.appendingPathComponent("Output.mkv")
+                try Data("original".utf8).write(to: sourceURL)
+                let revision = try MediaFileRevisionReader().read(sourceURL)
+                let source = try await MatchingInspector().inspect(sourceURL)
+                let executor = MatroskaMetadataEditExecutor(
+                    mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
+                    runner: SuccessfulPropertyEditRunner(), inspector: MatchingInspector())
+                let externalChange = Data("externally changed".utf8)
+                if changeBeforeStart { try externalChange.write(to: sourceURL) }
+                do {
+                    _ = try await executor.execute(
+                        source: source, edit: .segmentTitle("New"),
+                        destinationURL: destination, expectedSourceRevision: revision,
+                        onStage: { stage in
+                            if !changeBeforeStart, stage == .committing {
+                                try externalChange.write(to: sourceURL)
+                            }
+                        })
+                    XCTFail("Committed after the reviewed source changed")
+                } catch {
+                    XCTAssertEqual(error as? SavedWorkflowExecutionError, .sourceChangedSinceReview)
+                }
+                XCTAssertEqual(try Data(contentsOf: sourceURL), externalChange)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+                XCTAssertEqual(
+                    try FileManager.default.contentsOfDirectory(atPath: root.path), ["Source.mkv"])
+            }
+        }
+    }
+
     func testSharedPolicyRejectsNonMatroskaAsset() {
         let asset = MediaAsset(
             sourceURL: URL(fileURLWithPath: "/tmp/Movie.mp4"),

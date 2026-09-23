@@ -101,7 +101,7 @@ private final class ChapterThumbnailViewController: NSViewController {
             wrappingLabelWithString:
                 "These local frames preview the exact numeric times shown below. Choose a time or cancel; the source file is never changed."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         let cards = thumbnails.enumerated().map { makeCard(index: $0.offset, entry: $0.element) }
         let cardRow = NSStackView(views: cards)

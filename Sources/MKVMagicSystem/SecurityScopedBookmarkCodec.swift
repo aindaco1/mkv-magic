@@ -21,6 +21,8 @@ public struct SecurityScopedBookmarkCodec: Sendable {
         for url: URL,
         access: SecurityScopedBookmarkAccess
     ) throws -> MediaQueueFileReference {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         let safeURL = try validated(url, access: access)
         let options: URL.BookmarkCreationOptions =
             access == .readOnlyFile
@@ -50,6 +52,8 @@ public struct SecurityScopedBookmarkCodec: Sendable {
             bookmarkDataIsStale: &isStale
         )
         guard !isStale else { throw SecurityScopedBookmarkError.stale }
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
         return try validated(url, access: access)
     }
 

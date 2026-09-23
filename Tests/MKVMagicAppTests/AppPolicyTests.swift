@@ -1,5 +1,6 @@
 import AppKit
 import CryptoKit
+import Darwin
 import MKVMagicCore
 import MKVMagicExecution
 import MKVMagicPlanning
@@ -190,6 +191,7 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(helpText.string.contains("Help > Third-Party Software"))
         XCTAssertTrue(helpText.string.contains("reinspect the source"))
         XCTAssertTrue(helpText.string.contains("privacy-safe report"))
+        try assertReadableDocument(helpText)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_HELP_CAPTURE"
         ], capturePath.hasPrefix("/"), let content = helpWindow.contentView {
@@ -322,6 +324,7 @@ final class AppPolicyTests: XCTestCase {
         picker.selectItem(at: 3)
         picker.sendAction(picker.action, to: picker.target)
         XCTAssertEqual(text.string, "Codec body")
+        try assertReadableDocument(text)
         assertButtonsFit(buttons(in: content), in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_THIRD_PARTY_CAPTURE"
@@ -502,13 +505,33 @@ final class AppPolicyTests: XCTestCase {
             sourceURL: source,
             suggestedFilename: "Movie — Edited.mkv",
             preferences: preferences,
-            fileExists: { occupied.contains($0) }
+            fileExists: { occupied.contains($0) },
+            directoryAccessProvider: grantedOutputDirectoryAccess
         )
 
         guard case .automatic(let destination) = resolution else {
             return XCTFail("The default output mode must not show a save panel")
         }
         XCTAssertEqual(destination.url.path, "/Media/Features/Movie — Edited 3.mkv")
+    }
+
+    @MainActor
+    func testAutomaticBesideSourceFallsBackToSavePanelWithoutDirectoryAccess() throws {
+        let suite = "mkv-magic-output-policy-denied-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preferences = OutputDestinationPreferences(defaults: defaults)
+
+        let resolution = try OutputDestinationPolicy.resolve(
+            sourceURL: URL(fileURLWithPath: "/Media/Features/Movie.mkv"),
+            suggestedFilename: "Movie — Edited.mkv",
+            preferences: preferences,
+            directoryAccessProvider: { _ in nil }
+        )
+
+        guard case .askEveryTime = resolution else {
+            return XCTFail("An automatic sibling output requires a writable directory grant")
+        }
     }
 
     @MainActor
@@ -545,7 +568,8 @@ final class AppPolicyTests: XCTestCase {
                 sourceURL: source,
                 suggestedFilename: "Movie — Edited.mkv",
                 preferences: preferences,
-                fileExists: { _ in false }
+                fileExists: { _ in false },
+                directoryAccessProvider: grantedOutputDirectoryAccess
             )
         else {
             return XCTFail("A chosen default folder must not show a save panel")
@@ -570,10 +594,12 @@ final class AppPolicyTests: XCTestCase {
         content.layoutSubtreeIfNeeded()
 
         let popup = try XCTUnwrap(
-            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first)
+            descendants(in: content).compactMap { $0 as? NSPopUpButton }.first {
+                $0.accessibilityLabel() == "Default output location behavior"
+            })
         XCTAssertEqual(popup.itemTitles, OutputDestinationMode.allCases.map(\.title))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Choose Folder…" })
-        XCTAssertEqual(window.initialFirstResponder, popup)
+        XCTAssertEqual(window.initialFirstResponder?.accessibilityLabel(), "Appearance")
         assertButtonsFit(buttons(in: content), in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_SETTINGS_CAPTURE"
@@ -611,6 +637,52 @@ final class AppPolicyTests: XCTestCase {
                 for: LosslessJoinExecutionError.chapterVerificationFailed
             ).contains("chapter timing or titles did not match")
         )
+        let boundaryMessage = AppModel.sanitizedFailureMessage(
+            for: JoinOutputAuditError.decodeFailed(
+                boundaryIndex: 1,
+                exitCode: 183,
+                message: "/Users/private/Secret Movie.mkv: private decoder output"
+            )
+        )
+        XCTAssertEqual(
+            boundaryMessage,
+            "Verification failed: the joined output did not decode cleanly across boundary 2."
+        )
+        XCTAssertFalse(boundaryMessage.contains("183"))
+        XCTAssertFalse(boundaryMessage.contains("Secret Movie"))
+        XCTAssertFalse(boundaryMessage.contains("private decoder output"))
+    }
+
+    @MainActor
+    func testCommitFailuresProduceUsefulPrivacySafeCategories() {
+        let cases: [(any Error, String)] = [
+            (OutputTransactionError.unsafeDestination, "unavailable or unsafe"),
+            (OutputTransactionError.destinationExists, "already existed"),
+            (OutputTransactionError.commitFailed(code: EACCES), "permission was denied"),
+            (OutputTransactionError.commitFailed(code: ENOTSUP), "did not support"),
+            (OutputTransactionError.commitFailed(code: EIO), "could not be committed"),
+            (JobHistoryStoreError.unsafePath, "history could not be updated"),
+        ]
+
+        for (error, expectedText) in cases {
+            XCTAssertTrue(
+                AppModel.sanitizedFailureMessage(for: error).contains(expectedText),
+                "Missing sanitized category for \(error)"
+            )
+        }
+    }
+
+    @MainActor
+    func testAutomaticQueueFailureUsesSharedSanitizedCategoryAndStage() {
+        let failure = AppModel.privacySafeQueueFailure(
+            for: MKVRemuxVerificationError.wrongDuration,
+            lastActiveStage: .verifying,
+            inputCount: 2
+        )
+
+        XCTAssertEqual(failure.category, .durationMismatch)
+        XCTAssertEqual(failure.lastActiveStage, .verifying)
+        XCTAssertNil(failure.joinBoundaryNumber)
     }
 
     func testEditedOutputNamePreservesContainerExtension() {
@@ -846,7 +918,7 @@ final class AppPolicyTests: XCTestCase {
         let times = TrimPresentationPolicy.thumbnailTimes(duration: duration)
         XCTAssertEqual(times.count, 5)
         XCTAssertEqual(times.first, .zero)
-        XCTAssertEqual(times.last, MediaTime(nanoseconds: duration.nanoseconds - 1))
+        XCTAssertEqual(times.last, MediaTime(nanoseconds: duration.nanoseconds * 4 / 5))
         XCTAssertEqual(times, times.sorted())
         XCTAssertEqual(
             TrimPresentationPolicy.presetName(.hevcCompatibility),
@@ -864,7 +936,7 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
-    func testLosslessJoinReviewBuildsStrictNestedPartPlan() throws {
+    func testLosslessJoinReviewBuildsStrictJoinedChapterList() throws {
         let first = losslessJoinOption(
             part: 1,
             duration: 10,
@@ -902,11 +974,66 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(snapshot.laneSummaries[0].contains("Part 1: #0 AAC"))
         XCTAssertEqual(candidate.report.disposition, .losslessCandidate)
         XCTAssertEqual(candidate.chapters.duration, MediaTime(nanoseconds: 22_000_000_000))
-        XCTAssertEqual(candidate.chapters.document.chapterCount, 4)
-        let parents = try XCTUnwrap(candidate.chapters.document.editions.first).chapters
-        XCTAssertEqual(parents.map(\.primaryTitle), ["Part 1 — Part 1", "Part 2 — Part 2"])
-        XCTAssertEqual(parents[0].children.first?.primaryTitle, "Opening")
-        XCTAssertEqual(parents[1].children.first?.primaryTitle, "Chapter 02")
+        XCTAssertEqual(candidate.chapters.document.chapterCount, 2)
+        let chapters = try XCTUnwrap(candidate.chapters.document.editions.first).chapters
+        XCTAssertEqual(chapters.map(\.primaryTitle), ["Opening", "Chapter 02"])
+        XCTAssertTrue(chapters.allSatisfy(\.children.isEmpty))
+    }
+
+    func testLosslessJoinReviewExposesEverySourceChapterAtTheTopLevelByDefault() throws {
+        let first = losslessJoinOption(
+            part: 1,
+            duration: 10,
+            chapters: [
+                MatroskaChapterEdition(
+                    chapters: [
+                        MatroskaChapterAtom(
+                            start: .zero,
+                            displays: [ChapterDisplay(title: "Part One Opening")]
+                        )
+                    ]
+                )
+            ]
+        )
+        let second = losslessJoinOption(
+            part: 2,
+            duration: 12,
+            chapters: [
+                MatroskaChapterEdition(
+                    chapters: [
+                        MatroskaChapterAtom(
+                            start: .zero,
+                            displays: [ChapterDisplay(title: "Part Two Opening")]
+                        )
+                    ]
+                )
+            ]
+        )
+
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: first,
+                    editionID: try XCTUnwrap(first.editions.first?.id)
+                ),
+                LosslessJoinSourceSelection(
+                    option: second,
+                    editionID: try XCTUnwrap(second.editions.first?.id)
+                ),
+            ]
+        )
+
+        let chapters = try XCTUnwrap(snapshot.candidate?.chapters)
+        XCTAssertEqual(chapters.document.chapterCount, 2)
+        XCTAssertEqual(chapters.document.topLevelChapterCount, 2)
+        XCTAssertEqual(
+            chapters.document.editions.first?.chapters.map(\.primaryTitle),
+            ["Part One Opening", "Part Two Opening"]
+        )
+        XCTAssertEqual(
+            chapters.document.editions.first?.chapters.map { $0.start.seconds },
+            [0, 10]
+        )
     }
 
     func testLosslessJoinReviewBlocksOnePassNormalizationMismatch() throws {
@@ -926,6 +1053,76 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(snapshot.normalizationSummaries.contains { $0.contains("AAC once") })
         XCTAssertTrue(
             snapshot.normalizationSummaries.contains { $0.contains("0 video generation") }
+        )
+    }
+
+    @MainActor
+    func testLosslessJoinOffersReviewedMKVToolNixAppendBeforeOneGenerationFallback() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .unavailable,
+            h264VideoToolbox: .verified,
+            proRes: .unavailable,
+            proResEncoder: nil,
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let selections = [
+            LosslessJoinSourceSelection(
+                option: losslessJoinUntaggedAVCOption(
+                    part: 1,
+                    width: 1_920,
+                    height: 1_080,
+                    initializationSHA256: String(repeating: "a", count: 64)
+                ),
+                editionID: nil
+            ),
+            LosslessJoinSourceSelection(
+                option: losslessJoinUntaggedAVCOption(
+                    part: 2,
+                    width: 1_920,
+                    height: 1_080,
+                    initializationSHA256: String(repeating: "b", count: 64)
+                ),
+                editionID: nil
+            ),
+        ]
+        let fallback = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            encodingCapabilities: capabilities
+        )
+        XCTAssertNil(fallback.candidate)
+        XCTAssertNotNil(fallback.commonFormatCandidate)
+        XCTAssertTrue(fallback.canOfferReviewedMKVToolNixLosslessAppend)
+
+        let lossless = LosslessJoinReviewBuilder.make(
+            selections: selections,
+            encodingCapabilities: capabilities,
+            usesReviewedMKVToolNixWarningTolerance: true
+        )
+        XCTAssertTrue(lossless.candidate?.usesReviewedMKVToolNixWarningTolerance == true)
+        XCTAssertNotNil(lossless.commonFormatCandidate)
+        XCTAssertTrue(lossless.blockerSummaries.isEmpty)
+
+        let controller = LosslessJoinWindowController(
+            options: selections.map(\.option),
+            encodingCapabilities: capabilities
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let choice = try XCTUnwrap(
+            buttons(in: content).first {
+                $0.title.contains("verified lossless repair")
+            }
+        )
+        XCTAssertFalse(choice.isHidden)
+        XCTAssertEqual(choice.state, .on)
+        XCTAssertTrue(
+            descendants(in: content).compactMap { $0 as? NSTextField }.contains {
+                $0.stringValue.contains("verified lossless repair")
+            }
         )
     }
 
@@ -1002,7 +1199,7 @@ final class AppPolicyTests: XCTestCase {
         ).string
         XCTAssertTrue(review.contains("AAC, stereo, 48 kHz, 192 kbps"))
         XCTAssertTrue(review.contains("one fused normalization pass"))
-        XCTAssertTrue(review.contains("nested Matroska edition"))
+        XCTAssertTrue(review.contains("Joined chapter list"))
         let audioPopup = try XCTUnwrap(
             descendants(in: content).compactMap { $0 as? NSPopUpButton }.first {
                 $0.accessibilityLabel() == "Common format audio lane 1 format"
@@ -1020,6 +1217,8 @@ final class AppPolicyTests: XCTestCase {
             descendants(in: content).compactMap { $0 as? NSTextView }.first
         ).string
         XCTAssertTrue(updatedReview.contains("Opus, stereo, 48 kHz, 160 kbps"))
+        try assertReadableDocument(
+            XCTUnwrap(descendants(in: content).compactMap { $0 as? NSTextView }.first))
         assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment[
             "MKV_MAGIC_COMMON_JOIN_CAPTURE"
@@ -1249,6 +1448,65 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertFalse(blocked.isReady)
         XCTAssertTrue(blocked.blockerSummaries.contains { $0.contains("tonemap filter") })
+    }
+
+    @MainActor
+    func testCommonFormatJoinRequiresReviewForUntaggedEightBitH264AsBT709() throws {
+        let capabilities = FFmpegEncodingCapabilities(
+            softwareAV1: .unavailable,
+            softwareAV1Encoder: nil,
+            hevc10VideoToolbox: .unavailable,
+            h264VideoToolbox: .verified,
+            proRes: .unavailable,
+            proResEncoder: nil,
+            aac: .verified,
+            aacEncoder: "aac_at",
+            availableFilters: FFmpegEncodingCapabilities.requiredJoinFilters
+        )
+        let snapshot = LosslessJoinReviewBuilder.make(
+            selections: [
+                LosslessJoinSourceSelection(
+                    option: losslessJoinUntaggedAVCOption(
+                        part: 1,
+                        width: 1_920,
+                        height: 1_080
+                    ),
+                    editionID: nil
+                ),
+                LosslessJoinSourceSelection(
+                    option: losslessJoinUntaggedAVCOption(
+                        part: 2,
+                        width: 1_280,
+                        height: 720
+                    ),
+                    editionID: nil
+                ),
+            ],
+            encodingCapabilities: capabilities
+        )
+
+        let candidate = try XCTUnwrap(snapshot.commonFormatCandidate)
+        XCTAssertTrue(snapshot.isReady, "\(snapshot.blockerSummaries)")
+        XCTAssertTrue(
+            candidate.proposal.decisions.contains { $0.kind == .untaggedSDR }
+        )
+        let resolved = try CommonFormatJoinChoicePolicy.resolveRecommended(for: candidate)
+        XCTAssertTrue(
+            CommonFormatJoinChoicePolicy.summaries(
+                for: candidate,
+                resolvedPlan: resolved
+            ).contains { $0.contains("reviewed untagged 8-bit H.264 Parts as BT.709") }
+        )
+
+        let controller = try CommonFormatJoinWindowController(candidate: candidate)
+        let content = try XCTUnwrap(controller.window?.contentView)
+        content.layoutSubtreeIfNeeded()
+        let detail = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Common format video lane 1 dynamic range"
+            }
+        )
+        XCTAssertTrue(detail.stringValue.contains("untagged 8-bit H.264 Parts"))
     }
 
     @MainActor
@@ -1645,7 +1903,9 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertEqual(reviewText.accessibilityLabel(), "Join compatibility review")
         let controls = buttons(in: content)
-        for title in ["Move Up", "Move Down", "Cancel", "Continue to Save…"] {
+        for title in [
+            "Move Up", "Move Down", "Cancel", "Continue to Save…",
+        ] {
             XCTAssertTrue(controls.contains { $0.title == title }, "Missing join action \(title)")
         }
         XCTAssertTrue(
@@ -1659,6 +1919,11 @@ final class AppPolicyTests: XCTestCase {
             table.view(atColumn: 0, row: 0, makeIfNecessary: true) as? NSButton
         )
         XCTAssertTrue(include.accessibilityLabel()?.hasPrefix("Include Part source") == true)
+        XCTAssertFalse(
+            controls.contains { $0.title == "Flatten chapters for player compatibility" }
+        )
+        XCTAssertTrue(reviewText.string.contains("Joined chapter list • 2 entries"))
+        try assertReadableDocument(reviewText)
         assertButtonsFit(controls, in: content)
         if let capturePath = ProcessInfo.processInfo.environment["MKV_MAGIC_JOIN_CAPTURE"],
             capturePath.hasPrefix("/")
@@ -1810,6 +2075,27 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertNil(InspectorPresentationPolicy.displayedBitDepth(for: audio))
         XCTAssertEqual(InspectorPresentationPolicy.displayedBitDepth(for: video), 10)
+    }
+
+    func testAutomaticQueueExecutionKeepsReviewedQueueAuthoringAvailable() {
+        XCTAssertTrue(
+            AutomaticQueueAuthoringPolicy.canPrepareOrEnqueueReviewedWork(
+                automaticQueueJobIsActive: true,
+                localMediaWorkIsActive: false
+            )
+        )
+        XCTAssertFalse(
+            AutomaticQueueAuthoringPolicy.canPrepareOrEnqueueReviewedWork(
+                automaticQueueJobIsActive: false,
+                localMediaWorkIsActive: false
+            )
+        )
+        XCTAssertFalse(
+            AutomaticQueueAuthoringPolicy.canPrepareOrEnqueueReviewedWork(
+                automaticQueueJobIsActive: true,
+                localMediaWorkIsActive: true
+            )
+        )
     }
 
     func testTrackEditorUsesHumanReadableOneBasedTrackLabels() {
@@ -2068,7 +2354,15 @@ final class AppPolicyTests: XCTestCase {
         var failed = makeQueueJob(createdAt: base, audioEncodes: 1)
         try running.transition(to: .running, at: base)
         try failed.transition(to: .running, at: base)
-        try failed.transition(to: .failed, at: base, reason: .executionFailed)
+        try failed.transition(
+            to: .failed,
+            at: base,
+            reason: .executionFailed,
+            failure: PrivacySafeMediaFailure(
+                category: .durationMismatch,
+                lastActiveStage: .verifying
+            )
+        )
         func makeFinishedTrash(
             _ outcome: MediaQueueSourceDispositionOutcome?
         ) throws -> MediaQueueJob {
@@ -2089,12 +2383,17 @@ final class AppPolicyTests: XCTestCase {
             jobs: [waiting, running, failed, trashed, trashFailed, trashUncertain, trashPending],
             updatedAt: base
         )
+        var reviewedJobs = [MediaQueueJob]()
+        var transitionCount = 0
         let controller = QueueWindowController(
             snapshot: snapshot,
             onSetPaused: { _ in snapshot },
-            onTransition: { _, _, _ in snapshot },
+            onTransition: { _, _, _ in
+                transitionCount += 1
+                return snapshot
+            },
             onReorder: { _ in snapshot },
-            onReview: { _ in }
+            onReview: { reviewedJobs.append($0) }
         )
         let window = try XCTUnwrap(controller.window)
         let content = try XCTUnwrap(window.contentView)
@@ -2102,7 +2401,7 @@ final class AppPolicyTests: XCTestCase {
         content.layoutSubtreeIfNeeded()
 
         XCTAssertEqual(window.title, "MKV Magic Queue")
-        XCTAssertEqual(window.minSize, NSSize(width: 700, height: 420))
+        XCTAssertEqual(window.minSize, NSSize(width: 760, height: 500))
         let table = try XCTUnwrap(
             descendants(in: content).compactMap { $0 as? NSTableView }.first
         )
@@ -2170,6 +2469,27 @@ final class AppPolicyTests: XCTestCase {
             try XCTUnwrap(controls.first { $0.title == "Review Again…" }).isEnabled
         )
         XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Cancel" }).isEnabled)
+        let selectedDetails = try XCTUnwrap(
+            descendants(in: content)
+                .compactMap { $0 as? NSTextField }
+                .first { $0.accessibilityLabel() == "Selected queue job details" }
+        )
+        XCTAssertTrue(selectedDetails.isSelectable)
+        XCTAssertTrue(selectedDetails.stringValue.contains("output verification"))
+        XCTAssertTrue(selectedDetails.stringValue.contains("duration"))
+        XCTAssertFalse(selectedDetails.stringValue.contains("Failed.mkv"))
+
+        let reviewButton = try XCTUnwrap(controls.first { $0.title == "Review Again…" })
+        reviewButton.performClick(nil)
+        XCTAssertEqual(reviewedJobs, [failed])
+        XCTAssertEqual(transitionCount, 0, "Review must not start a retry before approval")
+        XCTAssertEqual(table.selectedRow, 2)
+        XCTAssertEqual(
+            (table.view(atColumn: 5, row: 2, makeIfNecessary: true) as? NSTableCellView)?
+                .textField?.stringValue,
+            "1",
+            "Review alone must not increment Tries"
+        )
 
         XCTAssertTrue(
             QueueExecutionControl.shouldCancelActiveTask(
@@ -2556,8 +2876,14 @@ final class AppPolicyTests: XCTestCase {
         )
         XCTAssertEqual(table.accessibilityLabel(), "Verified job history")
         XCTAssertEqual(detail.accessibilityLabel(), "Selected job progress")
-        XCTAssertEqual(detail.textColor, .labelColor)
+        XCTAssertEqual(detail.textColor, .textColor)
         XCTAssertEqual(detail.backgroundColor, .textBackgroundColor)
+        XCTAssertTrue(detail.isSelectable)
+        XCTAssertEqual(
+            detail.textStorage?.attribute(.foregroundColor, at: 0, effectiveRange: nil)
+                as? NSColor,
+            .textColor
+        )
         XCTAssertTrue(detail.string.contains("Verified output committed and reopened."))
         XCTAssertGreaterThan(detail.enclosingScrollView?.frame.height ?? 0, 120)
         XCTAssertTrue(window.initialFirstResponder === table)
@@ -2615,9 +2941,13 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertEqual(table.numberOfRows, 3)
         XCTAssertEqual(table.accessibilityLabel(), "Batch workflow review")
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Choose Output Folder…" })
-        XCTAssertTrue(
+        XCTAssertFalse(
             try XCTUnwrap(buttons(in: content).first { $0.title == "Clean Ready Files" })
                 .isEnabled
+        )
+        XCTAssertTrue(
+            descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.contains("Choose one output folder") }
         )
         XCTAssertGreaterThan(table.enclosingScrollView?.frame.height ?? 0, 200)
         XCTAssertGreaterThanOrEqual(
@@ -2632,6 +2962,50 @@ final class AppPolicyTests: XCTestCase {
         {
             try captureWindow(window: window, content: content, at: capturePath)
         }
+    }
+
+    @MainActor
+    func testBatchReviewEnablesReadyActionWithWritableDirectoryGrant() throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-batch-output-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        let access = try XCTUnwrap(
+            grantedOutputDirectoryAccess(directory)
+        )
+        let controller = BatchReviewWindowController(
+            title: "Review Subtitle Batch",
+            explanation: "Each file is independently verified.",
+            items: [
+                BatchReviewItemPresentation(
+                    id: UUID(),
+                    inputName: "One.srt",
+                    outputName: "One — Clean.srt",
+                    status: .ready,
+                    detail: "Apply one deterministic suggestion"
+                )
+            ],
+            actionTitle: "Clean Ready Files",
+            offersSourceDisposition: false,
+            initialDestinationDirectory: directory,
+            initialDirectoryAccess: access
+        )
+        let content = try XCTUnwrap(controller.window?.contentView)
+
+        XCTAssertTrue(
+            try XCTUnwrap(buttons(in: content).first { $0.title == "Clean Ready Files" })
+                .isEnabled
+        )
+    }
+
+    private func grantedOutputDirectoryAccess(
+        _ directoryURL: URL
+    ) -> OutputDirectorySecurityScope? {
+        OutputDirectorySecurityScope(
+            directoryURL: directoryURL,
+            startAccessing: { _ in true },
+            stopAccessing: { _ in }
+        )
     }
 
     @MainActor
@@ -2683,6 +3057,151 @@ final class AppPolicyTests: XCTestCase {
             try XCTUnwrap(buttons(in: contentView).first { $0.title == "Cancel" }).keyEquivalent,
             "\u{1b}"
         )
+        contentView.layoutSubtreeIfNeeded()
+        for label in ["Track display name", "Track language tag"] {
+            let field = try XCTUnwrap(
+                descendants(in: contentView).compactMap { $0 as? NSTextField }.first {
+                    $0.accessibilityLabel() == label
+                }
+            )
+            XCTAssertLessThanOrEqual(field.frame.height, 30, label)
+        }
+        let languageLabel = try XCTUnwrap(
+            descendants(in: contentView).compactMap { $0 as? NSTextField }.first {
+                $0.stringValue == "Language tag"
+            }
+        )
+        XCTAssertGreaterThanOrEqual(
+            languageLabel.frame.width, languageLabel.intrinsicContentSize.width - 1
+        )
+        assertButtonsFit(buttons(in: contentView), in: contentView)
+        if let path = ProcessInfo.processInfo.environment["MKV_MAGIC_TRACK_EDITOR_CAPTURE"] {
+            try captureWindow(window: window, content: contentView, at: path)
+        }
+        for appearance in [NSAppearance.Name.aqua, .darkAqua] {
+            window.appearance = NSAppearance(named: appearance)
+            window.setFrame(
+                NSRect(origin: window.frame.origin, size: window.minSize), display: false)
+            contentView.layoutSubtreeIfNeeded()
+            assertButtonsFit(buttons(in: contentView), in: contentView)
+            XCTAssertGreaterThanOrEqual(
+                languageLabel.frame.width, languageLabel.intrinsicContentSize.width - 1
+            )
+            let firstFlag = try XCTUnwrap(buttons(in: contentView).first { $0.title == "Default" })
+            let secondFlag = try XCTUnwrap(buttons(in: contentView).first { $0.title == "Enabled" })
+            XCTAssertLessThanOrEqual(
+                abs(
+                    firstFlag.convert(firstFlag.bounds, to: contentView).midY
+                        - secondFlag.convert(secondFlag.bounds, to: contentView).midY), 34
+            )
+        }
+    }
+
+    @MainActor
+    func testTrackEditorPreviewsTextWhileTheFieldEditorIsStillActive() throws {
+        for (label, text) in [
+            ("Track display name", "Main audio"), ("Track language tag", "es-MX"),
+        ] {
+            let controller = TrackEditorWindowController(
+                asset: MediaAsset(
+                    sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+                    container: "matroska",
+                    tracks: [
+                        MediaTrack(id: 0, kind: .audio, codec: "aac", uid: 42, language: "eng")
+                    ]
+                )
+            )
+            let window = try XCTUnwrap(controller.window)
+            let content = try XCTUnwrap(window.contentView)
+            let editor = try XCTUnwrap(window.contentViewController as? TrackEditorViewController)
+            var previewed: TrackMetadataEdit?
+            editor.onPreview = { previewed = $0 }
+            let field = try XCTUnwrap(
+                descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                    $0.accessibilityLabel() == label
+                }
+            )
+            try replaceFieldText(field, with: text, in: window)
+            let preview = try XCTUnwrap(
+                buttons(in: content).first { $0.title == "Preview Changes" })
+            XCTAssertTrue(preview.isEnabled)
+            XCTAssertTrue(
+                NSApp.sendAction(try XCTUnwrap(preview.action), to: preview.target, from: preview))
+            let edit = try XCTUnwrap(previewed, label)
+            XCTAssertEqual(edit.trackUID, 42)
+            XCTAssertEqual(edit.name, label == "Track display name" ? text : nil)
+            XCTAssertEqual(edit.language, label == "Track language tag" ? text : "en")
+        }
+    }
+
+    @MainActor
+    func testTrackEditorRefreshesPreviewForFlagsLanguageCorrectionAndTrackSelection() throws {
+        let track = MediaTrack(id: 0, kind: .audio, codec: "aac", uid: 42, language: "eng")
+        let controller = TrackEditorWindowController(
+            asset: MediaAsset(
+                sourceURL: URL(fileURLWithPath: "/media/Movie.mkv"),
+                container: "matroska",
+                tracks: [
+                    track,
+                    MediaTrack(id: 1, kind: .subtitle, codec: "srt", uid: 84, language: "fr"),
+                ]
+            )
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        let editor = try XCTUnwrap(window.contentViewController as? TrackEditorViewController)
+        let preview = try XCTUnwrap(buttons(in: content).first { $0.title == "Preview Changes" })
+        let status = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                $0.accessibilityLabel() == "Track edit status"
+            }
+        )
+        var previewed: TrackMetadataEdit?
+        editor.onPreview = { previewed = $0 }
+        let baseline = try TrackEditorPresentation.normalizedEdit(for: track)
+        let flags: [(String, KeyPath<TrackMetadataEdit, Bool>)] = [
+            ("Default", \.isDefault), ("Forced", \.isForced),
+            ("Enabled", \.isEnabled), ("Commentary", \.isCommentary),
+            ("Hearing impaired / SDH", \.isHearingImpaired),
+            ("Audio description", \.isVisualImpaired),
+            ("Original language", \.isOriginal), ("Text descriptions", \.isTextDescription),
+        ]
+        XCTAssertFalse(preview.isEnabled)
+        XCTAssertEqual(status.textColor, AppPalette.secondaryText)
+        for (title, keyPath) in flags {
+            let flag = try XCTUnwrap(buttons(in: content).first { $0.title == title })
+            flag.performClick(nil)
+            XCTAssertTrue(preview.isEnabled, title)
+            preview.performClick(nil)
+            XCTAssertEqual(
+                try XCTUnwrap(previewed)[keyPath: keyPath], !baseline[keyPath: keyPath], title)
+            flag.performClick(nil)
+            XCTAssertFalse(preview.isEnabled, title)
+        }
+        let language = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSComboBox }.first)
+        try replaceFieldText(language, with: "not a language", in: window)
+        XCTAssertFalse(preview.isEnabled)
+        XCTAssertEqual(status.textColor, AppPalette.errorText)
+        try replaceFieldText(language, with: "es-MX", in: window)
+        XCTAssertTrue(preview.isEnabled)
+        XCTAssertEqual(status.textColor, AppPalette.secondaryText)
+        XCTAssertTrue(status.stringValue.contains("Verify & Run"))
+        try replaceFieldText(language, with: "eng", in: window)
+        XCTAssertFalse(preview.isEnabled, "Equivalent legacy language codes are not changes")
+        window.makeFirstResponder(nil)
+        language.selectItem(withObjectValue: "es")
+        editor.comboBoxSelectionDidChange(
+            Notification(name: NSComboBox.selectionDidChangeNotification, object: language))
+        XCTAssertTrue(preview.isEnabled)
+        preview.performClick(nil)
+        XCTAssertEqual(previewed?.language, "es")
+        let selector = try XCTUnwrap(buttons(in: content).compactMap { $0 as? NSPopUpButton }.first)
+        selector.selectItem(at: 1)
+        XCTAssertTrue(
+            NSApp.sendAction(try XCTUnwrap(selector.action), to: selector.target, from: selector))
+        XCTAssertEqual(language.stringValue, "fr")
+        XCTAssertFalse(preview.isEnabled, "Selecting a track is not an edit")
     }
 
     @MainActor
@@ -2715,14 +3234,13 @@ final class AppPolicyTests: XCTestCase {
             "\u{1b}"
         )
 
-        try XCTUnwrap(buttons(in: contentView).first { $0.title == "Preview Removal" })
-            .performClick(nil)
+        XCTAssertFalse(
+            try XCTUnwrap(buttons(in: contentView).first { $0.title == "Preview Removal" })
+                .isEnabled)
         let labels = descendants(in: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
         XCTAssertTrue(
             labels.contains {
-                $0.contains("Could not prepare track removal.")
-                    && $0.contains("No tracks were removed; revise the selection and try again.")
-                    && $0.contains("Details: Check at least one track to remove.")
+                $0.contains("Check at least one track to remove.")
             }
         )
     }
@@ -2881,6 +3399,15 @@ final class AppPolicyTests: XCTestCase {
             descendants(in: committingContent).compactMap { $0 as? NSProgressIndicator }.first
         )
         XCTAssertEqual(commitProgress.doubleValue, 2)
+        try WorkflowEvidence.record(
+            "commit-boundary",
+            facts: [
+                "cancellation_disabled_at_commit": !commitCancel.isEnabled,
+                "verification_already_passed": true,
+                "commit_in_progress": true,
+            ],
+            explanation: commitStatus.stringValue + "\n"
+                + (commitCancel.accessibilityHelp() ?? ""))
 
         let generic = VerifiedOutputProgressWindowController.verifiedChange(
             title: "Cleaning Subtitle",
@@ -3280,6 +3807,15 @@ final class AppPolicyTests: XCTestCase {
         XCTAssertTrue(text.contains("No output will be created."))
         XCTAssertTrue(buttons(in: content).contains { $0.title == "Done" && !$0.isHidden })
         XCTAssertFalse(buttons(in: content).contains { $0.title == "Use This Plan" })
+        try WorkflowEvidence.record(
+            "cleanup-noop",
+            facts: [
+                "no_runnable_changes": preview.compiledWorkflow == nil,
+                "done_action_available": buttons(in: content).contains {
+                    $0.title == "Done" && !$0.isHidden
+                },
+                "run_action_absent": !buttons(in: content).contains { $0.title == "Use This Plan" },
+            ], explanation: WorkflowPlanReviewPresentation.impactSummary(for: preview))
     }
 
     @MainActor
@@ -3934,6 +4470,66 @@ final class AppPolicyTests: XCTestCase {
     }
 
     @MainActor
+    func testCommonMediaSubtitleReviewExposesEditableInferredLanguages() throws {
+        let cue = SubRipCue(
+            id: 0,
+            start: SubRipTimestamp(milliseconds: 0),
+            end: SubRipTimestamp(milliseconds: 1_000),
+            lines: ["Bonjour"]
+        )
+        let preview = SubtitleCleanupFilePreview(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.fr.srt"),
+            sourceSHA256: Data(SHA256.hash(data: Data())),
+            encoding: .utf8,
+            diagnostics: [],
+            cleanup: SubtitleCleanupPolicy().preview(SubRipDocument(cues: [cue])),
+            normalizationNeeded: false
+        )
+        let media = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.en.mp4"),
+            container: "mov",
+            duration: MediaTime(seconds: 2),
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "h264"),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", language: "und"),
+            ]
+        )
+        let match = ExternalSubtitleMatcher().match(
+            media: media,
+            subtitleURL: preview.sourceURL,
+            subtitle: preview.cleanup.original
+        )
+        let controller = ExternalSubtitleMuxWindowController(
+            media: media,
+            preview: .subRip(preview),
+            match: match,
+            sourceTrackLanguageDefaults: [1: "en"]
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+
+        XCTAssertEqual(window.title, "Remux Video with Subtitle")
+        XCTAssertEqual(content.frame.height, 564, accuracy: 1)
+        XCTAssertEqual(
+            window.initialFirstResponder?.accessibilityLabel(),
+            "Audio track 1 language tag"
+        )
+        let audioField = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSComboBox }.first {
+                $0.accessibilityLabel() == "Audio track 1 language tag"
+            }
+        )
+        let subtitleField = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSComboBox }.first {
+                $0.accessibilityLabel() == "Subtitle language tag"
+            }
+        )
+        XCTAssertEqual(audioField.stringValue, "en")
+        XCTAssertEqual(subtitleField.stringValue, "fr")
+        XCTAssertTrue(buttons(in: content).contains { $0.title == "Review Remux" })
+    }
+
+    @MainActor
     func testExternalASSMuxUsesSharedConfirmationAndWarnsBeforeDiscardingCleanup() throws {
         let preview = try advancedSubtitlePreview(
             sourceURL: URL(fileURLWithPath: "/Media/Movie.en.ass"),
@@ -4200,8 +4796,21 @@ final class AppPolicyTests: XCTestCase {
         let sidebarLabels = descendants(in: controller.view).compactMap {
             ($0 as? NSTextField)?.stringValue
         }
-        XCTAssertTrue(sidebarLabels.contains("Activity"))
-        XCTAssertEqual(buttons(in: controller.view).count { $0.title == "Queue" }, 1)
+        XCTAssertFalse(sidebarLabels.contains("Activity"))
+        XCTAssertTrue(sidebarLabels.contains("JOBS"))
+        XCTAssertEqual(buttons(in: controller.view).count { $0.title == "Queue…" }, 1)
+        XCTAssertEqual(buttons(in: controller.view).count { $0.title == "Quick Actions" }, 1)
+        for title in [
+            "Quick Actions", "Workflows…", "Encoding Test…", "Queue…", "History…",
+        ] {
+            let action = try XCTUnwrap(
+                buttons(in: controller.view).first { $0.title == title }
+            )
+            XCTAssertTrue(
+                action.isEnabled, "\(title) should be available without a media selection")
+            XCTAssertNotNil(action.target)
+            XCTAssertNotNil(action.action)
+        }
         XCTAssertFalse(
             try XCTUnwrap(
                 descendants(in: controller.view).compactMap { $0 as? NSTextField }.first {
@@ -4218,6 +4827,47 @@ final class AppPolicyTests: XCTestCase {
             try captureWindow(window: window, content: controller.view, at: capturePath)
             window.close()
         }
+    }
+
+    @MainActor
+    func testMainWindowRecognizesSelectedMP4AndSRTAsOneRemuxAction() throws {
+        let media = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.en.mp4"),
+            container: "mov",
+            duration: MediaTime(seconds: 10),
+            tracks: [
+                MediaTrack(id: 0, kind: .video, codec: "h264"),
+                MediaTrack(id: 1, kind: .audio, codec: "aac", language: "und"),
+            ]
+        )
+        let subtitle = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/Media/Movie.fr.srt"),
+            container: "srt"
+        )
+        let controller = MainViewController(
+            model: AppModel(initialAssets: [media, subtitle])
+        )
+        controller.loadView()
+        controller.view.frame = NSRect(x: 0, y: 0, width: 1_080, height: 680)
+        controller.view.layoutSubtreeIfNeeded()
+        let table = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTableView }.first {
+                $0.accessibilityLabel() == "Inspected media files"
+            }
+        )
+        table.selectRowIndexes(IndexSet(integersIn: 0...1), byExtendingSelection: false)
+
+        let remux = try XCTUnwrap(
+            buttons(in: controller.view).first { $0.title == "Remux Video + Subtitle…" }
+        )
+        XCTAssertTrue(remux.isEnabled)
+        let inspector = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTextView }.first {
+                $0.accessibilityLabel() == "Selected media details"
+            }
+        )
+        XCTAssertTrue(inspector.string.contains("Audio #1 language  en"))
+        XCTAssertTrue(inspector.string.contains("added last"))
     }
 
     @MainActor
@@ -4322,6 +4972,80 @@ final class AppPolicyTests: XCTestCase {
                 "1\n00:00:00,000 --> 00:00:01,000\nHello\n"
             )
         }
+    }
+
+    @MainActor
+    func testMainFileListOffersVerifiedBatchTagRemovalForMultipleMKVs() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-batch-tags-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let assets = try ["One.mkv", "Two.mkv"].enumerated().map { index, name in
+            let url = root.appendingPathComponent(name)
+            try Data("source \(index)".utf8).write(to: url)
+            return MediaAsset(
+                sourceURL: url,
+                container: "matroska,webm",
+                tracks: [
+                    MediaTrack(
+                        id: 0,
+                        kind: .video,
+                        codec: "h264",
+                        codecID: "V_MPEG4/ISO/AVC",
+                        uid: UInt64(index + 1)
+                    )
+                ],
+                globalTagCount: 1,
+                trackTagCount: index + 1
+            )
+        }
+        let controller = MainViewController(model: AppModel(initialAssets: assets))
+        let window = NSWindow(contentViewController: controller)
+        defer { window.close() }
+        window.setContentSize(NSSize(width: 1_080, height: 680))
+        controller.view.layoutSubtreeIfNeeded()
+        let table = try XCTUnwrap(
+            descendants(in: controller.view).compactMap { $0 as? NSTableView }.first {
+                $0.accessibilityLabel() == "Inspected media files"
+            }
+        )
+
+        table.selectRowIndexes(IndexSet(integersIn: 0..<2), byExtendingSelection: false)
+        controller.view.layoutSubtreeIfNeeded()
+
+        let tags = try XCTUnwrap(
+            buttons(in: controller.view).first { $0.title == "Tags…" }
+        )
+        XCTAssertTrue(tags.isEnabled)
+        XCTAssertTrue(tags.toolTip?.contains("each selected tagged MKV") == true)
+        XCTAssertTrue(
+            descendants(in: controller.view).compactMap { $0 as? NSTextView }.contains {
+                $0.string.contains("Tags removes all global and track tags")
+            }
+        )
+        let chapters = try XCTUnwrap(
+            buttons(in: controller.view).first { $0.title == "Suggest Chapters…" }
+        )
+        XCTAssertTrue(chapters.isEnabled)
+        XCTAssertTrue(chapters.toolTip?.contains("each selected MKV locally") == true)
+        XCTAssertTrue(
+            descendants(in: controller.view).compactMap { $0 as? NSTextView }.contains {
+                $0.string.contains("Suggest Chapters analyzes each selected MKV locally")
+            }
+        )
+        chapters.performClick(nil)
+        let optionsSheet = try XCTUnwrap(window.attachedSheet)
+        XCTAssertEqual(optionsSheet.title, "Suggest Chapters")
+        let optionsContent = try XCTUnwrap(optionsSheet.contentView)
+        XCTAssertTrue(
+            descendants(in: optionsContent).compactMap { ($0 as? NSTextField)?.stringValue }
+                .contains { $0.contains("each of the 2 selected files") }
+        )
+        try XCTUnwrap(buttons(in: optionsContent).first { $0.title == "Cancel" })
+            .performClick(nil)
+        XCTAssertNil(window.attachedSheet)
     }
 
     @MainActor
@@ -4440,7 +5164,7 @@ final class AppPolicyTests: XCTestCase {
             try captureTrimWindow(window: window, content: content, at: capturePath)
         }
         review.performClick(nil)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(waitUntil { reviewedRequest != nil })
 
         XCTAssertEqual(reviewedRequest?.operation, .transcode)
         XCTAssertEqual(reviewedRequest?.mode, .exact)
@@ -4684,7 +5408,7 @@ final class AppPolicyTests: XCTestCase {
         let review = try XCTUnwrap(buttons(in: content).first { $0.title == "Review Trim" })
         XCTAssertTrue(review.isEnabled)
         review.performClick(nil)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(waitUntil { reviewedRequest != nil })
         XCTAssertEqual(reviewedRequest?.exactChoice?.videoRateControl, .constantQuality(24))
         XCTAssertEqual(reviewedRequest?.exactChoice?.encoderTuning, .svtAV1Preset(5))
     }
@@ -4786,7 +5510,7 @@ final class AppPolicyTests: XCTestCase {
         let review = try XCTUnwrap(buttons(in: content).first { $0.title == "Review Trim" })
         XCTAssertTrue(review.isEnabled)
         review.performClick(nil)
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.1))
+        XCTAssertTrue(waitUntil { reviewedRequest != nil })
         XCTAssertEqual(reviewedRequest?.exactChoice?.audioPolicy, .opusPreserveLayout)
     }
 
@@ -4848,6 +5572,14 @@ final class AppPolicyTests: XCTestCase {
             XCTAssertTrue(titles.contains(expected), "Missing Chapter Studio action \(expected)")
         }
         let chapterButtons = buttons(in: content)
+        for title in ["Display name", "Language", "Country", "Start", "End"] {
+            let label = try XCTUnwrap(
+                descendants(in: content).compactMap { $0 as? NSTextField }.first {
+                    !$0.isEditable && $0.stringValue == title
+                })
+            XCTAssertGreaterThanOrEqual(
+                label.frame.width + 1, label.intrinsicContentSize.width, title)
+        }
         XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Suggest…" }).isEnabled)
         XCTAssertTrue(try XCTUnwrap(chapterButtons.first { $0.title == "Thumbnails…" }).isEnabled)
         assertButtonsFit(chapterButtons, in: content)
@@ -4969,6 +5701,109 @@ final class AppPolicyTests: XCTestCase {
             let png = try XCTUnwrap(representation.representation(using: .png, properties: [:]))
             try png.write(to: URL(fileURLWithPath: capturePath), options: .atomic)
         }
+    }
+
+    @MainActor
+    func testChapterSuggestionOptionsFitWithoutOverlappingAtMinimumSize() throws {
+        let controller = ChapterSuggestionOptionsWindowController(
+            capabilities: ChapterSuggestionCapabilities(
+                hasVideo: true,
+                hasAudio: true,
+                fileCount: 3
+            )
+        )
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(window.title, "Suggest Chapters")
+        XCTAssertEqual(window.minSize, NSSize(width: 500, height: 350))
+        let controls = buttons(in: content)
+        let detectors = try ["Scene changes", "Black frames", "Silence"].map { title in
+            try XCTUnwrap(controls.first { $0.title == title })
+        }
+        XCTAssertTrue(detectors.allSatisfy(\.isEnabled))
+        XCTAssertTrue(detectors.allSatisfy { $0.state == .on })
+        XCTAssertTrue(try XCTUnwrap(controls.first { $0.title == "Analyze" }).isEnabled)
+        XCTAssertTrue(controls.contains { $0.title == "Cancel" })
+
+        let leafFrames = descendants(in: content).filter { view in
+            view.subviews.isEmpty && !view.isHiddenOrHasHiddenAncestor
+                && (view is NSTextField || view is NSButton)
+        }.map { $0.convert($0.bounds, to: content) }.filter {
+            $0.width > 1 && $0.height > 1
+        }
+        for leftIndex in leafFrames.indices {
+            for rightIndex in leafFrames.indices where rightIndex > leftIndex {
+                let intersection = leafFrames[leftIndex].intersection(leafFrames[rightIndex])
+                XCTAssertTrue(
+                    intersection.isNull || intersection.width <= 1 || intersection.height <= 1,
+                    "Visible chapter suggestion controls overlap: \(leafFrames[leftIndex]) and \(leafFrames[rightIndex])"
+                )
+            }
+        }
+        assertButtonsFit(controls, in: content)
+        XCTAssertEqual(
+            descendants(in: content).compactMap { $0 as? NSTextField }.count {
+                $0.accessibilityLabel() == "Minimum seconds between suggestions"
+            },
+            1
+        )
+        if let capturePath = ProcessInfo.processInfo.environment[
+            "MKV_MAGIC_SUGGESTION_OPTIONS_CAPTURE"
+        ], capturePath.hasPrefix("/") {
+            try captureWindow(window: window, content: content, at: capturePath)
+        }
+    }
+
+    @MainActor
+    func testBatchChapterSuggestionReviewKeepsFilesAndBoundariesTogether() throws {
+        let controller = ChapterSuggestionReviewWindowController(groups: [
+            ChapterSuggestionReviewGroup(
+                id: UUID(),
+                sourceName: "Part One.mkv",
+                suggestions: [
+                    ChapterSuggestion(
+                        time: MediaTime(nanoseconds: 10_000_000_000),
+                        signals: [.sceneChange]
+                    ),
+                    ChapterSuggestion(
+                        time: MediaTime(nanoseconds: 20_000_000_000),
+                        signals: [.blackFrame]
+                    ),
+                ]
+            ),
+            ChapterSuggestionReviewGroup(
+                id: UUID(),
+                sourceName: "Part Two.mkv",
+                suggestions: [
+                    ChapterSuggestion(
+                        time: MediaTime(nanoseconds: 30_000_000_000),
+                        signals: [.silence]
+                    )
+                ]
+            ),
+        ])
+        let window = try XCTUnwrap(controller.window)
+        let content = try XCTUnwrap(window.contentView)
+        window.setContentSize(window.minSize)
+        content.layoutSubtreeIfNeeded()
+
+        let table = try XCTUnwrap(
+            descendants(in: content).compactMap { $0 as? NSTableView }.first
+        )
+        XCTAssertEqual(table.numberOfRows, 3)
+        XCTAssertTrue(table.tableColumns.contains { $0.title == "File" })
+        XCTAssertTrue(window.initialFirstResponder === table)
+        let labels = descendants(in: content).compactMap { ($0 as? NSTextField)?.stringValue }
+        XCTAssertTrue(labels.contains("3 of 3 selected"))
+        XCTAssertTrue(
+            try XCTUnwrap(
+                buttons(in: content).first { $0.title == "Continue with Selected" }
+            ).isEnabled
+        )
+        assertButtonsFit(buttons(in: content), in: content)
     }
 
     private func makeHistoryRecord(id: UUID, createdAt: Date) throws -> MediaJobRecord {
@@ -5150,6 +5985,52 @@ final class AppPolicyTests: XCTestCase {
         )
     }
 
+    private func losslessJoinUntaggedAVCOption(
+        part: Int,
+        width: Int,
+        height: Int,
+        initializationSHA256: String? = nil
+    ) -> LosslessJoinSourceOption {
+        let source = MediaAsset(
+            sourceURL: URL(fileURLWithPath: "/media/Untagged Part \(part).mkv"),
+            container: "matroska,webm",
+            duration: MediaTime(nanoseconds: 10_000_000_000),
+            tracks: [
+                MediaTrack(
+                    id: 0,
+                    kind: .video,
+                    codec: "h264",
+                    codecID: "V_MPEG4/ISO/AVC",
+                    profile: "High",
+                    level: 40,
+                    codecInitializationDigest: initializationSHA256.flatMap {
+                        MediaCodecInitializationDigest(sha256: $0)
+                    },
+                    uid: UInt64(part),
+                    isDefault: true,
+                    dimensions: MediaDimensions(width: width, height: height),
+                    displayDimensions: MediaDimensions(width: width, height: height),
+                    pixelFormat: "yuv420p",
+                    bitDepth: 8,
+                    frameRate: "24000/1001"
+                )
+            ],
+            globalTagCount: 0,
+            trackTagCount: 0
+        )
+        return LosslessJoinSourceOption(
+            chapterPreview: ChapterEditPreview(
+                source: source,
+                original: MatroskaChapterDocument(editions: []),
+                sourceRevision: ChapterSourceRevision(
+                    fileSize: 1,
+                    modificationDate: Date(timeIntervalSince1970: 1)
+                ),
+                canonicalSHA256: Data(repeating: 0, count: 32)
+            )
+        )
+    }
+
     private func ambiguousSubtitleJoinOption(
         part: Int,
         trackIDs: [Int]
@@ -5290,6 +6171,32 @@ final class AppPolicyTests: XCTestCase {
     @MainActor
     private func descendants(in view: NSView) -> [NSView] {
         [view] + view.subviews.flatMap(descendants)
+    }
+
+    @MainActor
+    private func assertReadableDocument(
+        _ text: NSTextView, file: StaticString = #filePath, line: UInt = #line
+    ) throws {
+        text.window?.contentView?.layoutSubtreeIfNeeded()
+        let scroll = try XCTUnwrap(text.enclosingScrollView, file: file, line: line)
+        XCTAssertTrue(text.isSelectable, file: file, line: line)
+        XCTAssertFalse(text.isEditable, file: file, line: line)
+        XCTAssertGreaterThan(text.frame.width, 100, file: file, line: line)
+        XCTAssertEqual(
+            text.frame.width, scroll.contentView.bounds.width, accuracy: 2, file: file, line: line)
+        XCTAssertTrue(text.isVerticallyResizable, file: file, line: line)
+        XCTAssertFalse(text.isHorizontallyResizable, file: file, line: line)
+        XCTAssertTrue(text.textContainer?.widthTracksTextView == true, file: file, line: line)
+    }
+
+    @MainActor
+    private func replaceFieldText(_ field: NSTextField, with text: String, in window: NSWindow)
+        throws
+    {
+        XCTAssertTrue(window.makeFirstResponder(field))
+        let editor = try XCTUnwrap(field.currentEditor() as? NSTextView)
+        editor.insertText(
+            text, replacementRange: NSRange(location: 0, length: editor.string.utf16.count))
     }
 
     @MainActor

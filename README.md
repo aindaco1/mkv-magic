@@ -9,6 +9,44 @@ named `mkv-magic`; the internal Swift package and executable are `MKVMagic`.
 
 ## Status
 
+The published release is [0.2.4](https://github.com/aindaco1/mkv-magic/releases/tag/v0.2.4).
+This checkout contains 0.3.0 development work. The capabilities below describe
+that source; private test installers and passing local checks do not establish
+publication or hardware acceptance. See the [candidate notes](docs/releases/0.3.0.md)
+and [Jev development check](docs/testing/JEV_EVALUATION.md).
+
+**Appearance:** MKV Magic > Settings offers System (the default), Light, and
+Dark. System follows macOS automatically. Text and surfaces use a high-contrast
+neutral palette, with restrained warning/error color and native focus cues.
+
+**Saving:** output settings apply to all media outputs and exports. Automatic
+saves use unused filenames without a save dialog. Beside-source outputs remember
+folder authorization; reports and workflows remember an export folder when they
+have no source. Only Ask Every Time shows a save dialog. macOS may still need an
+explicit folder grant when access is missing or revoked.
+
+**Reporting:** Help > Report a Problem lets you review and send sanitized
+diagnostics directly in app. No browser or manual system-crash import is required.
+The separately sandboxed reporting helper reuses the shared GitHub relay; media
+processing and the main app remain offline. Sending is always explicit.
+
+**Finding tools:** select a file for common actions in the inspector. Expand
+**More Tools** for segment-title/track editing, tags, extraction, attachment
+tools, trim, and conversion. These controls scroll when the window is small.
+Add a video and its SRT together to review the paired remux and language defaults.
+The [product and UX review](docs/testing/UX_PRODUCT_REVIEW_2026-09-05.md) separates
+current capabilities from planned features and remaining acceptance work.
+
+**Batch remux:** add a folder (including subfolders) or select several videos and
+text subtitles, then choose **Remux Batch to MKV**. Each compatible MP4, M4V, MOV,
+or WebM produces its own zero-encode MKV. All confident SRT/ASS/SSA matches are
+preselected; ambiguous names need manual review. **Edit Selected** changes
+pairings, audio/subtitle languages, track names, and default/forced/SDH flags.
+Uncheck outputs you do not want, then **Add Included Jobs to Queue**. Inputs are
+kept, output defaults are reused, and each job is verified independently.
+The [batch-action audit](docs/testing/BATCH_ACTION_AUDIT.md) lists the supported
+flows, safety limits, and remaining bulk-editing work.
+
 The release foundation and first local inspection vertical slice are in place.
 The app can recursively discover media, inspect files with its bundled FFprobe
 and MKVToolNix runtime, and present normalized file, track, chapter, attachment,
@@ -17,9 +55,10 @@ Matroska segment title or one track's name, language, playback flags, and roles
 on a temporary clone. They verify every unrelated track and structure fact,
 then commit a new output without replacing the original. Track removal remuxes
 retained streams without encoding, preserves their order, chapters, tags, and
-attachments, and uses the same verify-before-commit rule. A deterministic Clean
-MKV preview can suggest English-library subtitle removals for individual review.
-The native Workflows builder can name, duplicate, add, remove, reorder, enable,
+attachments, and uses the same verify-before-commit rule. The main **Clean MKV**
+shortcut compiles the complete built-in recipe below for one or many inspected
+MKVs, including files that need metadata or filename cleanup but no subtitle
+removal. The native Workflows builder can name, duplicate, add, remove, reorder, enable,
 save, import, and export portable recipe cards. On first use it includes an
 editable **Clean MKV** workflow modeled on the legacy `clean_mkv.py` utility.
 It preserves every video and audio stream, removes explicitly non-English and
@@ -214,11 +253,17 @@ flatten leaf chapters for Jellyfin; and import or export Matroska XML and simple
 chapter text. The reviewed tree is written only to a temporary clone with
 `mkvpropedit`, then re-extracted for exact hierarchy, UID, timestamp, language,
 and flag comparison before commit and after reopen. Synchronized timeline
-dragging and frame/keyframe snapping remain M4 work.
+dragging and frame/keyframe snapping remain M4 work. Selecting multiple files
+changes the action to **Suggest Chapters…**: the same validated detector options
+run independently for each eligible MKV, one checklist identifies the source of
+every timestamp, and each approved document becomes a separate collision-safe,
+verified copy in one reviewed output folder. Unsupported files and empty results
+are explained and skipped; originals remain unchanged.
 The first M5 slice can compose explicitly selected source chapter trees for a
-hard join: it intersects retained ranges, rebases nested timestamps, creates
-source-part parents and missing boundary children, regenerates identities, and
-validates one final default edition. M5 also has a bounded joined-track mapping
+hard join: it intersects retained ranges, rebases nested timestamps, promotes
+every retained leaf to one player-compatible top-level list, creates a numbered
+boundary chapter for a chapterless source, regenerates identities, and validates
+one final default edition. M5 also has a bounded joined-track mapping
 foundation. It proposes only unique
 codec/parameter or language/role matches, leaves indistinguishable tracks in
 separate visible lanes, requires every appendable track exactly once, and
@@ -229,13 +274,17 @@ output verification remain mandatory.
 With at least two inspected MKVs, **Join Files…** now opens a native strict
 review. Users can include, exclude, and reorder sources; explicitly choose among
 multiple chapter editions; inspect every proposed track lane and compatibility
-issue; and continue only when the group is a zero-encode candidate with stable
+issue; review the complete joined chapter count; and continue only when the
+group is a zero-encode candidate with stable
 track identities. The app revalidates every exact source chapter document,
+continues repeated same-style consecutive chapter numbering across the final
+timeline while preserving custom or nonconsecutive names,
 prompts for one MKV destination, shows cancellable progress, records every input
 in History, and hard-joins through the verified-output transaction. It reopens
-the temporary and committed results, compares the exact nested chapter XML,
+the temporary and committed results, compares the exact canonical chapter XML,
 decodes a bounded window spanning every join, and fingerprints the ordered
-encoded packet payloads of every lane promised as a direct copy. When automatic
+encoded packet payloads of every lane promised as a direct copy. The review
+shows the final top-level chapter count. When automatic
 matching finds indistinguishable tracks, **Resolve Track Mapping…** opens an
 explicit lane-by-Part table. Selecting a same-type track moves or swaps its
 assignment, never duplicates or discards it, and the confirmed map is invalidated
@@ -345,9 +394,20 @@ media to MKV** workflow card. It can be paired with filename cleanup, compiles
 to a zero-encode lightweight plan for compatible non-MKV input, and is skipped
 as already satisfied for MKV input. A saved remux recipe is eligible for the
 automatic queue; reinspection must reproduce the exact reviewed track/chapter
-plan and source revision before execution. Other media-changing cards cannot be
-combined with an active common-media remux until their stream-to-Matroska-track
-mapping has an equally exact contract.
+plan and source revision before execution. One reviewed external text subtitle
+and its per-run source-audio language choices can share that same remux pass.
+Other media-changing cards cannot be combined with an active common-media remux
+until their stream-to-Matroska-track mapping has an equally exact contract.
+
+Dragging exactly one compatible MP4, M4V, MOV, or chapter-free WebM together
+with one SRT, ASS, or SSA file exposes **Remux Video + Subtitle…** directly.
+Clear trailing filename language markers become editable defaults for otherwise
+untagged audio and for the added subtitle. The review can change every proposed
+language and the subtitle name or role flags before one zero-encode `mkvmerge`
+pass creates and verifies the MKV; both originals remain unchanged. That review
+enables both **Verify & Run** and **Add to Queue**. Repeating it for another
+video/sidecar pair appends another independent waiting job rather than replacing
+the first.
 
 Exact Trim keeps **Balanced** as the default but also offers plain-language
 **Smaller File** and **Higher Quality** choices. An optional disclosure reveals
@@ -422,7 +482,9 @@ under serious thermal pressure, and reduces battery operation to one lightweight
 job. After reviewing a supported saved workflow, **Add to Queue** stores fresh,
 narrow security-scoped bookmarks and the exact reviewed plan as waiting work.
 That can be one primary media file or the primary plus one reviewed external
-SRT, ASS, or SSA subtitle. MKV Magic takes a live macOS power and thermal
+SRT, ASS, or SSA subtitle; reviewed common-container remux batches can include
+multiple confidently matched text sidecars per video. MKV Magic takes a live
+macOS power and thermal
 snapshot on launch, after resume, and after queue authoring, then invokes the
 production admission coordinator. The coordinator combines the scheduler policy
 with an explicit workflow-capability check, unchanged input revisions, a
@@ -442,10 +504,11 @@ while automatic starts are paused.
 
 External-subtitle queue records remain private and path-free. They store only
 opaque bookmark authority, file revisions, the reviewed sidecar SHA-256, SRT or
-ASS/SSA format, track metadata, and sorted cleanup-restoration IDs—not subtitle
-text or a source path, and never inside an exported workflow. Admission parses a
-fresh sidecar preview, requires the original digest, reapplies the exact review,
-and recompiles the same plan before the existing verified mux executor runs.
+ASS/SSA format, track metadata, optional canonical source-track language choices,
+and sorted cleanup-restoration IDs—not subtitle text or a source path, and never
+inside an exported workflow. Admission parses a fresh sidecar preview, requires
+the original digest, reapplies the exact review, and recompiles the same plan
+before the existing verified mux executor runs.
 A changed sidecar moves to **Needs Review** and creates no output.
 
 Standalone audio recipes use this same path as audio-heavy work. If packet-copy
@@ -458,6 +521,31 @@ The native **Queue** window shows resource cost, status, and attempts; it offers
 hold/resume, pending reorder, cancel, review-again retry, and persistent pause.
 Opening the window refreshes current work without treating it as a relaunch
 interruption.
+
+Multi-selection **Tags**, **Clean Subtitle**, and **Suggest Chapters** also use
+the durable queue after their shared batch review. Each included file is a
+separate zero-encode job, saved to the configured folder or beside its source.
+Pending jobs survive relaunch; interrupted and failed jobs require **Review
+Again**, which keeps the same job and Tries count. Subtitle cleanup stores hashes
+of both source and reviewed output (not subtitle text); tags retain the reviewed
+tag-document hash; chapter jobs privately retain the exact reviewed document and
+original chapter hash. These private reviews are never included in support
+reports or portable workflows. Changed chapter sources require fresh analysis,
+not automatic reuse of old timestamps. These three batch operations always keep
+originals. Cancelling queue preparation keeps already queued jobs and skips the
+remaining files; use Queue to cancel jobs already admitted.
+
+With multiple MKVs selected, **Edit Matching Tracks…** sets chosen names,
+languages, or flags for all tracks of one type, leaving each track's other fields
+alone. **Extract Subtitles…** reviews one output per embedded SRT/ASS/SSA track.
+**Trim Beginnings / Ends…** removes shared amounts from each file, calculated
+against its own duration. Trims show actual keyframe-aligned boundaries and do
+not encode; use individual Exact Trim when precise cuts are required. All three
+offer per-output inclusion, configured destinations, independent durable jobs,
+and unchanged originals. A changed source requires fresh review, not automatic
+reuse of old track identities or cut ranges. Unsupported/no-op inputs are explained.
+Eligible batch authoring and file intake remain available while the automatic
+queue runs; foreground preparation and immediate execution remain guarded.
 
 Saved workflows also offer an opt-in **Move original video file to Trash after
 verified success** checkbox in the Save panel. It is off by default. Only the
@@ -475,9 +563,10 @@ uncertain and is never falsely reported as successfully trashed; once any
 outcome is durable, later queue refreshes do not repeat the request.
 
 This is a narrowly supported automatic production path, not a background daemon:
-built-in quick actions, multiple or image-based subtitle inputs, and automatic
+other single-file quick actions, image-based subtitle additions, and unreviewed
 sidecar discovery are not queued; there is no watched folder, scheduled wake,
-helper process, or continuous power-state monitor. A blocked queue is
+helper process, or
+continuous power-state monitor. A blocked queue is
 reconsidered at the next launch, resume, or **Add to Queue** action. Long queue
 soak and physical Intel acceptance remain open. See
 [docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md](docs/releases/M7_QUEUE_UI_EXECUTION_BRIDGE_SLICE.md)
@@ -583,6 +672,15 @@ only bounded chapter time-base rounding while preserving its strict packet-copy
 audits. See
 [docs/releases/M8_BATCH_UX_DIAGNOSTICS_SLICE.md](docs/releases/M8_BATCH_UX_DIAGNOSTICS_SLICE.md).
 
+Failed production-queue jobs also expose a selectable, actionable explanation
+for the recorded failure stage and fixed category. The same shared classifier
+feeds History, queue persistence, and the optional support report; no raw tool
+output, media path, or subtitle text is retained.
+
+MP4-to-MKV packet-copy verification uses one shared 100 ms time-base rounding
+bound whether or not a reviewed external subtitle is appended. Queue retries
+keep the same private job identity and count only actual execution starts.
+
 The accessible-failure continuation routes dynamic AppKit failures through one
 presenter that updates visible text, posts a native value-change notification,
 and returns focus to an enabled recovery control when the failure has one.
@@ -655,8 +753,10 @@ See
 
 The bundled media runtime now has an exact fail-closed layout contract before
 copying and after signing/resealing; unrelated build caches or extra payloads
-cannot ride inside the app. A real pinned-runtime DMG rehearsal passed both
-ARM64 and Rosetta x86_64 tool launch checks. See
+cannot ride inside the app. Release verification executes the mounted app only
+in the host's native architecture; Intel execution is accepted on physical
+Intel hardware because forcing the Universal app through Rosetta makes macOS
+record a misleading unsupported-component warning. See
 [docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md](docs/releases/M9_EXACT_RUNTIME_LAYOUT_SLICE.md).
 
 The current runtime layout packages each helper and its Qt library as one
@@ -666,13 +766,14 @@ an Intel-only bundled component cannot reintroduce the Apple Silicon warning.
 
 Release verification now goes beyond tool version output: the mounted signed
 app creates, inspects, safely edits, verifies, preserves, and extracts a fixed
-Matroska fixture under both ARM64 and x86_64 sandbox inheritance. See
+Matroska fixture in the host's native architecture. See
 [docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md](docs/releases/M9_SIGNED_FIXTURE_SMOKE_SLICE.md).
 A private `0.0.0` production rehearsal from exact source commit `113526c`
 subsequently passed Developer ID signing, independent app and DMG notarization,
-stapling, Gatekeeper, and both architecture fixture paths. It was not published
-and does not replace final-tag, clean-account, physical-Intel, or updater
-acceptance.
+stapling, Gatekeeper, and both architecture fixture paths. That historical
+Rosetta rehearsal is not repeated during normal release verification; it was
+not published and does not replace final-tag, clean-account, physical-Intel, or
+updater acceptance.
 
 Public release is now a deliberate second phase. The signed-tag workflow can
 only leave a fully verified draft; a separate manual workflow binds clean-account
@@ -764,11 +865,19 @@ Requirements:
 - `cmake`, `meson`, `ninja`, and `pkg-config` when rebuilding the bundled media
   runtime from source
 
-Run the supported source gate:
+Run the default local development gate:
 
 ```sh
-./scripts/ci/validate.sh
+python3 scripts/test.py
 ```
+
+This runs the existing source, Swift-test, and Universal-build checks, then
+checks Jev calibration and reviews evidence from registered synthetic workflow
+tests. Jev stays outside the app and sees no private media or logs. Configure
+the verified runtime and existing Cloudflare authentication as described in
+[Jev development evaluation](docs/testing/JEV_EVALUATION.md). Use `--offline`
+for the explicit deterministic subset; hosted CI continues to call
+`./scripts/ci/validate.sh` without cloud credentials.
 
 Build and launch the Swift executable during development:
 
@@ -805,6 +914,12 @@ scheduling without reading any media:
 Use `--quick` while developing. Run the standard enforced probe on both the M1
 reference and a physical Intel Mac before treating its budgets as hardware
 acceptance evidence.
+
+## Support diagnostics
+
+For early failures that never reach History, use **Help > Report a Problem…**.
+See [support diagnostics](docs/SUPPORT_DIAGNOSTICS.md) for local export, reviewed
+GitHub submission, privacy boundaries, and availability.
 
 ## License
 

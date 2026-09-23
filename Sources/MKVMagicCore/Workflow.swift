@@ -58,8 +58,10 @@ public enum WorkflowOperation: Codable, Hashable, Sendable {
 public enum ExecutionMechanism: String, Codable, Hashable, Sendable {
     case mkvPropEdit
     case mkvMerge
+    case mkvExtract
     case ffmpegStreamCopy
     case ffmpegEncode
+    case subtitleText
     case verify
     case commit
 }

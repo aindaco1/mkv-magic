@@ -2,10 +2,15 @@ import AppKit
 import MKVMagicCore
 import MKVMagicExecution
 
+struct ExternalSubtitleMuxOptions: Equatable {
+    let subtitleMetadata: ExternalSubtitleTrackMetadata
+    let sourceTrackLanguageOverrides: [Int: String]
+}
+
 @MainActor
 final class ExternalSubtitleMuxWindowController: NSWindowController {
     private let muxViewController: ExternalSubtitleMuxViewController
-    private var completion: ((ExternalSubtitleTrackMetadata?) -> Void)?
+    private var completion: ((ExternalSubtitleMuxOptions?) -> Void)?
 
     convenience init(
         media: MediaAsset,
@@ -27,27 +32,32 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
         media: MediaAsset,
         preview: ExternalSubtitleFilePreview,
         match: ExternalSubtitleMatch,
-        reviewedCleanupChangeCount: Int? = nil
+        reviewedCleanupChangeCount: Int? = nil,
+        sourceTrackLanguageDefaults: [Int: String] = [:]
     ) {
         muxViewController = ExternalSubtitleMuxViewController(
             media: media,
             preview: preview,
             match: match,
-            reviewedCleanupChangeCount: reviewedCleanupChangeCount
+            reviewedCleanupChangeCount: reviewedCleanupChangeCount,
+            sourceTrackLanguageDefaults: sourceTrackLanguageDefaults
         )
         let window = NSPanel(contentViewController: muxViewController)
-        window.title = "Add External Subtitle"
+        window.title =
+            sourceTrackLanguageDefaults.isEmpty
+            ? "Add External Subtitle" : "Remux Video with Subtitle"
         window.styleMask = [.titled, .closable]
-        window.setContentSize(NSSize(width: 620, height: 530))
-        window.minSize = NSSize(width: 560, height: 500)
+        let addedHeight = CGFloat(sourceTrackLanguageDefaults.count) * 34
+        window.setContentSize(NSSize(width: 620, height: 530 + addedHeight))
+        window.minSize = NSSize(width: 560, height: 500 + addedHeight)
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: muxViewController.preferredInitialFirstResponder
         )
         super.init(window: window)
         muxViewController.onCancel = { [weak self] in self?.finish(with: nil) }
-        muxViewController.onContinue = { [weak self] metadata in
-            self?.finish(with: metadata)
+        muxViewController.onContinue = { [weak self] options in
+            self?.finish(with: options)
         }
     }
 
@@ -60,6 +70,15 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
         for parentWindow: NSWindow,
         completion: @escaping (ExternalSubtitleTrackMetadata?) -> Void
     ) {
+        beginOptionsSheet(for: parentWindow) { options in
+            completion(options?.subtitleMetadata)
+        }
+    }
+
+    func beginOptionsSheet(
+        for parentWindow: NSWindow,
+        completion: @escaping (ExternalSubtitleMuxOptions?) -> Void
+    ) {
         self.completion = completion
         guard let window else {
             completion(nil)
@@ -68,23 +87,27 @@ final class ExternalSubtitleMuxWindowController: NSWindowController {
         parentWindow.beginSheet(window)
     }
 
-    private func finish(with metadata: ExternalSubtitleTrackMetadata?) {
+    private func finish(with options: ExternalSubtitleMuxOptions?) {
         guard let window else { return }
         window.sheetParent?.endSheet(window)
-        completion?(metadata)
+        completion?(options)
         completion = nil
     }
 }
 
 @MainActor
-final class ExternalSubtitleMuxViewController: NSViewController {
+final class ExternalSubtitleMuxViewController: NSViewController, NSTextFieldDelegate,
+    NSComboBoxDelegate
+{
     var onCancel: (() -> Void)?
-    var onContinue: ((ExternalSubtitleTrackMetadata) -> Void)?
+    var onContinue: ((ExternalSubtitleMuxOptions) -> Void)?
 
     private let media: MediaAsset
     private let preview: ExternalSubtitleFilePreview
     private let match: ExternalSubtitleMatch
     private let reviewedCleanupChangeCount: Int?
+    private let sourceTrackLanguageDefaults: [Int: String]
+    private var sourceTrackLanguageFields = [Int: NSComboBox]()
     private let languageField = NSComboBox()
     private let nameField = NSTextField()
     private let defaultCheck = NSButton(
@@ -94,19 +117,25 @@ final class ExternalSubtitleMuxViewController: NSViewController {
     private let hearingCheck = NSButton(
         checkboxWithTitle: "Hearing impaired / SDH", target: nil, action: nil)
     private let validationLabel = NSTextField(wrappingLabelWithString: "")
+    private let continueButton = NSButton()
+    private weak var invalidField: NSTextField?
 
-    var preferredInitialFirstResponder: NSView { languageField }
+    var preferredInitialFirstResponder: NSView {
+        sourceTrackLanguageFields.sorted { $0.key < $1.key }.first?.value ?? languageField
+    }
 
     init(
         media: MediaAsset,
         preview: ExternalSubtitleFilePreview,
         match: ExternalSubtitleMatch,
-        reviewedCleanupChangeCount: Int? = nil
+        reviewedCleanupChangeCount: Int? = nil,
+        sourceTrackLanguageDefaults: [Int: String] = [:]
     ) {
         self.media = media
         self.preview = preview
         self.match = match
         self.reviewedCleanupChangeCount = reviewedCleanupChangeCount
+        self.sourceTrackLanguageDefaults = sourceTrackLanguageDefaults
         super.init(nibName: nil, bundle: nil)
     }
 
@@ -117,14 +146,22 @@ final class ExternalSubtitleMuxViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
-        let heading = NSTextField(labelWithString: "Confirm subtitle and track details")
+        let heading = NSTextField(
+            labelWithString: sourceTrackLanguageDefaults.isEmpty
+                ? "Confirm subtitle and track details"
+                : "Confirm copied audio and subtitle languages"
+        )
         heading.font = .systemFont(ofSize: 20, weight: .semibold)
         let explanation = NSTextField(
             wrappingLabelWithString:
-                "MKV Magic will copy every existing stream and add this \(preview.format.displayName) subtitle as the last track. Video and audio are not encoded."
+                "MKV Magic will copy every existing stream"
+                + (sourceTrackLanguageDefaults.isEmpty
+                    ? " and add this \(preview.format.displayName) subtitle as the last track."
+                    : " from the source into a new MKV and add this \(preview.format.displayName) subtitle as the last track in the same remux.")
+                + " Video and audio are not encoded."
                 + cleanupExplanation
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         let files = NSGridView(views: [
             [fieldLabel("Video"), valueLabel(media.sourceURL.lastPathComponent)],
@@ -133,14 +170,15 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         ])
         files.rowSpacing = 8
         files.columnSpacing = 12
-        files.column(at: 0).xPlacement = .trailing
-        files.column(at: 1).width = 440
+        NativeFormLayout.configureLabeledGrid(files)
 
         languageField.addItems(withObjectValues: [
             "en", "en-US", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "und",
         ])
         languageField.placeholderString = "en, en-US, es, und…"
         languageField.stringValue = match.suggestedMetadata.language
+        languageField.delegate = self
+        nameField.delegate = self
         languageField.setAccessibilityLabel("Subtitle language tag")
         languageField.setAccessibilityHelp(
             "Confirm a language tag such as en, en-US, or und for undetermined."
@@ -153,14 +191,21 @@ final class ExternalSubtitleMuxViewController: NSViewController {
         forcedCheck.state = match.suggestedMetadata.isForced ? .on : .off
         hearingCheck.state = match.suggestedMetadata.isHearingImpaired ? .on : .off
 
-        let fields = NSGridView(views: [
-            [fieldLabel("Language tag"), languageField],
-            [fieldLabel("Track name"), nameField],
-        ])
+        var fieldRows = [[NSView]]()
+        for track in media.tracks.filter({ sourceTrackLanguageDefaults[$0.id] != nil }) {
+            let field = languageComboBox(
+                value: sourceTrackLanguageDefaults[track.id] ?? "und",
+                accessibilityLabel: "Audio track \(track.id) language tag"
+            )
+            sourceTrackLanguageFields[track.id] = field
+            fieldRows.append([fieldLabel("Audio #\(track.id) language"), field])
+        }
+        fieldRows.append([fieldLabel("Subtitle language"), languageField])
+        fieldRows.append([fieldLabel("Subtitle track name"), nameField])
+        let fields = NSGridView(views: fieldRows)
         fields.rowSpacing = 10
         fields.columnSpacing = 12
-        fields.column(at: 0).xPlacement = .trailing
-        fields.column(at: 1).width = 440
+        NativeFormLayout.configureLabeledGrid(fields)
 
         let flags = NSStackView(views: [defaultCheck, forcedCheck, hearingCheck])
         flags.orientation = .vertical
@@ -177,30 +222,28 @@ final class ExternalSubtitleMuxViewController: NSViewController {
                 ? "The \(preview.format.displayName) subtitle is structurally normalized to UTF-8 in a private temporary copy. The selected subtitle remains unchanged."
                 : warnings.map { "⚠︎ \($0)" }.joined(separator: "\n")
         )
-        warningLabel.textColor = warnings.isEmpty ? .secondaryLabelColor : .systemOrange
+        warningLabel.textColor =
+            warnings.isEmpty ? AppPalette.secondaryText : AppPalette.warningText
         warningLabel.font = .systemFont(ofSize: 11)
         warningLabel.maximumNumberOfLines = 0
         warningLabel.setAccessibilityLabel("Subtitle match and cleanup warning")
 
-        validationLabel.textColor = .systemRed
+        validationLabel.textColor = AppPalette.errorText
         validationLabel.font = .systemFont(ofSize: 11)
         validationLabel.maximumNumberOfLines = 2
         validationLabel.setAccessibilityLabel("Subtitle track status")
         let cancelButton = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancelButton.keyEquivalent = "\u{1b}"
         cancelButton.setAccessibilityHelp("Close without adding this subtitle to the plan.")
-        let continueButton = NSButton(
-            title: "Add to Plan", target: self, action: #selector(confirm))
+        continueButton.title = sourceTrackLanguageDefaults.isEmpty ? "Add to Plan" : "Review Remux"
+        continueButton.target = self
+        continueButton.action = #selector(confirm)
         continueButton.keyEquivalent = "\r"
         continueButton.setAccessibilityHelp(
             "Accept these subtitle options and add one remux step to the reviewed plan."
         )
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let actions = NSStackView(views: [validationLabel, spacer, cancelButton, continueButton])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
-        actions.spacing = 9
+        let actions = NativeFormLayout.footer(
+            status: validationLabel, buttons: [cancelButton, continueButton])
 
         let divider = separator()
         let stack = NSStackView(views: [
@@ -221,7 +264,9 @@ final class ExternalSubtitleMuxViewController: NSViewController {
             stack.leadingAnchor.constraint(equalTo: root.leadingAnchor),
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
-            stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
+            stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor),
+            stack.contentWidthConstraint(for: heading),
+            stack.contentWidthConstraint(for: explanation),
             stack.contentWidthConstraint(for: files),
             stack.contentWidthConstraint(for: divider),
             stack.contentWidthConstraint(for: fields),
@@ -229,6 +274,7 @@ final class ExternalSubtitleMuxViewController: NSViewController {
             stack.contentWidthConstraint(for: actions),
         ])
         view = root
+        updateAvailability()
     }
 
     private var cleanupExplanation: String {
@@ -242,34 +288,94 @@ final class ExternalSubtitleMuxViewController: NSViewController {
     @objc private func cancel() { onCancel?() }
 
     @objc private func confirm() {
+        guard view.window?.makeFirstResponder(nil) != false else { return }
         do {
-            let metadata = try ExternalSubtitleMuxPresentation.metadata(
+            let options = try currentOptions()
+            validationLabel.stringValue = ""
+            onContinue?(options)
+        } catch {
+            AccessibleStatusPresentation.present(
+                validationMessage(error),
+                in: validationLabel,
+                returningFocusTo: invalidField ?? languageField
+            )
+        }
+    }
+
+    private func currentOptions() throws -> ExternalSubtitleMuxOptions {
+        invalidField = languageField
+        let metadata: ExternalSubtitleTrackMetadata
+        do {
+            metadata = try ExternalSubtitleMuxPresentation.metadata(
                 language: languageField.stringValue,
                 name: nameField.stringValue,
                 isDefault: defaultCheck.state == .on,
                 isForced: forcedCheck.state == .on,
                 isHearingImpaired: hearingCheck.state == .on
             )
-            validationLabel.stringValue = ""
-            onContinue?(metadata)
         } catch {
-            AccessibleStatusPresentation.present(
-                UserFacingErrorPresentation.message(
-                    failure: "Could not prepare the subtitle track.",
-                    recovery:
-                        "No subtitle was added; review the language and track options and try again.",
-                    error: error
-                ),
-                in: validationLabel,
-                returningFocusTo: languageField
-            )
+            if error as? ExternalSubtitleMuxError == .invalidTrackName { invalidField = nameField }
+            throw error
         }
+        var sourceLanguages = [Int: String]()
+        for (id, field) in sourceTrackLanguageFields.sorted(by: { $0.key < $1.key }) {
+            invalidField = field
+            sourceLanguages[id] = try TrackLanguageTag.canonical(field.stringValue)
+        }
+        invalidField = nil
+        return ExternalSubtitleMuxOptions(
+            subtitleMetadata: metadata, sourceTrackLanguageOverrides: sourceLanguages)
+    }
+
+    func controlTextDidChange(_ notification: Notification) { updateAvailability() }
+
+    func comboBoxSelectionDidChange(_ notification: Notification) {
+        if let field = notification.object as? NSComboBox,
+            let selected = field.objectValueOfSelectedItem as? String
+        {
+            field.stringValue = selected
+        }
+        updateAvailability()
+    }
+
+    private func updateAvailability() {
+        do {
+            _ = try currentOptions()
+            continueButton.isEnabled = true
+            validationLabel.stringValue = ""
+        } catch {
+            continueButton.isEnabled = false
+            validationLabel.stringValue = validationMessage(error)
+        }
+    }
+
+    private func validationMessage(_ error: Error) -> String {
+        let field = invalidField?.accessibilityLabel() ?? "Track options"
+        return "\(field): \(UserFacingErrorPresentation.shortReason(error))"
     }
 
     private func fieldLabel(_ value: String) -> NSTextField {
         let label = NSTextField(labelWithString: value)
         label.alignment = .right
         return label
+    }
+
+    private func languageComboBox(
+        value: String,
+        accessibilityLabel: String
+    ) -> NSComboBox {
+        let field = NSComboBox()
+        field.delegate = self
+        field.addItems(withObjectValues: [
+            "en", "en-US", "es", "fr", "de", "it", "pt", "ja", "ko", "zh", "und",
+        ])
+        field.placeholderString = "en, en-US, es, und…"
+        field.stringValue = value
+        field.setAccessibilityLabel(accessibilityLabel)
+        field.setAccessibilityHelp(
+            "Confirm a language tag such as en, en-US, or und for undetermined."
+        )
+        return field
     }
 
     private func valueLabel(_ value: String) -> NSTextField {
@@ -364,6 +470,7 @@ enum ExternalSubtitleMuxPresentation {
         case .languageInFilename: "language inferred"
         case .forcedInFilename: "forced inferred"
         case .hearingImpairedInFilename: "SDH inferred"
+        case .similarTitle: "similar title; confirm manually"
         }
     }
 

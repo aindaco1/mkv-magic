@@ -146,7 +146,7 @@ final class JoinOutputAuditorTests: XCTestCase {
         XCTAssertTrue(
             digests.flatMap { $0 }.allSatisfy {
                 $0.arguments.contains("framehash")
-                    && $0.arguments.contains("filter_units=remove_types=32|33|34|35")
+                    && $0.arguments.contains("filter_units=remove_types=32-40")
                     && $0.arguments.contains("sha256")
             })
     }
@@ -211,7 +211,7 @@ final class JoinOutputAuditorTests: XCTestCase {
 
     func testUsesH264CanonicalUnitsAndExactOtherVideoPackets() async throws {
         for (codec, codecID, canonicalFilter) in [
-            ("h264", "V_MPEG4/ISO/AVC", "filter_units=remove_types=7|8|9"),
+            ("h264", "V_MPEG4/ISO/AVC", "filter_units=remove_types=6-12"),
             ("vp9", "V_VP9", nil),
         ] {
             let fixture = try makeFixture(codec: codec, codecID: codecID)

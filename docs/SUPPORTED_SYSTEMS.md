@@ -11,6 +11,11 @@ slices; Apple Silicon executes `arm64` natively and Intel executes `x86_64`.
 - Network: media work is local; only the separately sandboxed, user-invoked
   Sparkle updater may access the update feed.
 
+Compatible MP4, M4V, MOV, and chapter-free WebM can be selected with one SRT,
+ASS, or SSA sidecar and remuxed directly to MKV without encoding. Clear trailing
+filename language markers are proposed only as editable defaults; existing
+non-undefined audio metadata remains authoritative.
+
 Hardware encode availability varies by Mac model. MKV Magic reads the bundled
 FFmpeg capability tables and then runs bounded one-frame local smoke encodes;
 only paths that actively succeed on the running Mac are offered. The probe uses
@@ -93,15 +98,24 @@ before commit and after reopen. Normal attachment-ID renumbering is allowed;
 UID or content-fact drift is not. The original remains unchanged.
 
 **Tags…** supports exact full-document XML export and clear-all tag removal for
-inspected Matroska files independently of video-encoder hardware. Export uses
+inspected Matroska files independently of video-encoder hardware. Select several
+files to review one clear-all batch and choose one output folder; each tagged MKV
+receives its own independently verified, collision-safe output while tag-free or
+unsupported files are skipped. Export uses
 bundled `mkvextract`, is capped at 16 MiB, refuses unsafe XML constructs, and
 requires the repeated bytes, digest, root, and global/track entry counts to
 match before and after commit. Removal uses bundled `mkvpropedit` on a new MKV
 clone, independently re-extracts the result to prove that no global or track
 tag entry remains, and preserves the segment title, tracks, nested chapters,
 attachments, duration, metadata outside the cleared tags, and segment UID. The
-original remains byte-unchanged. Selected-entry editing/replacement and
-workflow, queue, and batch tag actions are not included in this direct action.
+original remains byte-unchanged. Selected-entry editing/replacement is not
+included. To remove every tag from one file, select the inspected MKV, choose
+**Tags…**, choose **Review Removal…**, review the distinct output name, and run
+the verified operation. To remove tags en masse, select multiple rows and choose
+**Tags…**, review ready/skipped files and the common output folder, then choose
+**Remove Tags from Ready Files**. The button is enabled when inspection reports
+tags in at least one selected Matroska file. Reusable workflows can instead add
+**If present: Remove all Matroska tags**.
 
 **Convert MP4 Subtitle…** supports TX3G/`mov_text` tracks in inspected MP4,
 M4V, and MOV files independently of video-encoder hardware. Bundled FFmpeg
@@ -110,6 +124,12 @@ compares the parsed conversion, binds the source revision through commit, and
 reopens the result. The video remains unchanged. TX3G is not yet converted
 inline during Remux to MKV or complete video conversion.
 
-Release acceptance requires native Apple Silicon verification and Rosetta
-x86_64 verification in CI. Before the first public release, the downloaded app
-must also be installed and exercised on physical Intel and Apple Silicon Macs.
+Release acceptance requires native execution on both Apple Silicon and physical
+Intel hardware. The mounted-DMG verifier defaults to the host's native
+architecture and refuses translated execution unless a maintainer deliberately
+opts into it. Forcing the Universal app or its embedded tools through Rosetta
+causes current macOS releases to record an Intel-component dependency and can
+produce a misleading support-ending alert even though native slices are
+present. Static bundle validation still rejects every thin Mach-O before any
+native fixture is run. The downloaded app must be installed and exercised on
+physical Intel and Apple Silicon Macs before publication.

@@ -302,13 +302,14 @@ final class EmbeddedSubtitleCleanupExecutorTests: XCTestCase {
 
     func testReplacesReviewedASSWhilePreservingStylesAndOverrideTags() async throws {
         let subtitle = Data(
-            ("[Script Info]\nScriptType: v4.00+\n"
-                + "[V4+ Styles]\nFormat: Name, Fontname, Fontsize\n"
-                + "Style: Default,Arial,48\n"
-                + "[Events]\n"
-                + "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n"
-                + "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\an8} HE11O \n")
-                .utf8
+            [
+                "[Script Info]\nScriptType: v4.00+\n",
+                "[V4+ Styles]\nFormat: Name, Fontname, Fontsize\n",
+                "Style: Default,Arial,48\n",
+                "[Events]\n",
+                "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n",
+                "Dialogue: 0,0:00:00.00,0:00:01.00,Default,,0,0,0,,{\\an8} HE11O \n",
+            ].joined().utf8
         )
         let fixture = try makeFixture(format: .ass, sourceSubtitle: subtitle)
         defer { try? FileManager.default.removeItem(at: fixture.root) }

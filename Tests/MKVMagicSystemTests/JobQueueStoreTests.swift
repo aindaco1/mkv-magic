@@ -37,6 +37,38 @@ final class JobQueueStoreTests: XCTestCase {
         XCTAssertFalse(encoded.contains("/Users/"))
     }
 
+    func testReviewedEditStoreRejectsMalformedIntentWithoutReplacingExistingQueue() async throws {
+        let store = try JSONJobQueueStore(fileURL: fileURL)
+        let review = MediaQueueReviewedEdit.tagRemoval(
+            sourceSHA256: Data(repeating: 7, count: 32), tagCount: 2)
+        let original = MediaQueueSnapshot(
+            jobs: [makeJob(id: id(1), workflow: .reviewedEdit(review))], updatedAt: base)
+        try await store.save(original)
+        let badReviews: [MediaQueueReviewedEdit] = [
+            .tagRemoval(sourceSHA256: Data(), tagCount: 2),
+            .chapters(sourceSHA256: Data(), desired: .init()),
+            .subtitleCleanup(
+                format: .subRip, sourceSHA256: Data(repeating: 1, count: 32),
+                outputSHA256: Data(repeating: 2, count: 32), restoringIDs: [1, 1]),
+        ]
+        for bad in badReviews {
+            do {
+                try await store.save(
+                    MediaQueueSnapshot(
+                        jobs: [
+                            makeJob(
+                                id: id(2), workflow: .reviewedEdit(bad),
+                                outputDisplayName: "Output.\(bad.outputExtension)")
+                        ], updatedAt: base))
+                XCTFail("Stored malformed reviewed edit")
+            } catch {
+                XCTAssertEqual(error as? JobQueueStoreError, .malformedQueue)
+            }
+            let retained = try await store.load()
+            XCTAssertEqual(retained, original)
+        }
+    }
+
     func testRoundTripsReviewedFileRevisionWithoutExposingAPath() async throws {
         let store = try JSONJobQueueStore(fileURL: fileURL)
         let revision = MediaQueueFileRevision(
@@ -78,6 +110,7 @@ final class JobQueueStoreTests: XCTestCase {
                 isHearingImpaired: true
             ),
             restoredCleanupChangeIDs: [0, 2],
+            sourceTrackLanguageOverrides: [1: "en"],
             sourceSHA256: Data(repeating: 0xAB, count: 32)
         )
         let job = makeJob(
@@ -113,6 +146,7 @@ final class JobQueueStoreTests: XCTestCase {
         let encoded = try XCTUnwrap(String(data: Data(contentsOf: fileURL), encoding: .utf8))
         XCTAssertTrue(encoded.contains("savedWithExternalSubtitle"))
         XCTAssertTrue(encoded.contains("restoredCleanupChangeIDs"))
+        XCTAssertTrue(encoded.contains("sourceTrackLanguageOverrides"))
         XCTAssertTrue(encoded.contains("sourceSHA256"))
         XCTAssertTrue(encoded.contains("English"))
         XCTAssertFalse(encoded.contains("/Users/Example/Movie.en.srt"))
@@ -140,7 +174,11 @@ final class JobQueueStoreTests: XCTestCase {
             jobID: id(2),
             to: .failed,
             at: base,
-            reason: .executionFailed
+            reason: .executionFailed,
+            failure: PrivacySafeMediaFailure(
+                category: .toolFailed,
+                lastActiveStage: .running
+            )
         )
         let replacement = makeJob(id: id(3), outputDisplayName: "Retried.mkv")
         _ = try await store.approveReplan(
@@ -153,6 +191,22 @@ final class JobQueueStoreTests: XCTestCase {
             reviewedPlan: replacement.reviewedPlan,
             at: base
         )
+        _ = try await store.transition(
+            jobID: id(2),
+            to: .running,
+            at: base,
+            reason: nil
+        )
+        _ = try await store.transition(
+            jobID: id(2),
+            to: .failed,
+            at: base,
+            reason: .executionFailed,
+            failure: PrivacySafeMediaFailure(
+                category: .durationMismatch,
+                lastActiveStage: .verifying
+            )
+        )
         let snapshot = try await store.transition(
             jobID: id(1),
             to: .cancelled,
@@ -162,9 +216,13 @@ final class JobQueueStoreTests: XCTestCase {
 
         XCTAssertTrue(snapshot.isPaused)
         XCTAssertEqual(snapshot.jobs.map(\.id), [id(2), id(1)])
-        XCTAssertEqual(snapshot.jobs.map(\.state), [.waiting, .cancelled])
-        XCTAssertEqual(snapshot.jobs[0].attemptCount, 1)
+        XCTAssertEqual(snapshot.jobs.map(\.state), [.failed, .cancelled])
+        XCTAssertEqual(snapshot.jobs[0].attemptCount, 2)
         XCTAssertEqual(snapshot.jobs[0].outputDisplayName, "Retried.mkv")
+        XCTAssertEqual(
+            snapshot.jobs[0].events.compactMap(\.failure).map(\.category),
+            [.toolFailed, .durationMismatch]
+        )
         let loaded = try await store.load()
         XCTAssertEqual(loaded, snapshot)
     }

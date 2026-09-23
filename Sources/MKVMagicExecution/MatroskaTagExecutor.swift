@@ -33,7 +33,7 @@ public struct MatroskaTagPreview: Equatable, Sendable {
     public let source: MediaAsset
     public let document: MatroskaTagXMLDocument
     public let sourceRevision: MediaSourceRevision
-    fileprivate let digest: Data
+    public let digest: Data
 
     fileprivate init(
         source: MediaAsset,

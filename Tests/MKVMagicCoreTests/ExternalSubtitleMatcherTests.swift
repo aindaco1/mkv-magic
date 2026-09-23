@@ -4,6 +4,26 @@ import XCTest
 @testable import MKVMagicCore
 
 final class ExternalSubtitleMatcherTests: XCTestCase {
+    func testFilenameLanguageInferenceUsesOneSharedTrailingMetadataVocabulary() {
+        XCTAssertEqual(
+            FilenameLanguageInference.language(
+                in: URL(fileURLWithPath: "/Media/Movie.English.mp4")
+            ),
+            "en"
+        )
+        XCTAssertEqual(
+            FilenameLanguageInference.language(
+                in: URL(fileURLWithPath: "/Media/Movie.fr.forced.sdh.srt")
+            ),
+            "fr"
+        )
+        XCTAssertNil(
+            FilenameLanguageInference.language(
+                in: URL(fileURLWithPath: "/Media/English.Patient.2024.mp4")
+            )
+        )
+    }
+
     func testInfersTrailingLanguageAndRolesWithHighTitleYearMatch() {
         let media = MediaAsset(
             sourceURL: URL(fileURLWithPath: "/Media/The Movie (2024).mkv"),

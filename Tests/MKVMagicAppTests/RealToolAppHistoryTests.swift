@@ -172,6 +172,7 @@ final class RealToolAppHistoryTests: XCTestCase {
             record.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
+
     }
 
     @MainActor
@@ -713,7 +714,19 @@ final class RealToolAppHistoryTests: XCTestCase {
     }
 
     @MainActor
-    func testAutomaticQueueRunsPortableChapteredMP4RemuxWorkflowWithoutEncoding() async throws {
+    func testAutomaticQueueRunsReviewedChapteredMP4AndSRTWorkflowWithoutEncoding()
+        async throws
+    {
+        try await exerciseReviewedRemuxQueue(additionalSidecarCount: 0)
+    }
+
+    @MainActor
+    func testRestoredQueueRunsAllReviewedSidecarsAndPreservesMetadata() async throws {
+        try await exerciseReviewedRemuxQueue(additionalSidecarCount: 2)
+    }
+
+    @MainActor
+    private func exerciseReviewedRemuxQueue(additionalSidecarCount: Int) async throws {
         guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
             throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
         }
@@ -740,6 +753,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         let rawAudio = fixtureRoot.appendingPathComponent("silence.pcm")
         let chapterMetadata = fixtureRoot.appendingPathComponent("chapters.ffmetadata")
         let sourceURL = fixtureRoot.appendingPathComponent("Feature.2025.1080p.mp4")
+        let subtitleURL = fixtureRoot.appendingPathComponent("Feature.2025.fr.srt")
         let destinationURL = fixtureRoot.appendingPathComponent("Feature (2025).mkv")
         let width = 96
         let height = 64
@@ -752,6 +766,9 @@ final class RealToolAppHistoryTests: XCTestCase {
             ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Opening\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Second\n"
                 .utf8
         ).write(to: chapterMetadata)
+        try Data("1\n00:00:00,000 --> 00:00:01,500\nBonjour\n".utf8).write(
+            to: subtitleURL
+        )
         let create = try await runner.run(
             CommandRequest(
                 executableURL: try catalog.url(for: .ffmpeg),
@@ -782,6 +799,7 @@ final class RealToolAppHistoryTests: XCTestCase {
         )
         XCTAssertEqual(create.exitCode, 0, create.standardError.text)
         let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+        let subtitleDigest = SHA256.hash(data: try Data(contentsOf: subtitleURL))
 
         let applicationSupport = fixtureRoot.appendingPathComponent(
             "Application Support",
@@ -807,47 +825,123 @@ final class RealToolAppHistoryTests: XCTestCase {
         await model.addFiles([sourceURL])
         let source = try XCTUnwrap(model.assets.first)
         let reviewedRevision = try XCTUnwrap(model.reviewedSourceRevision(for: source))
+        let subtitlePreview = try await model.previewSubtitleCleanup(at: subtitleURL)
+        let subtitleMetadata = ExternalSubtitleTrackMetadata(
+            language: "fr",
+            name: "French"
+        )
+        var additionalInputs = [SavedWorkflowExternalSubtitleInput]()
+        var additionalPayloads = [ExternalSubtitleMuxPayload]()
+        for index in 0..<additionalSidecarCount {
+            let url = fixtureRoot.appendingPathComponent("Feature.2025.extra\(index).srt")
+            try Data("1\n00:00:00,000 --> 00:00:01,400\nDistinct sidecar \(index)\n".utf8).write(
+                to: url)
+            let preview = try await model.previewSubtitleCleanup(at: url)
+            additionalInputs.append(
+                SavedWorkflowExternalSubtitleInput(
+                    sourceURL: url,
+                    metadata: ExternalSubtitleTrackMetadata(
+                        language: "en", name: "Sidecar \(index)",
+                        isForced: index == 0, isHearingImpaired: index == 1), format: .subRip))
+            additionalPayloads.append(.original(.subRip(preview)))
+        }
         let recipe = SavedWorkflow(
             name: "Portable verified MKV",
             steps: [
                 SavedWorkflowStep(action: .remuxToMKV),
-                SavedWorkflowStep(action: .normalizeFilename),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+                SavedWorkflowStep(
+                    isEnabled: additionalSidecarCount == 0, action: .normalizeFilename),
             ]
         )
-        let compiled = try SavedWorkflowCompiler().compile(recipe, for: source)
+        let compiled = try SavedWorkflowCompiler().compile(
+            recipe,
+            for: source,
+            inputs: SavedWorkflowResolvedInputs(
+                externalSubtitle: SavedWorkflowExternalSubtitleInput(
+                    sourceURL: subtitleURL,
+                    metadata: subtitleMetadata,
+                    format: .subRip
+                ),
+                sourceTrackLanguageOverrides: [1: "es"],
+                additionalExternalSubtitles: additionalInputs
+            )
+        )
+        let subtitlePayload = ExternalSubtitleMuxPayload.original(.subRip(subtitlePreview))
         XCTAssertEqual(compiled.mkvRemuxPlan?.chapterCarrierTrackIDs.count, 1)
         XCTAssertEqual(compiled.plan.impact.videoEncodeCount, 0)
         XCTAssertEqual(compiled.plan.impact.audioEncodeCount, 0)
-        XCTAssertEqual(compiled.suggestedOutputFilename, "Feature (2025).mp4")
-        XCTAssertEqual(
-            OutputNamingPolicy.savedWorkflowFilename(
-                for: sourceURL,
-                suggestedFilename: compiled.suggestedOutputFilename,
-                requiresMKV: compiled.mkvRemuxPlan != nil
-            ),
-            destinationURL.lastPathComponent
-        )
+        if additionalSidecarCount == 0 {
+            XCTAssertEqual(compiled.suggestedOutputFilename, "Feature (2025).mp4")
+            XCTAssertEqual(
+                OutputNamingPolicy.savedWorkflowFilename(
+                    for: sourceURL,
+                    suggestedFilename: compiled.suggestedOutputFilename,
+                    requiresMKV: compiled.mkvRemuxPlan != nil
+                ),
+                destinationURL.lastPathComponent
+            )
+        }
         try await queueStore.save(MediaQueueSnapshot(isPaused: true, updatedAt: Date()))
         let waiting = try await model.enqueueSavedWorkflow(
             compiled,
             recipe: recipe,
+            externalSubtitlePayload: subtitlePayload,
+            additionalExternalSubtitlePayloads: additionalPayloads,
             expectedSourceRevision: reviewedRevision,
             in: source,
             destinationURL: destinationURL
         )
         XCTAssertEqual(waiting.jobs.first?.resourceClass, .lightweight)
-        XCTAssertEqual(waiting.jobs.first?.workflow, .saved(recipe))
+        XCTAssertEqual(
+            waiting.jobs.first?.workflow.sourceTrackLanguageOverrides,
+            [1: "es"]
+        )
+        XCTAssertEqual(
+            waiting.jobs.first?.inputs.map(\.displayName),
+            ["Feature.2025.1080p.mp4", "Feature.2025.fr.srt"]
+                + additionalInputs.map { $0.sourceURL.lastPathComponent }
+        )
         XCTAssertEqual(waiting.jobs.first?.reviewedPlan, compiled.plan)
         _ = try await queueStore.setPaused(false, at: Date())
 
-        let completed = try await model.runAutomaticQueueCycle()
-        let output = try XCTUnwrap(model.assets.first { $0.sourceURL == destinationURL })
+        // A fresh model has no in-memory previews or grants. Every sidecar must
+        // be restored from durable reviewed references and checked again.
+        let executingModel =
+            additionalSidecarCount == 0
+            ? model
+            : AppModel(
+                historyRecorderFactory: { historyStore }, queueStoreFactory: { queueStore },
+                queueEnvironmentReader: FixedQueueEnvironmentReader(
+                    environment: .init(isOnBattery: false, thermalPressure: .nominal)))
+        let completed = try await executingModel.runAutomaticQueueCycle()
+        let output = try XCTUnwrap(executingModel.assets.first { $0.sourceURL == destinationURL })
 
         XCTAssertTrue(output.container.localizedCaseInsensitiveContains("matroska"))
-        XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio])
+        XCTAssertEqual(
+            output.tracks.map(\.kind),
+            [.video, .audio, .subtitle] + Array(repeating: .subtitle, count: additionalSidecarCount)
+        )
+        for index in 0..<additionalSidecarCount {
+            let track = output.tracks[3 + index]
+            XCTAssertEqual(track.title, "Sidecar \(index)")
+            XCTAssertEqual(try TrackLanguageTag.canonical(track.language ?? "und"), "en")
+            XCTAssertEqual(track.isForced, index == 0)
+            XCTAssertEqual(track.isHearingImpaired, index == 1)
+        }
+        XCTAssertEqual(
+            try TrackLanguageTag.canonical(output.tracks[1].language ?? "und"),
+            "es"
+        )
+        XCTAssertEqual(
+            try TrackLanguageTag.canonical(output.tracks[2].language ?? "und"),
+            "fr"
+        )
+        XCTAssertEqual(output.tracks[2].title, "French")
         XCTAssertEqual(output.chapters.map(\.title), ["Opening", "Second"])
         XCTAssertEqual(output.metadata["title"], "Portable Remux Fixture")
         XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+        XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: subtitleURL)), subtitleDigest)
         XCTAssertEqual(completed.jobs.first?.events.map(\.state), [.waiting, .running, .succeeded])
         XCTAssertEqual(completed.jobs.first?.attemptCount, 1)
         let records = try await historyStore.load()
@@ -867,6 +961,29 @@ final class RealToolAppHistoryTests: XCTestCase {
             record.events.map(\.state),
             [.queued, .inspecting, .planned, .ready, .running, .verifying, .committing, .succeeded]
         )
+        if additionalSidecarCount > 0 {
+            try WorkflowEvidence.record(
+                "real-restored-remux",
+                facts: [
+                    "fresh_model_restored_review": executingModel !== model,
+                    "no_video_encoding": compiled.plan.impact.videoEncodeCount == 0,
+                    "no_audio_encoding": compiled.plan.impact.audioEncodeCount == 0,
+                    "all_sidecars_retained": output.tracks.filter { $0.kind == .subtitle }.count
+                        == 1 + additionalSidecarCount,
+                    "source_unchanged": SHA256.hash(data: try Data(contentsOf: sourceURL))
+                        == sourceDigest,
+                    "primary_sidecar_unchanged": SHA256.hash(
+                        data: try Data(contentsOf: subtitleURL))
+                        == subtitleDigest,
+                    "verification_preceded_commit": record.events.map(\.state)
+                        == [
+                            .queued, .inspecting, .planned, .ready, .running, .verifying,
+                            .committing, .succeeded,
+                        ],
+                ],
+                explanation: WorkflowPlanReviewPresentation.impactSummary(for: compiled) + "\n"
+                    + QueuePresentation.selectedJobDetail(try XCTUnwrap(completed.jobs.first)))
+        }
     }
 
     @MainActor

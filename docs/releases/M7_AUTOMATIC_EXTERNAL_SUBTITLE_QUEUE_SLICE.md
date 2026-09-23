@@ -32,6 +32,8 @@ under its existing v1 document schema. That case stores only:
 
 - external text format;
 - reviewed language, name, default, forced, and hearing-impaired flags;
+- optional canonical source-track language choices from a reviewed common-media
+  remux;
 - nil for original text, or a sorted unique list of restored cleanup IDs; and
 - the 32-byte SHA-256 of the reviewed sidecar.
 

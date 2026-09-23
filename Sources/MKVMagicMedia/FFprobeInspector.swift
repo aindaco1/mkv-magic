@@ -21,6 +21,7 @@ public struct FFprobeInspector<Runner: CommandRunning>: MediaInspecting {
                 arguments: [
                     "-v", "error",
                     "-print_format", "json",
+                    "-show_data_hash", "sha256",
                     "-show_format",
                     "-show_streams",
                     "-show_chapters",
@@ -103,6 +104,7 @@ private struct FFprobeStream: Decodable {
     let codecType: String?
     let profile: String?
     let level: Int?
+    let extradataHash: String?
     let bitRate: String?
     let width: Int?
     let height: Int?
@@ -128,6 +130,7 @@ private struct FFprobeStream: Decodable {
         case codecType = "codec_type"
         case profile
         case level
+        case extradataHash = "extradata_hash"
         case bitRate = "bit_rate"
         case width
         case height
@@ -172,6 +175,7 @@ private struct FFprobeStream: Decodable {
             codecID: codecTagString,
             profile: profile,
             level: level,
+            codecInitializationDigest: codecInitializationDigest,
             language: tags?["language"],
             // ISO Base Media stores the user-visible per-track name under
             // `name`; Matroska exposes the same concept as `title`.
@@ -209,6 +213,17 @@ private struct FFprobeStream: Decodable {
             return value
         }
         return nil
+    }
+
+    private var codecInitializationDigest: MediaCodecInitializationDigest? {
+        guard let extradataHash else { return nil }
+        let fields = extradataHash.split(
+            separator: ":",
+            maxSplits: 1,
+            omittingEmptySubsequences: false
+        )
+        guard fields.count == 2, fields[0].lowercased() == "sha256" else { return nil }
+        return MediaCodecInitializationDigest(sha256: String(fields[1]))
     }
 
     private var normalizedHDRFormats: [String] {
@@ -367,19 +382,30 @@ private struct FFprobeChapter: Decodable {
     }
 
     func chapter(sourceURL: URL, ordinal: Int) -> ChapterNode {
+        let title =
+            nonblankTag(named: "title")
+            ?? id.map { "Chapter \($0 + 1)" }
+            ?? "Chapter \(ordinal + 1)"
         let stableValue = [
             sourceURL.path,
             String(id ?? ordinal),
             startTime ?? "",
             endTime ?? "",
-            tags?["title"] ?? "",
+            title,
         ].joined(separator: "\u{0}")
         return ChapterNode(
             id: MediaStableIdentifier.make(scope: "chapter", value: stableValue),
-            title: tags?["title"] ?? id.map { "Chapter \($0 + 1)" } ?? "Chapter",
+            title: title,
             start: startTime.flatMap(Double.init).flatMap(MediaTime.init(seconds:)) ?? .zero,
             end: endTime.flatMap(Double.init).flatMap(MediaTime.init(seconds:)),
-            language: tags?["language"]
+            language: nonblankTag(named: "language")
         )
+    }
+
+    private func nonblankTag(named name: String) -> String? {
+        guard let value = tags?[name],
+            !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else { return nil }
+        return value
     }
 }

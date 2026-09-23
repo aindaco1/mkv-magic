@@ -15,6 +15,85 @@ private actor RealToolProgressRecorder {
 }
 
 final class RealToolMKVRemuxTests: XCTestCase {
+    func testMultipleSidecarsShareOneVerifiedRemuxAndAuditEachTrack() async throws {
+        let (catalog, runner, _) = try await requiredTools()
+        try await PrivateTemporaryDirectory.withDirectory(prefix: "mkv-magic-multiple-sidecars") {
+            root in
+            let sourceURL = try await makeMP4Fixture(
+                root: root, ffmpegURL: try catalog.url(for: .ffmpeg), runner: runner)
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge), runner: runner)
+            let source = try await inspector.inspect(sourceURL)
+            let executor = MKVRemuxExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner, inspector: inspector)
+            var previews = [MKVRemuxWithExternalSubtitlePreview]()
+            var originals = [URL: Data]()
+            originals[sourceURL] = try Data(contentsOf: sourceURL)
+            for (index, language) in ["en", "es", "fr"].enumerated() {
+                let isASS = index == 2
+                let url = root.appendingPathComponent("Source.\(language).\(isASS ? "ass" : "srt")")
+                let text =
+                    isASS
+                    ? "[Script Info]\nScriptType: v4.00+\n[V4+ Styles]\nFormat: Name, Fontname\nStyle: Default,Arial\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:00.00,0:00:01.50,Default,,0,0,0,,{\\an8}Distinct styled subtitle\n"
+                    : "1\n00:00:00,000 --> 00:00:01,500\nDistinct subtitle \(index)\n"
+                let data = Data(text.utf8)
+                try data.write(to: url)
+                originals[url] = data
+                let payload: ExternalSubtitleMuxPayload
+                if isASS {
+                    payload = .original(
+                        .advanced(
+                            try await AdvancedSubtitleCleanupExecutor().preview(sourceURL: url)))
+                } else {
+                    payload = .original(
+                        .subRip(try await SubtitleCleanupExecutor().preview(sourceURL: url)))
+                }
+                previews.append(
+                    try executor.preview(
+                        source: source, subtitlePayload: payload,
+                        subtitleMetadata: ExternalSubtitleTrackMetadata(
+                            language: language, isForced: index == 1, isHearingImpaired: index == 2),
+                        trackLanguageOverrides: [1: "de"]))
+            }
+            let output = try await executor.execute(
+                previews: previews, destinationURL: root.appendingPathComponent("All.mkv"))
+            XCTAssertEqual(
+                output.tracks.map(\.kind), [.video, .audio, .subtitle, .subtitle, .subtitle])
+            XCTAssertEqual(
+                try output.tracks.dropFirst().map {
+                    try TrackLanguageTag.canonical($0.language ?? "und")
+                }, ["de", "en", "es", "fr"])
+            XCTAssertTrue(output.tracks[3].isForced)
+            XCTAssertTrue(output.tracks[4].isHearingImpaired)
+            XCTAssertEqual(output.chapters.map(\.title), source.chapters.map(\.title))
+            for (url, data) in originals { XCTAssertEqual(try Data(contentsOf: url), data) }
+            // A repeated source must not be appended twice or create any output.
+            let duplicate = root.appendingPathComponent("Duplicate.mkv")
+            do {
+                _ = try await executor.execute(
+                    previews: [previews[0], previews[0]], destinationURL: duplicate)
+                XCTFail("Duplicate sidecar accepted")
+            } catch { XCTAssertFalse(FileManager.default.fileExists(atPath: duplicate.path)) }
+            // Every sidecar, not only the first, is bound to its reviewed bytes.
+            let changedURL = previews[1].subtitlePayload.sourceURL
+            try Data("1\n00:00:00,000 --> 00:00:01,500\nChanged after review\n".utf8).write(
+                to: changedURL)
+            let staleOutput = root.appendingPathComponent("Stale.mkv")
+            do {
+                _ = try await executor.execute(previews: previews, destinationURL: staleOutput)
+                XCTFail("Changed second sidecar accepted")
+            } catch {
+                XCTAssertFalse(FileManager.default.fileExists(atPath: staleOutput.path))
+                XCTAssertEqual(try Data(contentsOf: sourceURL), originals[sourceURL])
+            }
+        }
+    }
+
     func testBundledToolsPacketCopyChapteredMP4IntoVerifiedMKV() async throws {
         let (catalog, runner, _) = try await requiredTools()
 
@@ -89,6 +168,144 @@ final class RealToolMKVRemuxTests: XCTestCase {
                 )
             )
             XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+        }
+    }
+
+    func testBundledToolsRemuxMP4AndSRTInOneVerifiedZeroEncodePass() async throws {
+        let (catalog, runner, _) = try await requiredTools()
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-real-remux-subtitle"
+        ) { root in
+            let sourceURL = try await makeMP4Fixture(
+                root: root,
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                runner: runner,
+                chapterTitles: ["", ""]
+            )
+            let subtitleURL = root.appendingPathComponent("Source.fr.srt")
+            let subtitleData = Data(
+                "1\n00:00:00,000 --> 00:00:01,500\nBonjour\n".utf8
+            )
+            try subtitleData.write(to: subtitleURL)
+            let destinationURL = root.appendingPathComponent("Source — Subtitled.mkv")
+            let sourceDigest = SHA256.hash(data: try Data(contentsOf: sourceURL))
+            let subtitleDigest = SHA256.hash(data: try Data(contentsOf: subtitleURL))
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            XCTAssertEqual(source.chapters.map(\.title), ["Chapter 1", "Chapter 2"])
+            let subtitlePreview = try await SubtitleCleanupExecutor().preview(
+                sourceURL: subtitleURL
+            )
+            let executor = MKVRemuxExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                source: source,
+                subtitlePayload: .original(.subRip(subtitlePreview)),
+                subtitleMetadata: ExternalSubtitleTrackMetadata(
+                    language: "fr",
+                    name: "French"
+                ),
+                trackLanguageOverrides: [1: "es"]
+            )
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: destinationURL
+            )
+
+            XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
+            XCTAssertEqual(
+                try TrackLanguageTag.canonical(output.tracks[1].language ?? "und"),
+                "es"
+            )
+            XCTAssertEqual(
+                try TrackLanguageTag.canonical(output.tracks[2].language ?? "und"),
+                "fr"
+            )
+            XCTAssertEqual(output.tracks[2].title, "French")
+            XCTAssertEqual(output.chapters.map(\.title), source.chapters.map(\.title))
+            XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: sourceURL)), sourceDigest)
+            XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: subtitleURL)), subtitleDigest)
+        }
+    }
+
+    func testSelectedRealMP4AndSRTIfProvided() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let sourcePath = environment["MKV_MAGIC_REMUX_SOURCE"],
+            let subtitlePath = environment["MKV_MAGIC_REMUX_SUBTITLE"]
+        else {
+            throw XCTSkip(
+                "Set MKV_MAGIC_REMUX_SOURCE and MKV_MAGIC_REMUX_SUBTITLE for real-media acceptance"
+            )
+        }
+        let (catalog, runner, _) = try await requiredTools()
+        let sourceURL = URL(fileURLWithPath: sourcePath).standardizedFileURL
+        let subtitleURL = URL(fileURLWithPath: subtitlePath).standardizedFileURL
+        let sourceRevision = try MediaFileRevisionReader().read(sourceURL)
+        let subtitleDigest = SHA256.hash(data: try Data(contentsOf: subtitleURL))
+
+        try await PrivateTemporaryDirectory.withDirectory(
+            prefix: "mkv-magic-selected-real-remux"
+        ) { root in
+            let inspector = UnifiedMediaInspector(
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                runner: runner
+            )
+            let source = try await inspector.inspect(sourceURL)
+            let subtitlePreview = try await SubtitleCleanupExecutor().preview(
+                sourceURL: subtitleURL
+            )
+            let subtitleMatch = ExternalSubtitleMatcher().match(
+                media: source,
+                subtitleURL: subtitleURL,
+                subtitle: subtitlePreview.cleanup.original
+            )
+            let filenameLanguage = FilenameLanguageInference.language(in: sourceURL)
+            let audioLanguages = Dictionary(
+                uniqueKeysWithValues: source.tracks.filter { $0.kind == .audio }.map { track in
+                    let existing = track.language?.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let language =
+                        existing.flatMap { value in
+                            value.isEmpty || value.caseInsensitiveCompare("und") == .orderedSame
+                                ? nil : value
+                        } ?? filenameLanguage ?? "und"
+                    return (track.id, language)
+                }
+            )
+            let executor = MKVRemuxExecutor(
+                mkvmergeURL: try catalog.url(for: .mkvmerge),
+                ffmpegURL: try catalog.url(for: .ffmpeg),
+                ffprobeURL: try catalog.url(for: .ffprobe),
+                mkvextractURL: try catalog.url(for: .mkvextract),
+                runner: runner,
+                inspector: inspector
+            )
+            let preview = try executor.preview(
+                source: source,
+                subtitlePayload: .original(.subRip(subtitlePreview)),
+                subtitleMetadata: subtitleMatch.suggestedMetadata,
+                trackLanguageOverrides: audioLanguages
+            )
+            let output = try await executor.execute(
+                preview: preview,
+                destinationURL: root.appendingPathComponent("Selected — Subtitled.mkv")
+            )
+
+            XCTAssertEqual(output.chapters.map(\.title), source.chapters.map(\.title))
+            XCTAssertEqual(output.tracks.last?.kind, .subtitle)
+            XCTAssertEqual(try MediaFileRevisionReader().read(sourceURL), sourceRevision)
+            XCTAssertEqual(SHA256.hash(data: try Data(contentsOf: subtitleURL)), subtitleDigest)
         }
     }
 
@@ -262,8 +479,10 @@ final class RealToolMKVRemuxTests: XCTestCase {
     private func makeMP4Fixture(
         root: URL,
         ffmpegURL: URL,
-        runner: FoundationCommandRunner
+        runner: FoundationCommandRunner,
+        chapterTitles: [String] = ["Opening", "Second"]
     ) async throws -> URL {
+        XCTAssertEqual(chapterTitles.count, 2)
         let width = 96
         let height = 64
         let frameCount = 20
@@ -276,7 +495,7 @@ final class RealToolMKVRemuxTests: XCTestCase {
         )
         try Data(repeating: 0, count: 48_000 * 2 * 2 * 2).write(to: rawAudioURL)
         try Data(
-            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=Opening\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=Second\n"
+            ";FFMETADATA1\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=0\nEND=1000\ntitle=\(chapterTitles[0])\n[CHAPTER]\nTIMEBASE=1/1000\nSTART=1000\nEND=2000\ntitle=\(chapterTitles[1])\n"
                 .utf8
         ).write(to: chapterURL)
         let result = try await runner.run(

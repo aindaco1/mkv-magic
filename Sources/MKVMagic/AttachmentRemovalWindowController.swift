@@ -1,10 +1,6 @@
 import AppKit
 import MKVMagicCore
 
-private final class AttachmentRemovalRowsView: NSView {
-    override var isFlipped: Bool { true }
-}
-
 @MainActor
 final class AttachmentRemovalWindowController: NSWindowController {
     private let removalViewController: AttachmentRemovalViewController
@@ -89,12 +85,8 @@ final class AttachmentRemovalViewController: NSViewController {
             wrappingLabelWithString:
                 "Checked attachments will be omitted from a new MKV. Media tracks, tags, and nested chapters are copied without encoding; the original stays untouched."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
-        let rows = NSStackView()
-        rows.orientation = .vertical
-        rows.alignment = .leading
-        rows.spacing = 9
         checkboxes = attachments.map { attachment in
             let checkbox = NSButton(
                 checkboxWithTitle: AttachmentPickerViewController.title(attachment),
@@ -104,35 +96,17 @@ final class AttachmentRemovalViewController: NSViewController {
             checkbox.setAccessibilityHelp(
                 "Remove this attachment from the verified MKV copy."
             )
-            checkbox.lineBreakMode = .byTruncatingMiddle
-            rows.addArrangedSubview(checkbox)
             return checkbox
         }
-        let document = AttachmentRemovalRowsView()
-        document.translatesAutoresizingMaskIntoConstraints = false
-        rows.translatesAutoresizingMaskIntoConstraints = false
-        document.addSubview(rows)
-        let scroll = NSScrollView()
-        scroll.documentView = document
-        scroll.hasVerticalScroller = true
-        scroll.borderType = .bezelBorder
-        NSLayoutConstraint.activate([
-            document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
-            document.heightAnchor.constraint(greaterThanOrEqualTo: scroll.contentView.heightAnchor),
-            rows.leadingAnchor.constraint(equalTo: document.leadingAnchor, constant: 12),
-            rows.trailingAnchor.constraint(
-                lessThanOrEqualTo: document.trailingAnchor, constant: -12),
-            rows.topAnchor.constraint(equalTo: document.topAnchor, constant: 10),
-            rows.bottomAnchor.constraint(lessThanOrEqualTo: document.bottomAnchor, constant: -10),
-        ])
+        let scroll = NativeFormLayout.scrollingChoices(checkboxes)
 
         let note = NSTextField(
             wrappingLabelWithString:
                 "MKV Magic re-inspects the source, resolves your choices by stable attachment UID, then verifies every retained media and metadata fact before saving."
         )
-        note.textColor = .secondaryLabelColor
+        note.textColor = AppPalette.secondaryText
         note.font = .systemFont(ofSize: 11)
-        statusLabel.textColor = .systemRed
+        statusLabel.textColor = AppPalette.errorText
         statusLabel.lineBreakMode = .byWordWrapping
         statusLabel.maximumNumberOfLines = 2
         statusLabel.setAccessibilityLabel("Attachment removal status")
@@ -149,12 +123,8 @@ final class AttachmentRemovalViewController: NSViewController {
         reviewButton.setAccessibilityHelp(
             "Review the selected omissions before creating a verified MKV copy."
         )
-        let spacer = NSView()
-        spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        let actions = NSStackView(views: [statusLabel, spacer, cancelButton, reviewButton])
-        actions.orientation = .horizontal
-        actions.alignment = .centerY
-        actions.spacing = 8
+        let actions = NativeFormLayout.footer(
+            status: statusLabel, buttons: [cancelButton, reviewButton])
 
         let stack = NSStackView(views: [heading, explanation, scroll, note, actions])
         stack.orientation = .vertical
@@ -171,16 +141,29 @@ final class AttachmentRemovalViewController: NSViewController {
             stack.trailingAnchor.constraint(equalTo: root.trailingAnchor),
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-            scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48),
-            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 210),
-            note.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48),
-            actions.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -48),
+            stack.contentWidthConstraint(for: heading),
+            stack.contentWidthConstraint(for: explanation),
+            stack.contentWidthConstraint(for: scroll),
+            scroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 120),
+            stack.contentWidthConstraint(for: note),
+            stack.contentWidthConstraint(for: actions),
         ])
         view = root
+        selectionChanged()
     }
 
     @objc private func selectionChanged() {
-        statusLabel.stringValue = ""
+        do {
+            _ = try currentRemoval()
+            reviewButton.isEnabled = true
+            statusLabel.textColor = AppPalette.secondaryText
+            statusLabel.stringValue =
+                "Review these omissions, then use Verify & Run in the main window."
+        } catch {
+            reviewButton.isEnabled = false
+            statusLabel.textColor = AppPalette.secondaryText
+            statusLabel.stringValue = UserFacingErrorPresentation.shortReason(error)
+        }
     }
 
     @objc private func cancel() {
@@ -189,16 +172,11 @@ final class AttachmentRemovalViewController: NSViewController {
 
     @objc private func review() {
         do {
-            let selectedIndexes = Set(
-                checkboxes.indices.filter { checkboxes[$0].state == .on }
-            )
-            let removal = try AttachmentRemovalPresentation.removal(
-                attachments: attachments,
-                selectedIndexes: selectedIndexes
-            )
+            let removal = try currentRemoval()
             statusLabel.stringValue = ""
             onContinue?(removal)
         } catch {
+            statusLabel.textColor = AppPalette.errorText
             AccessibleStatusPresentation.present(
                 UserFacingErrorPresentation.message(
                     failure: "Could not prepare attachment removal.",
@@ -209,6 +187,13 @@ final class AttachmentRemovalViewController: NSViewController {
                 returningFocusTo: preferredInitialFirstResponder
             )
         }
+    }
+
+    private func currentRemoval() throws -> MatroskaAttachmentRemoval {
+        try AttachmentRemovalPresentation.removal(
+            attachments: attachments,
+            selectedIndexes: Set(checkboxes.indices.filter { checkboxes[$0].state == .on })
+        )
     }
 }
 

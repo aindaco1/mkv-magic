@@ -14,6 +14,22 @@ public enum MKVRemuxVerificationError: Error, Equatable, Sendable {
     case invalidSegmentIdentity
 }
 
+public struct MKVRemuxAppendedSubtitleExpectation: Equatable, Sendable {
+    public let metadata: ExternalSubtitleTrackMetadata
+    public let format: ExternalTextSubtitleFormat
+    public let end: SubRipTimestamp
+
+    public init(
+        metadata: ExternalSubtitleTrackMetadata,
+        format: ExternalTextSubtitleFormat,
+        end: SubRipTimestamp
+    ) {
+        self.metadata = metadata
+        self.format = format
+        self.end = end
+    }
+}
+
 extension MKVRemuxVerificationError: LocalizedError {
     public var errorDescription: String? {
         switch self {
@@ -34,29 +50,50 @@ extension MKVRemuxVerificationError: LocalizedError {
 public struct MKVRemuxOutputVerifier: Sendable {
     public init() {}
 
-    public func verify(plan: ResolvedMKVRemuxPlan, output: MediaAsset) throws {
+    public func verify(
+        plan: ResolvedMKVRemuxPlan,
+        output: MediaAsset,
+        trackLanguageOverrides: [Int: String] = [:],
+        appendedSubtitle: MKVRemuxAppendedSubtitleExpectation? = nil,
+        additionalAppendedSubtitles: [MKVRemuxAppendedSubtitleExpectation] = []
+    ) throws {
+        let subtitles = (appendedSubtitle.map { [$0] } ?? []) + additionalAppendedSubtitles
+        guard subtitles.count <= ExternalSubtitleBatchPolicy.maximumSubtitlesPerVideo else {
+            throw MKVRemuxVerificationError.tracksChanged
+        }
         let source = plan.source
         guard output.fileSize ?? 0 > 0 else { throw MKVRemuxVerificationError.emptyOutput }
         guard output.container.localizedCaseInsensitiveContains("matroska") else {
             throw MKVRemuxVerificationError.wrongContainer
         }
-        guard durationsMatch(source.duration, output.duration) else {
+        let durationMatches =
+            subtitles.max(by: { $0.end < $1.end }).map {
+                muxedDurationsMatch(source.duration, output.duration, subtitleEnd: $0.end)
+            } ?? PacketCopyTimingTolerance.durationsMatch(source.duration, output.duration)
+        guard durationMatches else {
             throw MKVRemuxVerificationError.wrongDuration
         }
         let copiedTrackIDs = Set(plan.trackIDsInOutputOrder)
         let sourceTracks = source.tracks.filter { copiedTrackIDs.contains($0.id) }
         let outputTracks = output.tracks.filter { $0.kind != .attachment }
-        guard sourceTracks.count == outputTracks.count,
+        let copiedOutputTracks =
+            Array(outputTracks.dropLast(subtitles.count))
+        let audioTrackIDs = Set(sourceTracks.filter { $0.kind == .audio }.map(\.id))
+        guard Set(trackLanguageOverrides.keys).isSubset(of: audioTrackIDs),
+            sourceTracks.count == copiedOutputTracks.count,
             sourceTracks.map(\.id) == plan.trackIDsInOutputOrder,
-            zip(sourceTracks, outputTracks).allSatisfy({
+            zip(sourceTracks, copiedOutputTracks).allSatisfy({
                 CopiedTrackTechnicalSnapshot($0) == CopiedTrackTechnicalSnapshot($1)
             })
         else {
             throw MKVRemuxVerificationError.tracksChanged
         }
-        for (sourceTrack, outputTrack) in zip(sourceTracks, outputTracks) {
+        for (sourceTrack, outputTrack) in zip(sourceTracks, copiedOutputTracks) {
             guard
-                CopiedTrackMetadataSnapshot(sourceTrack)
+                CopiedTrackMetadataSnapshot(
+                    sourceTrack,
+                    overridingLanguage: trackLanguageOverrides[sourceTrack.id]
+                )
                     == CopiedTrackMetadataSnapshot(outputTrack)
             else {
                 throw MKVRemuxVerificationError.trackMetadataChanged(trackID: sourceTrack.id)
@@ -81,12 +118,16 @@ public struct MKVRemuxOutputVerifier: Sendable {
         else {
             throw MKVRemuxVerificationError.invalidSegmentIdentity
         }
-    }
-
-    private func durationsMatch(_ expected: MediaTime?, _ actual: MediaTime?) -> Bool {
-        guard let expected, let actual else { return expected == nil && actual == nil }
-        let difference = actual.nanoseconds.subtractingReportingOverflow(expected.nanoseconds)
-        return !difference.overflow && difference.partialValue.magnitude <= 100_000_000
+        for (added, appendedSubtitle) in zip(outputTracks.suffix(subtitles.count), subtitles) {
+            guard outputTracks.count == copiedOutputTracks.count + subtitles.count,
+                added.kind == .subtitle
+            else { throw MKVRemuxVerificationError.tracksChanged }
+            try ExternalSubtitleTrackVerifier.verify(
+                added,
+                expectedMetadata: appendedSubtitle.metadata,
+                expectedFormat: appendedSubtitle.format
+            )
+        }
     }
 
     private func segmentTitle(_ asset: MediaAsset) -> String? {
@@ -110,8 +151,7 @@ public struct MKVRemuxOutputVerifier: Sendable {
     }
 
     private func timesMatch(_ expected: MediaTime, _ actual: MediaTime) -> Bool {
-        let difference = actual.nanoseconds.subtractingReportingOverflow(expected.nanoseconds)
-        return !difference.overflow && difference.partialValue.magnitude <= 100_000_000
+        PacketCopyTimingTolerance.matches(actual.nanoseconds, expected.nanoseconds)
     }
 
     private func optionalTimesMatch(_ expected: MediaTime?, _ actual: MediaTime?) -> Bool {
@@ -169,10 +209,10 @@ private struct CopiedTrackMetadataSnapshot: Equatable {
     let isOriginal: Bool
     let isTextDescription: Bool
 
-    init(_ track: MediaTrack) {
+    init(_ track: MediaTrack, overridingLanguage: String? = nil) {
         language =
-            (try? TrackLanguageTag.canonical(track.language ?? "und"))
-            ?? (track.language ?? "und").lowercased()
+            (try? TrackLanguageTag.canonical(overridingLanguage ?? track.language ?? "und"))
+            ?? (overridingLanguage ?? track.language ?? "und").lowercased()
         title = track.title ?? ""
         isDefault = track.isDefault
         isForced = track.isForced

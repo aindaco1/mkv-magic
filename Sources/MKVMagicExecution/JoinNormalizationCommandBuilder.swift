@@ -197,6 +197,7 @@ public struct JoinNormalizationCommandBuilder: Sendable {
                     needsToneMapping = MediaHDR10Signal(track: track) != nil
                     isReviewedDynamicRange =
                         needsToneMapping || MediaHDR10Signal.isBT709SDR(track)
+                        || MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(track)
                 case .hdr10:
                     needsToneMapping = false
                     isReviewedDynamicRange = MediaHDR10Signal(track: track) == hdr10Signal

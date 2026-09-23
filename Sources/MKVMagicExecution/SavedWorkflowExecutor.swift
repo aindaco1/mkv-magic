@@ -98,13 +98,7 @@ public struct SavedWorkflowExecutor<Runner: CommandRunning, Inspector: MediaInsp
             guard let resolvedPayload else {
                 throw SavedWorkflowExecutionError.missingExternalSubtitleInput
             }
-            guard
-                resolvedPayload.sourceURL.standardizedFileURL
-                    == externalSubtitleInput.sourceURL.standardizedFileURL,
-                resolvedPayload.format == externalSubtitleInput.format,
-                resolvedPayload.reviewedCleanupChangeCount
-                    == externalSubtitleInput.reviewedCleanupChangeCount
-            else {
+            guard resolvedPayload.matches(externalSubtitleInput) else {
                 throw SavedWorkflowExecutionError.mismatchedExternalSubtitleInput
             }
             return try await externalSubtitleExecutor.execute(

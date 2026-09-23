@@ -3,6 +3,7 @@ import Foundation
 import MKVMagicCore
 import MKVMagicExecution
 import MKVMagicMedia
+import MKVMagicPlanning
 import MKVMagicSystem
 import XCTest
 
@@ -91,6 +92,7 @@ final class RealToolLosslessJoinTests: XCTestCase {
             ffprobeURL: try catalog.url(for: .ffprobe),
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
             runner: runner,
             inspector: inspector
         )
@@ -205,6 +207,7 @@ final class RealToolLosslessJoinTests: XCTestCase {
             ffprobeURL: try catalog.url(for: .ffprobe),
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
             runner: runner,
             inspector: inspector
         )
@@ -330,6 +333,7 @@ final class RealToolLosslessJoinTests: XCTestCase {
             ffprobeURL: try catalog.url(for: .ffprobe),
             mkvmergeURL: try catalog.url(for: .mkvmerge),
             mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
             runner: runner,
             inspector: inspector
         )
@@ -346,5 +350,312 @@ final class RealToolLosslessJoinTests: XCTestCase {
 
         XCTAssertEqual(output.tracks.map(\.kind), [.video, .audio, .subtitle])
         XCTAssertEqual(output.chapterEntryCount, 3)
+    }
+
+    func testBundledToolsRouteH264CodecInitializationMismatchToCommonFormat() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("Bundled H.264 VideoToolbox did not verify on this Mac")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-h264-initialization-mismatch-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let rawVideo = root.appendingPathComponent("black.yuv")
+        let width = 1_280
+        let height = 720
+        let frameCount = 24
+        let bytesPerFrame = width * height * 3 / 2
+        try Data(repeating: 0, count: bytesPerFrame * frameCount).write(to: rawVideo)
+        var sourceURLs = [URL]()
+        for coder in ["cavlc", "cabac"] {
+            let source = root.appendingPathComponent("\(coder).mkv")
+            let encode = try await runner.run(
+                CommandRequest(
+                    executableURL: ffmpegURL,
+                    arguments: [
+                        "-hide_banner", "-loglevel", "error",
+                        "-f", "rawvideo", "-pixel_format", "yuv420p",
+                        "-video_size", "\(width)x\(height)", "-framerate", "24",
+                        "-i", rawVideo.path, "-frames:v", String(frameCount), "-an",
+                        "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                        "-level:v", "3.1", "-coder", coder, "-g", "24",
+                        "-b:v", "500k", "-pix_fmt", "yuv420p",
+                        source.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+            sourceURLs.append(source)
+        }
+        let sourceDigests = try sourceURLs.map {
+            SHA256.hash(data: try Data(contentsOf: $0))
+        }
+
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        var sources = [MediaAsset]()
+        for sourceURL in sourceURLs {
+            try await sources.append(inspector.inspect(sourceURL))
+        }
+        let first = try XCTUnwrap(sources[0].tracks.first)
+        let second = try XCTUnwrap(sources[1].tracks.first)
+        XCTAssertEqual(first.codec, second.codec)
+        XCTAssertEqual(first.profile, second.profile)
+        XCTAssertEqual(first.level, second.level)
+        XCTAssertEqual(first.dimensions, second.dimensions)
+        XCTAssertEqual(first.pixelFormat, second.pixelFormat)
+        XCTAssertEqual(first.frameRate, second.frameRate)
+        XCTAssertTrue(MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(first))
+        XCTAssertTrue(MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(second))
+        XCTAssertNotNil(first.codecInitializationDigest)
+        XCTAssertNotNil(second.codecInitializationDigest)
+        XCTAssertNotEqual(first.codecInitializationDigest, second.codecInitializationDigest)
+
+        let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: sources,
+            mapping: mapping
+        )
+        XCTAssertEqual(report.disposition, .normalizationRequired)
+        XCTAssertTrue(
+            report.issues.contains {
+                $0.reason == .codecInitialization && $0.severity == .normalizationRequired
+            }
+        )
+
+        let proposal = try JoinNormalizationPlanner().propose(
+            sources: sources,
+            mapping: mapping,
+            preferredVideoPreset: .h264Compatibility
+        )
+        XCTAssertTrue(proposal.blockers.isEmpty, "\(proposal.blockers)")
+        let lane = try XCTUnwrap(proposal.videoLanes.first)
+        XCTAssertEqual(lane.recommendedDynamicRange, .sdr)
+        XCTAssertTrue(proposal.decisions.contains { $0.kind == .untaggedSDR })
+        let resolved = try JoinNormalizationChoiceResolver().resolve(
+            sources: sources,
+            proposal: proposal,
+            choices: JoinNormalizationChoices(videoTargetsByLane: [
+                lane.laneIndex: JoinVideoTargetChoice(
+                    preset: .h264Compatibility,
+                    canvas: try XCTUnwrap(lane.recommendedCanvas),
+                    frameRatePolicy: .preserveSourceTiming,
+                    dynamicRange: .sdr,
+                    rateControl: .averageBitrate(500_000)
+                )
+            ]),
+            availableVideoPresets: Set(capabilities.availableVideoPresets),
+            aacAvailable: capabilities.aac == .verified
+        )
+        let normalizationExecutor = JoinNormalizationExecutor(
+            ffmpegURL: ffmpegURL,
+            runner: runner,
+            inspector: inspector
+        )
+        let output = try await normalizationExecutor.execute(
+            preview: normalizationExecutor.preview(
+                sources: sources,
+                resolvedPlan: resolved,
+                capabilities: capabilities
+            ),
+            destinationURL: root.appendingPathComponent("verified-common-format.mkv")
+        )
+
+        XCTAssertEqual(output.tracks.count, 1)
+        XCTAssertEqual(output.tracks[0].dimensions, MediaDimensions(width: width, height: height))
+        XCTAssertTrue(MediaHDR10Signal.isBT709SDR(output.tracks[0]))
+        XCTAssertEqual(
+            try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+            sourceDigests
+        )
+    }
+
+    func testBundledToolsCommitReviewedCodecPrivateAppendOnlyAfterCleanAudit() async throws {
+        guard let rootPath = ProcessInfo.processInfo.environment["MKV_MAGIC_TOOL_ROOT"] else {
+            throw XCTSkip("Set MKV_MAGIC_TOOL_ROOT to run bundled-tool integration")
+        }
+        let catalog = try ToolCatalog(
+            rootURL: URL(fileURLWithPath: rootPath, isDirectory: true)
+        )
+        let runner = FoundationCommandRunner()
+        let ffmpegURL = try catalog.url(for: .ffmpeg)
+        let capabilities = try await FFmpegCapabilityProbe(
+            ffmpegURL: ffmpegURL,
+            runner: runner
+        ).probe()
+        guard capabilities.h264VideoToolbox == .verified else {
+            throw XCTSkip("Bundled H.264 VideoToolbox did not verify on this Mac")
+        }
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "mkv-magic-real-reviewed-codec-private-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let rawVideo = root.appendingPathComponent("black.yuv")
+        let width = 1_280
+        let height = 720
+        let frameCount = 24
+        try Data(repeating: 0, count: width * height * 3 / 2 * frameCount).write(
+            to: rawVideo
+        )
+        var sourceURLs = [URL]()
+        for coder in ["cavlc", "cabac"] {
+            let elementaryStream = root.appendingPathComponent("\(coder).h264")
+            let source = root.appendingPathComponent("\(coder).mkv")
+            let encode = try await runner.run(
+                CommandRequest(
+                    executableURL: ffmpegURL,
+                    arguments: [
+                        "-hide_banner", "-loglevel", "error",
+                        "-f", "rawvideo", "-pixel_format", "yuv420p",
+                        "-video_size", "\(width)x\(height)", "-framerate", "24",
+                        "-i", rawVideo.path, "-frames:v", String(frameCount), "-an",
+                        "-c:v", "h264_videotoolbox", "-profile:v", "high",
+                        "-level:v", "3.1", "-coder", coder, "-g", "24",
+                        "-b:v", "500k", "-pix_fmt", "yuv420p",
+                        "-f", "h264", elementaryStream.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertEqual(encode.exitCode, 0, encode.standardError.text)
+            let mux = try await runner.run(
+                CommandRequest(
+                    executableURL: try catalog.url(for: .mkvmerge),
+                    arguments: [
+                        "--output", source.path,
+                        "--default-duration", "0:24fps",
+                        elementaryStream.path,
+                    ],
+                    timeout: 60
+                )
+            )
+            XCTAssertLessThanOrEqual(mux.exitCode, 1, mux.standardError.text)
+            sourceURLs.append(source)
+        }
+        let sourceDigests = try sourceURLs.map {
+            SHA256.hash(data: try Data(contentsOf: $0))
+        }
+        let inspector = UnifiedMediaInspector(
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            runner: runner
+        )
+        var sources = [MediaAsset]()
+        for sourceURL in sourceURLs {
+            try await sources.append(inspector.inspect(sourceURL))
+        }
+        XCTAssertNotEqual(
+            sources[0].tracks.first?.codecInitializationDigest,
+            sources[1].tracks.first?.codecInitializationDigest
+        )
+        let mapping = try JoinTrackMappingProposer().propose(sources: sources).mapping
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: sources,
+            mapping: mapping
+        )
+        XCTAssertTrue(ReviewedMKVToolNixLosslessAppendPolicy.canOffer(for: report))
+        let chapters = try JoinedChapterComposer().compose(
+            sources.enumerated().map { index, source in
+                let duration = try XCTUnwrap(source.duration)
+                let midpoint = MediaTime(nanoseconds: duration.nanoseconds / 2)
+                return JoinedChapterSource(
+                    title: "Part \(index + 1)",
+                    duration: duration,
+                    retainedStart: .zero,
+                    retainedEnd: duration,
+                    selectedEditionChapters: [
+                        MatroskaChapterAtom(
+                            uid: UInt64(index * 10 + 1),
+                            start: .zero,
+                            end: midpoint,
+                            displays: [ChapterDisplay(title: "Chapter 1")]
+                        ),
+                        MatroskaChapterAtom(
+                            uid: UInt64(index * 10 + 2),
+                            start: midpoint,
+                            end: duration,
+                            displays: [ChapterDisplay(title: "Chapter 2")]
+                        ),
+                    ]
+                )
+            }
+        )
+        let executor = LosslessJoinExecutor(
+            ffmpegURL: ffmpegURL,
+            ffprobeURL: try catalog.url(for: .ffprobe),
+            mkvmergeURL: try catalog.url(for: .mkvmerge),
+            mkvextractURL: try catalog.url(for: .mkvextract),
+            mkvpropeditURL: try catalog.url(for: .mkvpropedit),
+            runner: runner,
+            inspector: inspector
+        )
+        XCTAssertThrowsError(
+            try executor.preview(
+                sources: sources,
+                mapping: mapping,
+                chapters: chapters
+            )
+        )
+        let preview = try executor.preview(
+            sources: sources,
+            mapping: mapping,
+            chapters: chapters,
+            usesReviewedMKVToolNixWarningTolerance: true
+        )
+        XCTAssertTrue(preview.usesHeaderNormalizedVideoAppend)
+        XCTAssertEqual(preview.headerNormalizedVideoLaneIndices, [0])
+
+        let output = try await executor.execute(
+            preview: preview,
+            destinationURL: root.appendingPathComponent("joined-reviewed.mkv")
+        )
+
+        XCTAssertTrue(preview.usesReviewedMKVToolNixWarningTolerance)
+        XCTAssertEqual(output.tracks.count, 1)
+        XCTAssertEqual(output.tracks[0].codec, "h264")
+        XCTAssertEqual(chapters.document.topLevelChapterCount, 4)
+        XCTAssertEqual(
+            chapters.document.editions.first?.chapters.map(\.primaryTitle),
+            ["Chapter 1", "Chapter 2", "Chapter 3", "Chapter 4"]
+        )
+        XCTAssertEqual(output.chapterEntryCount, 4)
+        let decode = try await runner.run(
+            CommandRequest(
+                executableURL: ffmpegURL,
+                arguments: [
+                    "-hide_banner", "-loglevel", "error", "-xerror",
+                    "-i", output.sourceURL.path,
+                    "-map", "0:v:0", "-f", "null", "-",
+                ],
+                timeout: 60
+            )
+        )
+        XCTAssertEqual(decode.exitCode, 0, decode.standardError.text)
+        XCTAssertEqual(
+            try sourceURLs.map { SHA256.hash(data: try Data(contentsOf: $0)) },
+            sourceDigests
+        )
     }
 }

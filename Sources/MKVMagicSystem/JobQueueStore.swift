@@ -27,7 +27,8 @@ public protocol JobQueueManaging: JobQueuePersisting {
         jobID: UUID,
         to state: MediaQueueJobState,
         at timestamp: Date,
-        reason: MediaQueueEventReason?
+        reason: MediaQueueEventReason?,
+        failure: PrivacySafeMediaFailure?
     ) async throws -> MediaQueueSnapshot
     @discardableResult
     func approveReplan(
@@ -51,6 +52,24 @@ public protocol JobQueueManaging: JobQueuePersisting {
         -> MediaQueueSnapshot
     @discardableResult
     func recoverInterruptedJobs(at timestamp: Date) async throws -> MediaQueueSnapshot
+}
+
+extension JobQueueManaging {
+    @discardableResult
+    public func transition(
+        jobID: UUID,
+        to state: MediaQueueJobState,
+        at timestamp: Date,
+        reason: MediaQueueEventReason?
+    ) async throws -> MediaQueueSnapshot {
+        try await transition(
+            jobID: jobID,
+            to: state,
+            at: timestamp,
+            reason: reason,
+            failure: nil
+        )
+    }
 }
 
 public actor JSONJobQueueStore: JobQueueManaging {
@@ -109,7 +128,8 @@ public actor JSONJobQueueStore: JobQueueManaging {
         jobID: UUID,
         to state: MediaQueueJobState,
         at timestamp: Date,
-        reason: MediaQueueEventReason? = nil
+        reason: MediaQueueEventReason? = nil,
+        failure: PrivacySafeMediaFailure? = nil
     ) async throws -> MediaQueueSnapshot {
         var snapshot = try readSnapshot(defaultTimestamp: timestamp)
         do {
@@ -117,7 +137,8 @@ public actor JSONJobQueueStore: JobQueueManaging {
                 jobID: jobID,
                 to: state,
                 at: timestamp,
-                reason: reason
+                reason: reason,
+                failure: failure
             )
         } catch MediaQueueMutationError.jobNotFound {
             throw JobQueueStoreError.jobNotFound
@@ -278,6 +299,14 @@ public actor JSONJobQueueStore: JobQueueManaging {
                 isValidOutputFilename(job.outputDisplayName),
                 job.events.first?.state == .waiting,
                 job.events.first?.timestamp == job.createdAt,
+                job.events.allSatisfy({ event in
+                    if event.state == .failed {
+                        return event.failure?.hasCanonicalStructure(
+                            inputCount: job.inputs.count
+                        ) ?? true
+                    }
+                    return event.failure == nil
+                }),
                 job.attemptCount >= 0,
                 job.reviewedPlan.impact.videoEncodeCount >= 0,
                 job.reviewedPlan.impact.audioEncodeCount >= 0,
@@ -333,7 +362,8 @@ public actor JSONJobQueueStore: JobQueueManaging {
                         try replay.transition(
                             to: event.state,
                             at: event.timestamp,
-                            reason: event.reason
+                            reason: event.reason,
+                            failure: event.failure
                         )
                     }
                 }
@@ -354,10 +384,13 @@ public actor JSONJobQueueStore: JobQueueManaging {
             else {
                 throw JobQueueStoreError.malformedQueue
             }
-            if case .savedWithExternalSubtitle = job.workflow,
-                !MediaQueueAutomaticWorkflowPolicy.supports(job)
-            {
-                throw JobQueueStoreError.malformedQueue
+            switch job.workflow {
+            case .savedWithExternalSubtitle, .savedWithExternalSubtitles, .savedWithSourceLanguages,
+                .reviewedEdit:
+                guard MediaQueueAutomaticWorkflowPolicy.supports(job) else {
+                    throw JobQueueStoreError.malformedQueue
+                }
+            default: break
             }
             if let workflow = job.workflow.savedWorkflow {
                 do {

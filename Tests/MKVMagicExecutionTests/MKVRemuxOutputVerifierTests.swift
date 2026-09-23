@@ -112,6 +112,87 @@ final class MKVRemuxOutputVerifierTests: XCTestCase {
         ) { XCTAssertEqual($0 as? MKVRemuxVerificationError, .chaptersChanged) }
     }
 
+    func testAcceptsReviewedAudioLanguageOverrideAndAppendedSubtitle() throws {
+        let source = asset(
+            url: URL(fileURLWithPath: "/Media/Movie.en.mp4"),
+            container: "mov",
+            tracks: [video(), audio(language: "und")]
+        )
+        let plan = try MKVRemuxPlanner().resolve(source: source)
+        let subtitle = MediaTrack(
+            id: 2,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            language: "fr",
+            title: "French"
+        )
+        let output = asset(
+            tracks: [video(), audio(language: "en"), subtitle],
+            segmentUID: "new"
+        )
+
+        XCTAssertNoThrow(
+            try MKVRemuxOutputVerifier().verify(
+                plan: plan,
+                output: output,
+                trackLanguageOverrides: [1: "eng"],
+                appendedSubtitle: MKVRemuxAppendedSubtitleExpectation(
+                    metadata: ExternalSubtitleTrackMetadata(
+                        language: "fr",
+                        name: "French"
+                    ),
+                    format: .subRip,
+                    end: SubRipTimestamp(milliseconds: 1_000)
+                )
+            )
+        )
+    }
+
+    func testAppendedSubtitleUsesTheSharedPacketCopyDurationTolerance() throws {
+        let source = asset(
+            url: URL(fileURLWithPath: "/Media/Movie.en.mp4"),
+            container: "mov"
+        )
+        let plan = try MKVRemuxPlanner().resolve(source: source)
+        let subtitle = MediaTrack(
+            id: 2,
+            kind: .subtitle,
+            codec: "subrip",
+            codecID: "S_TEXT/UTF8",
+            language: "en"
+        )
+        let expectation = MKVRemuxAppendedSubtitleExpectation(
+            metadata: ExternalSubtitleTrackMetadata(language: "en"),
+            format: .subRip,
+            end: SubRipTimestamp(milliseconds: 1_000)
+        )
+        let verifier = MKVRemuxOutputVerifier()
+
+        XCTAssertNoThrow(
+            try verifier.verify(
+                plan: plan,
+                output: asset(
+                    tracks: [video(), audio(), subtitle],
+                    duration: MediaTime(nanoseconds: 1_124_000_000),
+                    segmentUID: "new"
+                ),
+                appendedSubtitle: expectation
+            )
+        )
+        XCTAssertThrowsError(
+            try verifier.verify(
+                plan: plan,
+                output: asset(
+                    tracks: [video(), audio(), subtitle],
+                    duration: MediaTime(nanoseconds: 1_124_000_001),
+                    segmentUID: "new"
+                ),
+                appendedSubtitle: expectation
+            )
+        ) { XCTAssertEqual($0 as? MKVRemuxVerificationError, .wrongDuration) }
+    }
+
     private func asset(
         url: URL = URL(fileURLWithPath: "/Media/Movie.mkv"),
         container: String = "matroska,webm",

@@ -2,12 +2,16 @@ import AppKit
 
 @MainActor
 final class SettingsWindowController: NSWindowController {
-    init(preferences: OutputDestinationPreferences) {
-        let content = SettingsViewController(preferences: preferences)
+    init(
+        preferences: OutputDestinationPreferences,
+        appearancePreferences: AppearancePreferences = AppearancePreferences()
+    ) {
+        let content = SettingsViewController(
+            preferences: preferences, appearancePreferences: appearancePreferences)
         let window = NSWindow(contentViewController: content)
         window.title = "MKV Magic Settings"
-        window.setContentSize(NSSize(width: 600, height: 300))
-        window.minSize = NSSize(width: 520, height: 270)
+        window.setContentSize(NSSize(width: 600, height: 420))
+        window.minSize = NSSize(width: 520, height: 400)
         window.tabbingMode = .disallowed
         window.configureMKVMagicKeyboardNavigation(
             startingAt: content.preferredInitialFirstResponder
@@ -24,6 +28,8 @@ final class SettingsWindowController: NSWindowController {
 @MainActor
 private final class SettingsViewController: NSViewController {
     private let preferences: OutputDestinationPreferences
+    private let appearancePreferences: AppearancePreferences
+    private let appearancePopup = NSPopUpButton()
     private let modePopup = NSPopUpButton()
     private let folderLabel = NSTextField(labelWithString: "No folder chosen")
     private let chooseFolderButton = NSButton(
@@ -33,10 +39,11 @@ private final class SettingsViewController: NSViewController {
     )
     private var previousMode: OutputDestinationMode
 
-    var preferredInitialFirstResponder: NSView { modePopup }
+    var preferredInitialFirstResponder: NSView { appearancePopup }
 
-    init(preferences: OutputDestinationPreferences) {
+    init(preferences: OutputDestinationPreferences, appearancePreferences: AppearancePreferences) {
         self.preferences = preferences
+        self.appearancePreferences = appearancePreferences
         previousMode = preferences.mode
         super.init(nibName: nil, bundle: nil)
     }
@@ -48,29 +55,43 @@ private final class SettingsViewController: NSViewController {
 
     override func loadView() {
         let root = NSView()
+        let appearanceHeading = NSTextField(labelWithString: "Appearance")
+        appearanceHeading.font = .systemFont(ofSize: 22, weight: .semibold)
+        appearancePopup.addItems(withTitles: AppAppearanceMode.allCases.map(\.title))
+        appearancePopup.selectItem(
+            at: AppAppearanceMode.allCases.firstIndex(of: appearancePreferences.mode) ?? 0)
+        appearancePopup.target = self
+        appearancePopup.action = #selector(appearanceChanged)
+        appearancePopup.setAccessibilityLabel("Appearance")
+        let appearanceHelp = NSTextField(
+            wrappingLabelWithString:
+                "System follows your Mac’s Light, Dark, or Auto setting. Changes apply immediately to every window."
+        )
+        appearanceHelp.textColor = AppPalette.secondaryText
+        appearancePopup.setAccessibilityHelp(appearanceHelp.stringValue)
         let heading = NSTextField(labelWithString: "Output location")
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let explanation = NSTextField(
             wrappingLabelWithString:
-                "Choose whether MKV Magic saves verified outputs automatically or asks each time. Originals are never overwritten. If a suggested output already exists, MKV Magic adds a number to the new filename."
+                "This setting applies to every media output and export. Automatic saves use an unused filename without a save dialog. macOS may ask you to allow folder access once. Reports and workflows without a source remember an export folder. Originals are never overwritten."
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
 
         modePopup.addItems(withTitles: OutputDestinationMode.allCases.map(\.title))
         modePopup.target = self
         modePopup.action = #selector(modeChanged)
         modePopup.setAccessibilityLabel("Default output location behavior")
         modePopup.setAccessibilityHelp(
-            "Save beside each source, save to one chosen folder, or ask for every output."
+            "Save beside a source when its folder is authorized, save to one chosen folder, or ask for every output."
         )
 
         chooseFolderButton.target = self
         chooseFolderButton.action = #selector(chooseFolder)
         chooseFolderButton.setAccessibilityHelp(
-            "Choose and remember one folder for future verified outputs."
+            "Choose and remember one folder for all outputs and exports."
         )
         folderLabel.lineBreakMode = .byTruncatingMiddle
-        folderLabel.textColor = .secondaryLabelColor
+        folderLabel.textColor = AppPalette.secondaryText
         folderLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         let folderSpacer = NSView()
         folderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -79,7 +100,10 @@ private final class SettingsViewController: NSViewController {
         folderRow.alignment = .centerY
         folderRow.spacing = MKVMagicLayoutMetrics.controlGap
 
-        let stack = NSStackView(views: [heading, explanation, modePopup, folderRow])
+        let stack = NSStackView(views: [
+            appearanceHeading, appearancePopup, appearanceHelp,
+            heading, explanation, modePopup, folderRow,
+        ])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = MKVMagicLayoutMetrics.sectionGap
@@ -92,10 +116,20 @@ private final class SettingsViewController: NSViewController {
             stack.topAnchor.constraint(equalTo: root.topAnchor),
             stack.bottomAnchor.constraint(lessThanOrEqualTo: root.bottomAnchor),
             stack.contentWidthConstraint(for: explanation),
+            stack.contentWidthConstraint(for: appearanceHelp),
             stack.contentWidthConstraint(for: folderRow),
         ])
         view = root
         refresh()
+    }
+
+    @objc private func appearanceChanged() {
+        guard AppAppearanceMode.allCases.indices.contains(appearancePopup.indexOfSelectedItem)
+        else {
+            return
+        }
+        appearancePreferences.mode = AppAppearanceMode.allCases[appearancePopup.indexOfSelectedItem]
+        appearancePreferences.apply()
     }
 
     @objc private func modeChanged() {

@@ -81,6 +81,7 @@ extension MediaTrack {
             codecID: detail.codecID ?? codecID,
             profile: profile,
             level: level,
+            codecInitializationDigest: codecInitializationDigest,
             uid: detail.uid ?? uid,
             language: detail.language ?? language,
             title: detail.title ?? title,

@@ -54,6 +54,8 @@ mkdir -p \
 cd "$repo_root"
 swift build -c release --arch arm64 --arch x86_64 \
     --product MKVMagic --disable-automatic-resolution
+swift build -c release --arch arm64 --arch x86_64 \
+    --product MKVMagicReportService --disable-automatic-resolution
 binary_root="$(
     swift build -c release --arch arm64 --arch x86_64 \
         --product MKVMagic --disable-automatic-resolution --show-bin-path
@@ -66,10 +68,22 @@ if [[ ! -f "$binary_path" || -L "$binary_path" || ! -d "$sparkle_framework" ]]; 
 fi
 
 install -m 0755 "$binary_path" "$app_path/Contents/MacOS/MKVMagic"
+report_service="$app_path/Contents/XPCServices/MKVMagicReportService.xpc"
+mkdir -p "$report_service/Contents/MacOS"
+install -m 0755 "$binary_root/MKVMagicReportService" "$report_service/Contents/MacOS/MKVMagicReportService"
+install -m 0644 Configuration/ReportService-Info.plist "$report_service/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $build_number" "$report_service/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "$report_service/Contents/Info.plist"
 ditto --norsrc --noextattr "$sparkle_framework" \
     "$app_path/Contents/Frameworks/Sparkle.framework"
 install -m 0644 Sources/MKVMagic/Info.plist "$app_path/Contents/Info.plist"
 install -m 0644 "$icon_path" "$app_path/Contents/Resources/MKVMagic.icns"
+# Compile the shared native accent into the main bundle. AppKit still honors an
+# explicit macOS accent choice; no custom button drawing or private defaults.
+xcrun actool "$repo_root/Assets/Appearance.xcassets" \
+    --compile "$app_path/Contents/Resources" --platform macosx \
+    --minimum-deployment-target 13.0 --accent-color AccentColor \
+    --output-partial-info-plist "$release_root/appearance-assets.plist"
 install -m 0644 THIRD_PARTY_NOTICES.md \
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
 install -m 0644 docs/SUPPORTED_SYSTEMS.md \

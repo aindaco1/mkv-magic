@@ -47,7 +47,7 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
             "Determinate progress based on completed local stages, batch items, or an "
                 + "MKVToolNix machine-reported percentage when that tool exposes one."
         )
-        progressSummaryLabel.textColor = .secondaryLabelColor
+        progressSummaryLabel.textColor = AppPalette.secondaryText
         progressSummaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         progressSummaryLabel.setAccessibilityLabel("Progress summary")
         setCompletedUnitCount(0)
@@ -242,6 +242,10 @@ final class VerifiedOutputProgressWindowController: NSWindowController {
         case .extractingTrack:
             phaseName = "track extraction"
             status = "Extracting the selected track… \(toolProgress.percentage)%"
+        case .headerNormalizingJoin:
+            phaseName = "lossless header normalization"
+            status =
+                "Normalizing video headers and assembling the temporary MKV… \(toolProgress.percentage)%"
         }
         setStatus(status)
         let summary =

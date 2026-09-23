@@ -26,6 +26,7 @@ struct LosslessJoinCandidate: Equatable, Sendable {
     let mapping: JoinTrackMapping
     let report: JoinCompatibilityReport
     let chapters: JoinedChapterComposition
+    let usesReviewedMKVToolNixWarningTolerance: Bool
 }
 
 struct CommonFormatJoinCandidate: Equatable, Sendable {
@@ -53,6 +54,7 @@ struct LosslessJoinReviewSnapshot: Equatable, Sendable {
     let issueSummaries: [String]
     let normalizationSummaries: [String]
     let blockerSummaries: [String]
+    let canOfferReviewedMKVToolNixLosslessAppend: Bool
 
     var selection: JoinReviewSelection? {
         if let candidate { return .lossless(candidate) }
@@ -67,7 +69,8 @@ enum LosslessJoinReviewBuilder {
     static func make(
         selections: [LosslessJoinSourceSelection],
         manualMapping: LosslessJoinManualMapping? = nil,
-        encodingCapabilities: FFmpegEncodingCapabilities? = nil
+        encodingCapabilities: FFmpegEncodingCapabilities? = nil,
+        usesReviewedMKVToolNixWarningTolerance: Bool = false
     ) -> LosslessJoinReviewSnapshot {
         guard selections.count >= 2 else {
             return blocked("Select at least two inspected Matroska files.")
@@ -197,8 +200,13 @@ enum LosslessJoinReviewBuilder {
             composition = nil
         }
 
+        let canOfferReviewedLosslessAppend =
+            ReviewedMKVToolNixLosslessAppendPolicy.canOffer(for: report)
+        let reviewedLosslessAppend =
+            canOfferReviewedLosslessAppend
+            && usesReviewedMKVToolNixWarningTolerance
         var losslessBlockers = sharedBlockers
-        if report.disposition != .losslessCandidate {
+        if report.disposition != .losslessCandidate && !reviewedLosslessAppend {
             losslessBlockers.append(dispositionSummary(report.disposition))
         }
         let candidate =
@@ -209,7 +217,9 @@ enum LosslessJoinReviewBuilder {
                     chapterPreviews: selections.map(\.option.chapterPreview),
                     mapping: mapping,
                     report: report,
-                    chapters: $0
+                    chapters: $0,
+                    usesReviewedMKVToolNixWarningTolerance:
+                        reviewedLosslessAppend
                 )
             }
             : nil
@@ -254,7 +264,9 @@ enum LosslessJoinReviewBuilder {
             laneSummaries: lanes,
             issueSummaries: issues,
             normalizationSummaries: normalization.summaries,
-            blockerSummaries: blockers
+            blockerSummaries: blockers,
+            canOfferReviewedMKVToolNixLosslessAppend:
+                canOfferReviewedLosslessAppend
         )
     }
 
@@ -268,7 +280,8 @@ enum LosslessJoinReviewBuilder {
             laneSummaries: [],
             issueSummaries: [],
             normalizationSummaries: [],
-            blockerSummaries: [message]
+            blockerSummaries: [message],
+            canOfferReviewedMKVToolNixLosslessAppend: false
         )
     }
 
@@ -338,14 +351,21 @@ enum LosslessJoinReviewBuilder {
             let canvas =
                 lane.recommendedCanvas.map { "\($0.width)×\($0.height) fit/pad" }
                 ?? "canvas needs review"
-            let range =
-                proposal.decisions.contains {
-                    $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
-                }
-                ? "SDR; tone-map only HDR10 Parts"
-                : lane.recommendedDynamicRange.map {
-                    $0 == .hdr10 ? "HDR10" : "SDR"
-                } ?? "dynamic range needs review"
+            let range: String
+            if proposal.decisions.contains(where: {
+                $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+            }) {
+                range = "SDR; tone-map only HDR10 Parts"
+            } else if proposal.decisions.contains(where: {
+                $0.kind == .untaggedSDR && $0.laneIndex == lane.laneIndex
+            }) {
+                range = "SDR; review untagged 8-bit H.264 Parts as BT.709"
+            } else {
+                range =
+                    lane.recommendedDynamicRange.map {
+                        $0 == .hdr10 ? "HDR10" : "SDR"
+                    } ?? "dynamic range needs review"
+            }
             summaries.append(
                 "Video lane \(lane.laneIndex + 1): one \(preset) generation • \(canvas) • \(range) • preserve source timing."
             )
@@ -538,6 +558,7 @@ enum LosslessJoinReviewBuilder {
         case .unsupportedTrackKind: "the track type"
         case .missingTrack: "a corresponding track is missing"
         case .codec: "the codec differs"
+        case .codecInitialization: "the codec initialization data differs"
         case .profile: "the codec profile differs"
         case .level: "the codec level differs"
         case .dimensions: "the encoded dimensions differ"
@@ -679,7 +700,8 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         laneSummaries: [],
         issueSummaries: [],
         normalizationSummaries: [],
-        blockerSummaries: []
+        blockerSummaries: [],
+        canOfferReviewedMKVToolNixLosslessAppend: false
     )
     private let tableView = NSTableView()
     private let reviewText = NSTextView()
@@ -688,6 +710,13 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
     private let moveUpButton = NSButton(title: "Move Up", target: nil, action: nil)
     private let moveDownButton = NSButton(title: "Move Down", target: nil, action: nil)
     private let mappingButton = NSButton(title: "Edit Track Mapping…", target: nil, action: nil)
+    private let reviewedLosslessAppendCheckbox = NSButton(
+        checkboxWithTitle:
+            "Try verified lossless repair first (zero encodes)",
+        target: nil,
+        action: nil
+    )
+    private var didChooseReviewedLosslessAppendDefault = false
 
     var preferredInitialFirstResponder: NSView { tableView }
 
@@ -715,9 +744,9 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         heading.font = .systemFont(ofSize: 22, weight: .semibold)
         let help = NSTextField(
             wrappingLabelWithString:
-                "Choose and order complete MKVs. MKV Magic maps every track, keeps one explicitly selected chapter edition per source, creates nested Part chapters, and recommends a common format only when lossless joining is not safe."
+                "Choose and order complete MKVs. MKV Magic maps every track, joins every retained source chapter into one player-compatible list, and recommends a common format only when lossless joining is not safe."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
         for (identifier, title, width) in [
             ("include", "Use", 42.0),
@@ -756,6 +785,15 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         mappingButton.action = #selector(editMapping)
         mappingButton.setAccessibilityHelp(
             "Review or resolve which source tracks continue each output lane."
+        )
+        reviewedLosslessAppendCheckbox.target = self
+        reviewedLosslessAppendCheckbox.action = #selector(toggleReviewedLosslessAppend)
+        reviewedLosslessAppendCheckbox.isHidden = true
+        reviewedLosslessAppendCheckbox.setAccessibilityHelp(
+            "Allow MKV Magic to preserve copied H.264 frames while normalizing conflicting "
+                + "decoder headers when supported. The result is saved only if strict boundary "
+                + "decoding, packet payload, track, and "
+                + "chapter verification all pass. Turn this off to review one-generation normalization."
         )
         let orderSpacer = NSView()
         orderSpacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
@@ -801,7 +839,8 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         actions.spacing = 10
 
         let stack = NSStackView(views: [
-            heading, help, tableScroll, orderButtons, reviewHeading, reviewScroll, actions,
+            heading, help, tableScroll, orderButtons, reviewHeading, reviewScroll,
+            reviewedLosslessAppendCheckbox, actions,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -822,6 +861,7 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             stack.contentWidthConstraint(for: reviewScroll),
             reviewScroll.heightAnchor.constraint(greaterThanOrEqualToConstant: 150),
             stack.contentWidthConstraint(for: orderButtons),
+            stack.contentWidthConstraint(for: reviewedLosslessAppendCheckbox),
             stack.contentWidthConstraint(for: actions),
         ])
         view = root
@@ -976,8 +1016,26 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         snapshot = LosslessJoinReviewBuilder.make(
             selections: selections,
             manualMapping: manualMapping,
-            encodingCapabilities: encodingCapabilities
+            encodingCapabilities: encodingCapabilities,
+            usesReviewedMKVToolNixWarningTolerance:
+                reviewedLosslessAppendCheckbox.state == .on
         )
+        reviewedLosslessAppendCheckbox.isHidden =
+            !snapshot.canOfferReviewedMKVToolNixLosslessAppend
+        if snapshot.canOfferReviewedMKVToolNixLosslessAppend,
+            reviewedLosslessAppendCheckbox.state == .off,
+            reviewedLosslessAppendCheckbox.isHidden == false,
+            !didChooseReviewedLosslessAppendDefault
+        {
+            didChooseReviewedLosslessAppendDefault = true
+            reviewedLosslessAppendCheckbox.state = .on
+            snapshot = LosslessJoinReviewBuilder.make(
+                selections: selections,
+                manualMapping: manualMapping,
+                encodingCapabilities: encodingCapabilities,
+                usesReviewedMKVToolNixWarningTolerance: true
+            )
+        }
         var lines = ["TRACK LANES"]
         if snapshot.usesManualMapping {
             lines.append("  Explicit mapping confirmed for this exact source order.")
@@ -998,7 +1056,8 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
             ?? snapshot.commonFormatCandidate?.chapters
         {
             lines.append(
-                "  One default nested edition • \(chapters.document.chapterCount) entries • \(duration(chapters.duration))"
+                "  \(JoinedChapterReviewPresentation.summary(for: chapters)) • "
+                    + duration(chapters.duration)
             )
         } else {
             lines.append("  Waiting for a complete strict review.")
@@ -1019,17 +1078,19 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         if snapshot.candidate != nil {
             continueButton.title = "Continue to Save…"
             statusLabel.stringValue =
-                "Ready: zero video encodes. Bundled mkvmerge and the committed output will still be verified."
-            statusLabel.textColor = .systemGreen
+                snapshot.candidate?.usesReviewedMKVToolNixWarningTolerance == true
+                ? "Ready: verified lossless repair. Zero encodes; H.264 headers are normalized when needed, and save requires clean boundary and exact packet verification."
+                : "Ready: zero video encodes. Bundled mkvmerge and the committed output will still be verified."
+            statusLabel.textColor = .labelColor
         } else if let common = snapshot.commonFormatCandidate {
             continueButton.title = "Review Common Format…"
             statusLabel.stringValue =
                 "Ready to review: \(common.proposal.impact.videoEncodeCount) video generation and \(common.proposal.impact.audioEncodeCount) audio lane encode(s)."
-            statusLabel.textColor = .systemOrange
+            statusLabel.textColor = AppPalette.warningText
         } else {
             continueButton.title = "Continue to Save…"
             statusLabel.stringValue = snapshot.blockerSummaries.first ?? "Review is incomplete."
-            statusLabel.textColor = .systemOrange
+            statusLabel.textColor = AppPalette.warningText
         }
         updateMoveButtons()
     }
@@ -1048,6 +1109,15 @@ final class LosslessJoinViewController: NSViewController, NSTableViewDataSource,
         guard let mapping = snapshot.reviewedMapping else { return }
         let sources = selectedSources().map(\.option.source)
         onEditMapping?(sources, mapping, !snapshot.unresolvedAmbiguities.isEmpty)
+    }
+
+    @objc private func toggleReviewedLosslessAppend() {
+        didChooseReviewedLosslessAppendDefault = true
+        refreshReview()
+    }
+
+    @objc private func toggleChapterPresentation() {
+        refreshReview()
     }
 
     func acceptManualMapping(_ mapping: JoinTrackMapping, sourceIDs: [UUID]) {

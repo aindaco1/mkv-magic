@@ -89,6 +89,40 @@ public struct MediaContentLightLevelMetadata: Codable, Hashable, Sendable {
     }
 }
 
+/// A validated SHA-256 of the codec initialization bytes reported by the media
+/// inspector. The digest is used only to compare append compatibility; it is
+/// never exported in privacy-safe support reports.
+public struct MediaCodecInitializationDigest: Codable, Hashable, Sendable {
+    public let sha256: String
+
+    public init?(sha256: String) {
+        let normalized = sha256.lowercased()
+        guard normalized.utf8.count == 64,
+            normalized.utf8.allSatisfy({ byte in
+                (48...57).contains(byte) || (97...102).contains(byte)
+            })
+        else { return nil }
+        self.sha256 = normalized
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        let value = try container.decode(String.self)
+        guard let parsed = Self(sha256: value) else {
+            throw DecodingError.dataCorruptedError(
+                in: container,
+                debugDescription: "Codec initialization SHA-256 must be 64 hexadecimal characters."
+            )
+        }
+        self = parsed
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(sha256)
+    }
+}
+
 public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public let id: Int
     public let kind: MediaTrackKind
@@ -97,6 +131,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
     public let codecID: String?
     public let profile: String?
     public let level: Int?
+    public let codecInitializationDigest: MediaCodecInitializationDigest?
     public let uid: UInt64?
     public let language: String?
     public let title: String?
@@ -131,6 +166,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         codecID: String? = nil,
         profile: String? = nil,
         level: Int? = nil,
+        codecInitializationDigest: MediaCodecInitializationDigest? = nil,
         uid: UInt64? = nil,
         language: String? = nil,
         title: String? = nil,
@@ -164,6 +200,7 @@ public struct MediaTrack: Codable, Hashable, Identifiable, Sendable {
         self.codecID = codecID
         self.profile = profile
         self.level = level
+        self.codecInitializationDigest = codecInitializationDigest
         self.uid = uid
         self.language = language
         self.title = title

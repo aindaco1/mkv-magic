@@ -4,6 +4,72 @@ import XCTest
 @testable import MKVMagicCore
 
 final class JobQueueTests: XCTestCase {
+    func testPluralSubtitleQueueIntentRoundTripsAndFailsClosedOnMissingOrMalformedReviews() throws {
+        let base = makeJob(id: id(50), createdAt: Date(timeIntervalSince1970: 0))
+        let recipe = SavedWorkflow(
+            name: "Batch remux",
+            steps: [
+                SavedWorkflowStep(action: .remuxToMKV),
+                SavedWorkflowStep(action: .addExternalSubtitle),
+            ])
+        let reviews = ["en", "es", "fr"].enumerated().map { index, language in
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: ExternalSubtitleTrackMetadata(
+                    language: language, isForced: index == 1, isHearingImpaired: index == 2),
+                sourceTrackLanguageOverrides: [1: "de"],
+                sourceSHA256: Data(repeating: UInt8(index), count: 32))
+        }
+        let files = reviews.enumerated().map { index, _ in
+            MediaQueueFileReference(
+                displayName: "Feature.\(index).srt", securityScopedBookmark: Data([UInt8(index)]))
+        }
+        func job(_ intent: MediaQueueWorkflowIntent, count: Int = 3) -> MediaQueueJob {
+            MediaQueueJob(
+                createdAt: base.createdAt, workflow: intent,
+                inputs: base.inputs + files.prefix(count),
+                destinationDirectory: base.destinationDirectory,
+                outputDisplayName: base.outputDisplayName, reviewedPlan: base.reviewedPlan)
+        }
+        let reviewed = job(.savedWithExternalSubtitles(recipe, reviews))
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(reviewed))
+        let restored = try JSONDecoder().decode(
+            MediaQueueJob.self, from: JSONEncoder().encode(reviewed))
+        XCTAssertEqual(restored.workflow.externalSubtitleReviews, reviews)
+        XCTAssertEqual(restored.workflow.sourceTrackLanguageOverrides, [1: "de"])
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(restored))
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(job(.savedWithExternalSubtitles(recipe, [])))
+        )
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                job(.savedWithExternalSubtitles(recipe, reviews), count: 2)))
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                job(.savedWithExternalSubtitle(recipe, reviews[0]))))
+        let malformed = MediaQueueExternalSubtitleReview(
+            format: .subRip, metadata: .init(language: "en"), sourceSHA256: Data())
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                job(.savedWithExternalSubtitles(recipe, [reviews[0], reviews[1], malformed]))))
+        let inconsistent = MediaQueueExternalSubtitleReview(
+            format: .subRip, metadata: .init(language: "en"),
+            sourceTrackLanguageOverrides: [1: "fr"], sourceSHA256: Data(repeating: 4, count: 32))
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                job(.savedWithExternalSubtitles(recipe, [reviews[0], reviews[1], inconsistent]))))
+        let bareRecipe = SavedWorkflow(
+            name: "Remux", steps: [SavedWorkflowStep(action: .remuxToMKV)])
+        let bare = job(.savedWithSourceLanguages(bareRecipe, [1: "en"]), count: 0)
+        XCTAssertTrue(MediaQueueAutomaticWorkflowPolicy.supports(bare))
+        XCTAssertEqual(
+            try JSONDecoder().decode(MediaQueueJob.self, from: JSONEncoder().encode(bare)).workflow
+                .sourceTrackLanguageOverrides, [1: "en"])
+        XCTAssertFalse(
+            MediaQueueAutomaticWorkflowPolicy.supports(
+                job(.savedWithSourceLanguages(bareRecipe, [-1: "en"]), count: 0)))
+    }
+
     func testReviewedPlanComparisonIgnoresOnlyEphemeralStageIdentifiers() {
         let impact = PlanImpact(
             videoEncodeCount: 0,
@@ -159,6 +225,7 @@ final class JobQueueTests: XCTestCase {
                 isDefault: true
             ),
             restoredCleanupChangeIDs: [2],
+            sourceTrackLanguageOverrides: [1: "en", 2: "fr"],
             sourceSHA256: Data(repeating: 1, count: 32)
         )
         let reviewedExternalJob = MediaQueueJob(
@@ -254,6 +321,20 @@ final class JobQueueTests: XCTestCase {
                 restoredCleanupChangeIDs: [-1],
                 sourceSHA256: review.sourceSHA256
             ),
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: review.metadata,
+                restoredCleanupChangeIDs: [2],
+                sourceTrackLanguageOverrides: [-1: "en"],
+                sourceSHA256: review.sourceSHA256
+            ),
+            MediaQueueExternalSubtitleReview(
+                format: .subRip,
+                metadata: review.metadata,
+                restoredCleanupChangeIDs: [2],
+                sourceTrackLanguageOverrides: [1: "not valid!"],
+                sourceSHA256: review.sourceSHA256
+            ),
         ] {
             XCTAssertFalse(invalidReview.hasCanonicalStructure)
         }
@@ -288,8 +369,14 @@ final class JobQueueTests: XCTestCase {
         try job.transition(
             to: .failed,
             at: base.addingTimeInterval(2),
-            reason: .executionFailed
+            reason: .executionFailed,
+            failure: PrivacySafeMediaFailure(
+                category: .durationMismatch,
+                lastActiveStage: .verifying
+            )
         )
+        XCTAssertEqual(job.failure?.category, .durationMismatch)
+        XCTAssertEqual(job.failure?.lastActiveStage, .verifying)
         XCTAssertThrowsError(
             try job.transition(
                 to: .waiting,
@@ -316,6 +403,34 @@ final class JobQueueTests: XCTestCase {
         XCTAssertEqual(job.attemptCount, 2)
         XCTAssertEqual(job.resourceClass, .videoHeavy)
         XCTAssertFalse(job.state.isFinished)
+    }
+
+    func testPrivacySafeFailureClassifierIsSharedBoundedAndStoresNoRawDetails() throws {
+        let failure = PrivacySafeMediaFailureClassifier.classify(
+            sanitizedMessage:
+                "Verification failed: the joined output did not decode cleanly across boundary 2. /Users/private/Secret.mkv",
+            lastActiveStage: .verifying,
+            inputCount: 3
+        )
+
+        XCTAssertEqual(failure.category, .joinBoundaryDecodeFailed)
+        XCTAssertEqual(failure.lastActiveStage, .verifying)
+        XCTAssertEqual(failure.joinBoundaryNumber, 2)
+        XCTAssertTrue(failure.hasCanonicalStructure(inputCount: 3))
+        XCTAssertFalse(
+            PrivacySafeMediaFailure(
+                category: .joinBoundaryDecodeFailed,
+                lastActiveStage: .verifying,
+                joinBoundaryNumber: 3
+            ).hasCanonicalStructure(inputCount: 3)
+        )
+        let encoded =
+            String(
+                data: try JSONEncoder().encode(failure),
+                encoding: .utf8
+            ) ?? ""
+        XCTAssertFalse(encoded.contains("Users"))
+        XCTAssertFalse(encoded.contains("Secret"))
     }
 
     func testRetryRequiresACompleteFreshPlanAndBookmarkSet() throws {

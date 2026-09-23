@@ -1,9 +1,10 @@
 import Foundation
 import MKVMagicCore
-import MKVMagicExecution
 import MKVMagicMedia
 import MKVMagicSystem
 import XCTest
+
+@testable import MKVMagicExecution
 
 private actor LosslessJoinToolRunner: CommandRunning, CommandLineDigesting {
     private let wrongChapters: Bool
@@ -422,6 +423,7 @@ final class LosslessJoinExecutorTests: XCTestCase {
                 ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
                 mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
                 mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
+                mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
                 runner: runner,
                 inspector: LosslessJoinInspector(
                     sources: fixture.sources,
@@ -508,6 +510,151 @@ final class LosslessJoinExecutorTests: XCTestCase {
         }
     }
 
+    func testReviewedMKVToolNixCodecInitializationWarningCanRenderACommand() throws {
+        var sources = commandAssets()
+        sources[0] = replacingTrack(
+            in: sources[0],
+            trackID: 0,
+            with: video(
+                id: 0,
+                uid: 100,
+                initializationSHA256: String(repeating: "a", count: 64)
+            )
+        )
+        sources[1] = replacingTrack(
+            in: sources[1],
+            trackID: 10,
+            with: video(
+                id: 10,
+                uid: 110,
+                initializationSHA256: String(repeating: "b", count: 64)
+            )
+        )
+        sources[2] = replacingTrack(
+            in: sources[2],
+            trackID: 20,
+            with: video(
+                id: 20,
+                uid: 120,
+                initializationSHA256: String(repeating: "a", count: 64)
+            )
+        )
+
+        let mapping = mappingForThreeTracks()
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: sources,
+            mapping: mapping
+        )
+        XCTAssertTrue(ReviewedMKVToolNixLosslessAppendPolicy.canOffer(for: report))
+        XCTAssertThrowsError(
+            try MKVLosslessJoiner<FoundationCommandRunner>.arguments(
+                sources: sources,
+                mapping: mapping,
+                chaptersURL: URL(fileURLWithPath: "/private/chapters.xml"),
+                outputURL: URL(fileURLWithPath: "/private/output.mkv")
+            )
+        )
+
+        let arguments = try MKVLosslessJoiner<FoundationCommandRunner>.arguments(
+            sources: sources,
+            mapping: mapping,
+            chaptersURL: URL(fileURLWithPath: "/private/chapters.xml"),
+            outputURL: URL(fileURLWithPath: "/private/output.mkv"),
+            usesReviewedMKVToolNixWarningTolerance: true
+        )
+
+        XCTAssertTrue(arguments.contains("--append-mode"))
+        XCTAssertTrue(arguments.contains("--append-to"))
+    }
+
+    func testHeaderNormalizedH264CommandCopiesEveryLaneAndRestoresVideoUID() throws {
+        var sources = commandAssets()
+        for (sourceIndex, trackID, uid, digest) in [
+            (0, 0, UInt64(100), String(repeating: "a", count: 64)),
+            (1, 10, UInt64(110), String(repeating: "b", count: 64)),
+            (2, 20, UInt64(120), String(repeating: "a", count: 64)),
+        ] {
+            sources[sourceIndex] = replacingTrack(
+                in: sources[sourceIndex],
+                trackID: trackID,
+                with: h264Video(
+                    id: trackID,
+                    uid: uid,
+                    initializationSHA256: digest
+                )
+            )
+        }
+        let mapping = mappingForThreeTracks()
+        let report = try JoinCompatibilityAnalyzer().analyze(
+            sources: sources,
+            mapping: mapping
+        )
+        XCTAssertEqual(
+            MKVHeaderNormalizedLosslessPolicy.laneIndices(
+                sources: sources,
+                mapping: mapping,
+                report: report,
+                afterExplicitReview: true
+            ),
+            [0]
+        )
+        let normalizedVideoURLs = [
+            0: [
+                URL(fileURLWithPath: "/private/video-0.mkv"),
+                URL(fileURLWithPath: "/private/video-1.mkv"),
+                URL(fileURLWithPath: "/private/video-2.mkv"),
+            ]
+        ]
+
+        let arguments = try MKVHeaderNormalizedLosslessJoiner<FoundationCommandRunner>
+            .arguments(
+                sources: sources,
+                mapping: mapping,
+                normalizedVideoLaneIndices: [0],
+                normalizedVideoURLs: normalizedVideoURLs,
+                chaptersURL: URL(fileURLWithPath: "/private/chapters.xml"),
+                outputURL: URL(fileURLWithPath: "/private/output.mkv")
+            )
+
+        XCTAssertEqual(
+            value(after: "--append-to", in: arguments),
+            "1:0:0:0,2:0:1:0,4:11:3:1,5:21:4:11,4:12:3:2,5:22:4:12"
+        )
+        XCTAssertEqual(value(after: "--track-order", in: arguments), "0:0,3:1,3:2")
+        XCTAssertTrue(arguments.contains("/private/video-0.mkv"))
+        XCTAssertTrue(arguments.contains("+/private/video-1.mkv"))
+        XCTAssertTrue(arguments.contains("+/private/video-2.mkv"))
+        XCTAssertTrue(arguments.contains("--no-video"))
+        XCTAssertEqual(
+            try MKVHeaderNormalizedLosslessJoiner<FoundationCommandRunner>
+                .headerNormalizationArguments(
+                    sourceURL: URL(fileURLWithPath: "/private/part-two.mkv"),
+                    trackID: 10,
+                    outputURL: URL(fileURLWithPath: "/private/video-1.mkv")
+                ),
+            [
+                "-nostdin", "-hide_banner", "-loglevel", "error", "-xerror", "-n",
+                "-i", "/private/part-two.mkv", "-map", "0:10",
+                "-map_metadata", "-1", "-map_chapters", "-1",
+                "-c:v", "copy", "-bsf:v", "h264_mp4toannexb",
+                "-an", "-sn", "-dn", "-f", "matroska", "/private/video-1.mkv",
+            ]
+        )
+        XCTAssertEqual(
+            try MKVHeaderNormalizedLosslessJoiner<FoundationCommandRunner>
+                .trackUIDArguments(
+                    sources: sources,
+                    mapping: mapping,
+                    normalizedVideoLaneIndices: [0],
+                    outputURL: URL(fileURLWithPath: "/private/output.mkv")
+                ),
+            [
+                "/private/output.mkv", "--abort-on-warnings",
+                "--edit", "track:v1", "--set", "track-uid=100",
+            ]
+        )
+    }
+
     private func makeExecutor(
         runner: LosslessJoinToolRunner,
         sources: [MediaAsset],
@@ -518,6 +665,7 @@ final class LosslessJoinExecutorTests: XCTestCase {
             ffprobeURL: URL(fileURLWithPath: "/tools/ffprobe"),
             mkvmergeURL: URL(fileURLWithPath: "/tools/mkvmerge"),
             mkvextractURL: URL(fileURLWithPath: "/tools/mkvextract"),
+            mkvpropeditURL: URL(fileURLWithPath: "/tools/mkvpropedit"),
             runner: runner,
             inspector: LosslessJoinInspector(sources: sources, chapters: chapters)
         )
@@ -639,7 +787,11 @@ final class LosslessJoinExecutorTests: XCTestCase {
         )
     }
 
-    private func video(id: Int, uid: UInt64?) -> MediaTrack {
+    private func video(
+        id: Int,
+        uid: UInt64?,
+        initializationSHA256: String? = nil
+    ) -> MediaTrack {
         MediaTrack(
             id: id,
             kind: .video,
@@ -647,6 +799,9 @@ final class LosslessJoinExecutorTests: XCTestCase {
             codecID: "V_AV1",
             profile: "Main",
             level: 13,
+            codecInitializationDigest: initializationSHA256.flatMap {
+                MediaCodecInitializationDigest(sha256: $0)
+            },
             uid: uid,
             language: "und",
             isDefault: true,
@@ -657,6 +812,40 @@ final class LosslessJoinExecutorTests: XCTestCase {
             frameRate: "24",
             colorInfo: MediaColorInfo()
         )
+    }
+
+    private func h264Video(
+        id: Int,
+        uid: UInt64,
+        initializationSHA256: String
+    ) -> MediaTrack {
+        MediaTrack(
+            id: id,
+            kind: .video,
+            codec: "h264",
+            codecID: "V_MPEG4/ISO/AVC",
+            profile: "High",
+            level: 40,
+            codecInitializationDigest: MediaCodecInitializationDigest(
+                sha256: initializationSHA256
+            ),
+            uid: uid,
+            language: "und",
+            isDefault: true,
+            dimensions: MediaDimensions(width: 1_920, height: 1_080),
+            displayDimensions: MediaDimensions(width: 1_920, height: 1_080),
+            pixelFormat: "yuv420p",
+            bitDepth: 8,
+            frameRate: "24",
+            colorInfo: MediaColorInfo()
+        )
+    }
+
+    private func value(after flag: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: flag),
+            arguments.indices.contains(index + 1)
+        else { return nil }
+        return arguments[index + 1]
     }
 
     private func audio(id: Int, uid: UInt64) -> MediaTrack {

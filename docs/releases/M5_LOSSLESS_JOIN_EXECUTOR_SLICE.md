@@ -7,6 +7,15 @@ slice does not claim trimming, missing-track handling, attachment selection,
 normalization/transcoding, decode spot checks, physical Intel acceptance, or a
 public signed/notarized release.
 
+Current note: the native 0.2.2 flow now has one additional explicitly reviewed
+route for a codec-initialization-only mismatch. For H.264 it applies the
+`h264_mp4toannexb` packet-copy filter inside a private Matroska remux so each
+source's decoder headers and original packet cadence remain with its copied
+frames. It restores the first-source track UID and commits only after
+the later boundary-decode, exact packet-payload, structure, source-revision, and
+reopen audits pass. The strict policy below remains the original slice's default
+behavior.
+
 ## Execution boundary
 
 The executor accepts only a strict `losslessCandidate` report with:

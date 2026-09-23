@@ -39,6 +39,51 @@ final class MediaHDR10Tests: XCTestCase {
         )
     }
 
+    func testOffersOnlyNarrowUntaggedHDAVCAsReviewedSDR() {
+        XCTAssertFalse(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(makeSDRTrack())
+        )
+        XCTAssertTrue(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(color: nil)
+            )
+        )
+        XCTAssertTrue(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(
+                    color: MediaColorInfo(range: "tv", primaries: "unknown")
+                )
+            )
+        )
+        XCTAssertFalse(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(width: 720, height: 480, color: nil)
+            )
+        )
+        XCTAssertFalse(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(pixelFormat: "yuv420p10le", bitDepth: 10, color: nil)
+            )
+        )
+        XCTAssertFalse(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(
+                    color: MediaColorInfo(
+                        range: "tv",
+                        primaries: "bt2020",
+                        transfer: "smpte2084",
+                        matrix: "bt2020nc"
+                    )
+                )
+            )
+        )
+        XCTAssertFalse(
+            MediaHDR10Signal.isUntaggedHDAVCSDRCandidate(
+                makeUntaggedAVCTrack(codec: "hevc", codecID: "V_MPEGH/ISO/HEVC", color: nil)
+            )
+        )
+    }
+
     private func makeHDR10Track(
         color: MediaColorInfo = MediaColorInfo(
             range: "tv",
@@ -76,6 +121,27 @@ final class MediaHDR10Tests: XCTestCase {
                 transfer: "bt709",
                 matrix: "bt709"
             )
+        )
+    }
+
+    private func makeUntaggedAVCTrack(
+        codec: String = "h264",
+        codecID: String = "V_MPEG4/ISO/AVC",
+        width: Int = 1_920,
+        height: Int = 1_080,
+        pixelFormat: String = "yuv420p",
+        bitDepth: Int? = 8,
+        color: MediaColorInfo?
+    ) -> MediaTrack {
+        MediaTrack(
+            id: 0,
+            kind: .video,
+            codec: codec,
+            codecID: codecID,
+            dimensions: MediaDimensions(width: width, height: height),
+            pixelFormat: pixelFormat,
+            bitDepth: bitDepth,
+            colorInfo: color
         )
     }
 }

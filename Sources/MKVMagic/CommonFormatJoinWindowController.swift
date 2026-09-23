@@ -42,7 +42,7 @@ enum CommonFormatJoinChoicePolicy {
 
         for decision in proposal.decisions {
             switch decision.kind {
-            case .videoTarget, .mixedDynamicRange:
+            case .videoTarget, .mixedDynamicRange, .untaggedSDR:
                 guard let laneIndex = decision.laneIndex,
                     let lane = proposal.videoLanes.first(where: { $0.laneIndex == laneIndex }),
                     let preset = lane.recommendedPreset,
@@ -247,12 +247,19 @@ enum CommonFormatJoinChoicePolicy {
             guard let choice = resolvedPlan.choices.videoTargetsByLane[lane.laneIndex] else {
                 continue
             }
-            let dynamicRange =
-                candidate.proposal.decisions.contains {
-                    $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
-                }
-                ? "SDR; tone-map only the reviewed HDR10 Parts to BT.709"
-                : dynamicRangeName(choice.dynamicRange)
+            let dynamicRange: String
+            if candidate.proposal.decisions.contains(where: {
+                $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+            }) {
+                dynamicRange = "SDR; tone-map only the reviewed HDR10 Parts to BT.709"
+            } else if candidate.proposal.decisions.contains(where: {
+                $0.kind == .untaggedSDR && $0.laneIndex == lane.laneIndex
+            }) {
+                dynamicRange =
+                    "SDR; treat only the reviewed untagged 8-bit H.264 Parts as BT.709"
+            } else {
+                dynamicRange = dynamicRangeName(choice.dynamicRange)
+            }
             values.append(
                 "Video lane \(lane.laneIndex + 1): \(presetName(choice.preset)), "
                     + "\(choice.canvas.width)×\(choice.canvas.height) fit-and-pad, "
@@ -290,8 +297,7 @@ enum CommonFormatJoinChoicePolicy {
             values.append("Video lane \(laneIndex + 1): preserve reviewed source timing changes.")
         }
         values.append(
-            "Chapters: one default nested Matroska edition with "
-                + "\(candidate.chapters.document.chapterCount) entries."
+            "Chapters: \(JoinedChapterReviewPresentation.summary(for: candidate.chapters))."
         )
         values.append(
             "Execution: one fused normalization pass, then one final verified MKV assembly; compatible lanes remain packet copies."
@@ -435,7 +441,8 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
         lane: JoinVideoLaneProposal,
         capabilities: FFmpegEncodingCapabilities,
         initialChoice: JoinVideoTargetChoice,
-        toneMapsHDR10Parts: Bool
+        toneMapsHDR10Parts: Bool,
+        reviewsUntaggedSDRParts: Bool
     ) {
         laneIndex = lane.laneIndex
         self.lane = lane
@@ -452,12 +459,19 @@ private final class CommonFormatJoinVideoLaneControls: NSObject, NSTextFieldDele
 
         let title = NSTextField(labelWithString: "Video lane \(lane.laneIndex + 1)")
         title.font = .systemFont(ofSize: 13, weight: .semibold)
-        let dynamicRangeDetail = NSTextField(
-            wrappingLabelWithString: toneMapsHDR10Parts
-                ? "Output: BT.709 SDR • HDR10 Parts are tone-mapped locally; SDR Parts stay SDR."
-                : "Output: \(CommonFormatJoinChoicePolicy.dynamicRangeName(initialChoice.dynamicRange))"
-        )
-        dynamicRangeDetail.textColor = .secondaryLabelColor
+        let dynamicRangeText: String
+        if toneMapsHDR10Parts {
+            dynamicRangeText =
+                "Output: BT.709 SDR • HDR10 Parts are tone-mapped locally; SDR Parts stay SDR."
+        } else if reviewsUntaggedSDRParts {
+            dynamicRangeText =
+                "Output: BT.709 SDR • Reviewed untagged 8-bit H.264 Parts are treated as SDR."
+        } else {
+            dynamicRangeText =
+                "Output: \(CommonFormatJoinChoicePolicy.dynamicRangeName(initialChoice.dynamicRange))"
+        }
+        let dynamicRangeDetail = NSTextField(wrappingLabelWithString: dynamicRangeText)
+        dynamicRangeDetail.textColor = AppPalette.secondaryText
         dynamicRangeDetail.font = .systemFont(ofSize: 11)
         dynamicRangeDetail.setAccessibilityLabel(
             "Common format video lane \(lane.laneIndex + 1) dynamic range"
@@ -742,7 +756,7 @@ private final class CommonFormatJoinAudioLaneControls: NSObject {
         formatPopup.setAccessibilityLabel(
             "Common format audio lane \(lane.laneIndex + 1) format"
         )
-        detail.textColor = .secondaryLabelColor
+        detail.textColor = AppPalette.secondaryText
         detail.font = .systemFont(ofSize: 11)
         detail.setAccessibilityLabel("Common format audio lane \(lane.laneIndex + 1) target")
 
@@ -839,7 +853,7 @@ private final class CommonFormatJoinViewController: NSViewController {
             wrappingLabelWithString:
                 "Only incompatible lanes are converted. MKV Magic keeps compatible streams unchanged, performs every required video transform in one generation, and verifies the final file before saving it."
         )
-        help.textColor = .secondaryLabelColor
+        help.textColor = AppPalette.secondaryText
 
         review.isEditable = false
         review.isSelectable = true
@@ -872,6 +886,9 @@ private final class CommonFormatJoinViewController: NSViewController {
                 initialChoice: choice,
                 toneMapsHDR10Parts: candidate.proposal.decisions.contains {
                     $0.kind == .mixedDynamicRange && $0.laneIndex == lane.laneIndex
+                },
+                reviewsUntaggedSDRParts: candidate.proposal.decisions.contains {
+                    $0.kind == .untaggedSDR && $0.laneIndex == lane.laneIndex
                 }
             )
             controls.onChange = { [weak self] in self?.refreshPlanFromControls() }
@@ -898,7 +915,7 @@ private final class CommonFormatJoinViewController: NSViewController {
             controls.view.widthAnchor.constraint(equalTo: targets.widthAnchor).isActive = true
         }
         targets.isHidden = videoControls.isEmpty && audioControls.isEmpty
-        validationMessage.textColor = .systemRed
+        validationMessage.textColor = AppPalette.errorText
         validationMessage.font = .systemFont(ofSize: 12)
         validationMessage.isHidden = true
         validationMessage.setAccessibilityLabel("Common format target validation")
@@ -913,7 +930,7 @@ private final class CommonFormatJoinViewController: NSViewController {
             wrappingLabelWithString:
                 "The source files are never modified. Cancelled or failed work is removed; only a fully verified final MKV is committed."
         )
-        warning.textColor = .secondaryLabelColor
+        warning.textColor = AppPalette.secondaryText
 
         let cancel = NSButton(title: "Cancel", target: self, action: #selector(cancel))
         cancel.keyEquivalent = "\u{1b}"

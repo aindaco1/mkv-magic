@@ -1,6 +1,6 @@
 # M5 joined chapter policy slice
 
-This records engineering acceptance of the pure nested-chapter recomposition
+This records engineering acceptance of the pure joined-chapter recomposition
 policy needed by future hard joins. It does not claim a join UI, track mapping,
 compatibility analysis, mux execution, real-file join acceptance, physical
 Intel testing, or a public signed/notarized release.
@@ -19,12 +19,18 @@ Intel testing, or a public signed/notarized release.
   preceding sources. A missing Matroska chapter end is materialized from the
   next sibling start, or from its parent/source boundary for the last sibling,
   before clipping so the joined result has unambiguous ranges.
-- Existing nested structure, display names, languages, countries, hidden flags,
-  and enabled flags are preserved. Every surviving atom receives a new ID and
-  Matroska UID to prevent cross-file collisions.
-- Each source becomes a top-level `Part N — Source Title` parent spanning its
-  complete retained output section. A chapterless or fully trimmed source gets
-  one globally numbered English boundary child instead of disappearing.
+- Existing nested structure is retained while ranges are clipped and rebased.
+  Every final leaf preserves its display names, languages, countries, hidden
+  flags, and enabled flags, and receives a new ID and Matroska UID to prevent
+  cross-file collisions.
+- Each source is bounded internally by its retained output section, then every
+  surviving leaf is promoted into one player-compatible top-level list. A
+  chapterless or fully trimmed source gets one globally numbered English
+  boundary chapter instead of disappearing.
+- If every source contributes the same style of trailing-number chapter labels
+  and each source sequence is chronological and consecutive, repeated local
+  numbering is continued across the final timeline. Any mixed or nonconsecutive
+  sequence is preserved without inference.
 - The result is exactly one default Matroska edition. It is validated against
   the calculated final duration and the shared 20,000-atom, depth, UID,
   metadata, parent-bound, and chronological-order rules before it can be used.
@@ -50,10 +56,11 @@ Intel testing, or a public signed/notarized release.
   global offsets, clamped edges, an excluded retained-end marker, a chapterless
   second source, globally numbered fallback naming, and byte-independent fresh
   identities.
-- Additional tests cover display/flag preservation, canonical parent language,
+- Additional tests cover display/flag preservation, canonical fallback language,
   implicit-end materialization, invalid source trees, every invalid range class,
-  empty input, cumulative nanosecond overflow, aggregate output bounds, and
-  final shared validation.
+  empty input, cumulative nanosecond overflow, aggregate output bounds, exact
+  42/43/46 source-sequence renumbering, conservative custom-title preservation,
+  and final shared validation.
 - The complete isolated local gate passed all 228 tests with 12 intentional
   bundled-tool skips in source-only and sanitizer runs, both architectures of
   the Universal build, address/thread sanitizers, inside-out package signature
@@ -67,7 +74,7 @@ Intel testing, or a public signed/notarized release.
   mapping UI.
 - Lossless append compatibility checks and explicit unmatched-track handling.
 - MKVToolNix hard-join execution through the verified-output transaction.
-- Re-extraction and exact comparison of the composed nested chapter result.
+- Re-extraction and exact comparison of the composed chapter result.
 - Common-format/layout proposals and one-encode enforcement for incompatible
   sources.
 - Real bundled-tool fixtures, private-library beta acceptance, and physical

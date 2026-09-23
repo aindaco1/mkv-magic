@@ -6,6 +6,7 @@ import MKVMagicSystem
 public enum MatroskaMetadataEdit: Equatable, Sendable {
     case segmentTitle(String?)
     case track(TrackMetadataEdit)
+    case tracks([TrackMetadataEdit])
 }
 
 public enum MatroskaMetadataExecutionError: Error, Equatable, Sendable {
@@ -42,11 +43,20 @@ public struct MatroskaMetadataEditExecutor<Runner: CommandRunning, Inspector: Me
         source: MediaAsset,
         edit: MatroskaMetadataEdit,
         destinationURL: URL,
+        expectedSourceRevision: MediaFileRevision? = nil,
         onStage: @escaping @Sendable (MatroskaMetadataExecutionStage) async throws -> Void = { _ in
         }
     ) async throws -> MediaAsset {
         guard MatroskaEditingPolicy.supports(source) else {
             throw MatroskaMetadataExecutionError.unsupportedContainer
+        }
+        let validateSource: @Sendable () throws -> Void
+        if let expectedSourceRevision {
+            validateSource = try mediaFileRevisionValidator(
+                sourceURL: source.sourceURL, expectedRevision: expectedSourceRevision,
+                changedError: SavedWorkflowExecutionError.sourceChangedSinceReview)
+        } else {
+            validateSource = {}
         }
         return try await VerifiedOutputPipeline(inspector: inspector).execute(
             source: source,
@@ -58,6 +68,7 @@ public struct MatroskaMetadataEditExecutor<Runner: CommandRunning, Inspector: Me
             verify: { output in
                 try verify(edit, original: source, output: output)
             },
+            validateSource: validateSource,
             committedAuditError: { outputURL, reason in
                 MatroskaMetadataExecutionError.committedOutputAuditFailed(
                     outputURL: outputURL,
@@ -77,14 +88,11 @@ public struct MatroskaMetadataEditExecutor<Runner: CommandRunning, Inspector: Me
         case .segmentTitle(let title):
             try await editor.editSegmentTitle(at: outputURL, title: title)
         case .track(let trackEdit):
-            guard let track = source.tracks.first(where: { $0.uid == trackEdit.trackUID }) else {
-                throw MKVPropertyEditError.missingTrack
-            }
-            try await editor.editTrackMetadata(
-                at: outputURL,
-                originalTrack: track,
-                edit: trackEdit
-            )
+            try await apply(.tracks([trackEdit]), to: outputURL, source: source)
+        case .tracks(let edits):
+            try await editor.editWorkflowProperties(
+                at: outputURL, originalTracks: source.tracks, edits: edits,
+                removesSegmentTitle: false, clearAllTags: false)
         }
     }
 
@@ -101,10 +109,12 @@ public struct MatroskaMetadataEditExecutor<Runner: CommandRunning, Inspector: Me
                 expectedTitle: title
             )
         case .track(let trackEdit):
+            try verify(.tracks([trackEdit]), original: original, output: output)
+        case .tracks(let edits):
             try TrackMetadataOutputVerifier().verify(
                 original: original,
                 output: output,
-                expectedEdit: trackEdit
+                expectedEdits: edits
             )
         }
     }

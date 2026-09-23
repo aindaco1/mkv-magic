@@ -114,13 +114,13 @@ final class EncodingBenchmarkViewController: NSViewController {
         let explanation = NSTextField(
             wrappingLabelWithString: EncodingBenchmarkPresentation.consentExplanation
         )
-        explanation.textColor = .secondaryLabelColor
+        explanation.textColor = AppPalette.secondaryText
         let timing = NSTextField(
             wrappingLabelWithString:
                 "Most Macs finish in a few seconds. A very slow AV1 encoder can run for up to "
                 + "90 seconds before MKV Magic safely falls back to the completed result."
         )
-        timing.textColor = .secondaryLabelColor
+        timing.textColor = AppPalette.secondaryText
 
         resultsText.isEditable = false
         resultsText.isSelectable = true
@@ -153,7 +153,7 @@ final class EncodingBenchmarkViewController: NSViewController {
         closeButton.action = #selector(closeWindow)
         closeButton.keyEquivalent = "\u{1b}"
         closeButton.setAccessibilityHelp("Close and keep the current saved recommendation.")
-        statusLabel.textColor = .secondaryLabelColor
+        statusLabel.textColor = AppPalette.secondaryText
         statusLabel.lineBreakMode = .byTruncatingTail
         statusLabel.setAccessibilityLabel("Encoding test status")
 

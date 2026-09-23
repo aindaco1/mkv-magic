@@ -74,7 +74,7 @@ The planner selects the lowest-cost valid mechanism in this order:
 - No online metadata lookup is included in v1.
 - English subtitle correction uses deterministic rules and offline dictionaries.
 - Commands are generated as executable plus argument arrays, never passed through a shell.
-- Network access is unnecessary for media processing. The only permitted in-app network path is a user-initiated, signed software-update check delegated to Sparkle's sandboxed services.
+- Network access is unnecessary for media processing. User-initiated signed updates use Sparkle's sandboxed services. Explicitly reviewed support submissions use a separate sandboxed reporting XPC service, restricted to the fixed shared relay. The main app has no network entitlement; no report is submitted automatically. See ADR 0003 and `docs/SUPPORT_DIAGNOSTICS.md`.
 
 ### 3.4 Lightweight and native
 
@@ -176,6 +176,15 @@ The built-in **English Library Cleanup** preset may:
 - Preserve the only available English/unknown subtitle even when it is SDH.
 - Preserve commentary, alternate audio, signs-and-songs subtitles, and chapters unless explicitly deselected.
 
+The main-window **Clean MKV** shortcut compiles the same complete built-in
+workflow described in the Workflows builder; it is not a separate
+subtitle-only command. Every inspected Matroska file can be reviewed, including
+files for which subtitle removal is already satisfied. In that case any
+applicable title, tag, image-attachment, track-role, track-name, or filename
+cleanup remains available. Multi-selection compiles that same recipe once per
+file, omits already-satisfied cards, and preserves the zero-video/audio-encode
+contract.
+
 ### 5.4 Subtitle cleanup
 
 V1 text cleanup supports SRT first and ASS/SSA with style-preserving text edits. Text-based tracks embedded in containers can be extracted, cleaned, reviewed, and remuxed.
@@ -237,6 +246,9 @@ The chapter editor provides:
 - Extract/replace chapters in an MKV without a full remux when supported.
 - English chapter language by default, with editable language and country.
 - Edition flags, nested atoms, end times, and stable regenerated UIDs.
+- Multi-file selection for offline suggestions, with one shared detector setup,
+  a source-identified timestamp checklist, per-file chapter application, and
+  independently verified outputs in one explicitly authorized directory.
 
 Automatic suggestions are offline analysis, never semantic invention:
 
@@ -248,25 +260,33 @@ Automatic suggestions are offline analysis, never semantic invention:
 
 Suggestions require review. Automatic names use embedded source title, cleaned source filename, then `Part 1`, `Part 2`, etc. Generic child names use `Chapter 01`, `Chapter 02`, etc.
 
-#### Default hierarchy for joined files
+Single-file and batch suggestions use the same validated options, consolidation,
+review, and application contracts. Batch progress measures completed files only;
+it does not fabricate within-file analysis percentages.
+
+#### Default chapter list for joined files
 
 ```text
 Default Edition
-├── Part 1 — Source Title
-│   ├── Chapter 01
-│   ├── Chapter 02
-│   └── Chapter 03
-├── Part 2 — Source Title
-│   ├── Chapter 04
-│   └── Chapter 05
-└── Part 3 — Source Title
-    ├── Chapter 06
-    └── Chapter 07
+├── Chapter 01
+├── Chapter 02
+├── Chapter 03
+├── Chapter 04
+├── Chapter 05
+├── Chapter 06
+└── Chapter 07
 ```
 
-Parent atoms span the full retained duration of their source section. Child atoms preserve source names and receive output-global timestamps.
-
-The default output is nested Matroska chapters. **Flatten for Jellyfin compatibility** is an explicit option because Jellyfin's current chapter ingestion model does not retain parent/child relationships.
+Join Files automatically promotes every retained source leaf into the one
+top-level edition because common chapter consumers may hide nested children.
+Source names, timestamps, displays, and flags are preserved and rebased onto the
+output timeline while identities are regenerated. A source without a retained
+chapter receives one numbered boundary chapter, so no joined section disappears.
+When every source contributes a same-style trailing-number sequence that is
+consecutive in chronological order, repeated per-source numbering is continued
+from the first source across the final timeline. Mixed, descriptive, or
+nonconsecutive names are preserved without guessing.
+The review shows the exact final chapter count; no hierarchy option is exposed.
 
 #### Joined chapter algorithm
 
@@ -281,9 +301,12 @@ For each source in final timeline order:
 7. Add the cumulative duration of preceding retained sources.
 8. Regenerate UIDs to avoid collisions.
 9. Remove only verified duplicates at exact joins.
-10. Create a parent atom spanning the retained source section.
-11. Add a boundary child when the source has no chapters.
-12. Write one final default edition and validate by re-extraction.
+10. Bound each source transformation to its retained output section.
+11. Add a numbered boundary chapter when the source has no retained leaf.
+12. Promote every retained leaf to the final top level.
+13. Continue repeated consecutive numbered labels across the joined timeline;
+    otherwise preserve every title exactly.
+14. Write one final default edition and validate by re-extraction.
 
 ### 5.8 Joining files
 
@@ -292,9 +315,15 @@ Users drag files into final order and may preview the join timeline before proce
 Rules:
 
 - Use lossless MKV append/remux when stream parameters and mappings are compatible.
+- When the only technical difference is codec initialization, offer an explicit
+  zero-encode repair. For supported H.264 lanes with trustworthy cadence,
+  preserve the encoded frame payload while remuxing each source's decoder
+  headers into the joined lane. Save it only after strict boundary decoding and
+  exact packet-payload and structure verification; otherwise keep the reviewed
+  one-generation common-format plan available.
 - Use hard joins only. Crossfades and editorial transitions are outside the product scope and roadmap.
 - Produce one final media file per joined group.
-- Recalculate nested chapters and source boundaries.
+- Recalculate chapters and source boundaries into one top-level joined list.
 - Present an explicit track-mapping table.
 - Never silently discard an unmatched track.
 - When normalization is required, propose one common output plan and encode each affected output stream once.
@@ -553,8 +582,9 @@ all unrelated tracks, tags, nested chapters, metadata, and source bytes before
 commit and after reopen. Immediate and automatic queue execution re-inspect and
 recompile the same portable intent.
 
-**Tags…** accepts an inspected Matroska source with available global and track
-tag counts. It reports those counts and separates two deliberate actions.
+**Tags…** accepts one or more inspected sources with available global and track
+tag counts. For one source it reports those counts and separates two deliberate
+actions.
 **Export XML…** re-inspects and re-extracts the complete bounded Matroska tag
 document with bundled `mkvextract`, requires the exact bytes, SHA-256 digest,
 root, and global/track entry counts reviewed earlier, and audits the separate
@@ -566,9 +596,13 @@ metadata outside the removed tags, and segment identity. The XML parser rejects
 oversized, malformed, external-entity, unexpected-root, and count-mismatched
 documents. Both actions bind the complete source snapshot and regular-file
 revision through commit, leave the source byte-unchanged, and record distinct
-zero-encode History jobs. Per-entry tag editing/replacement and batch tag
-actions remain separate work; the portable all-tag cleanup card is specified
-below.
+zero-encode History jobs. With multiple sources selected, **Tags…** reviews the
+whole set, skips tag-free and unsupported inputs, obtains one output folder, and
+runs that same revision-bound verified removal transaction once per ready MKV.
+Outputs use collision-safe names, failures remain isolated, progress measures
+completed files, and every original remains unchanged. Per-entry tag
+editing/replacement remains separate work; the portable all-tag cleanup card is
+specified below.
 
 **Convert MP4 Subtitle…** accepts inspected MP4, M4V,
 or MOV input with one or more stable TX3G/`mov_text` stream indexes. A readable
@@ -658,6 +692,22 @@ private queue record separately stores two narrow bookmarks and revisions plus
 the sidecar format, reviewed track metadata, 32-byte source digest, and restored
 cleanup-change identifiers. It never adds those file-specific facts to the
 portable workflow or stores subtitle text or a path.
+
+The direct common-media route also recognizes exactly one compatible MP4,
+M4V, MOV, or chapter-free WebM plus exactly one SRT, ASS, or SSA selected or
+dropped together. Existing non-undefined audio language tags remain
+authoritative; otherwise a clear trailing filename language marker supplies an
+editable default. The sidecar uses the same conservative filename inference and
+the existing editable subtitle metadata review. Execution adds the reviewed
+subtitle while copying every source media track in one `mkvmerge` pass, reports
+zero video and audio encodes, and applies the normal source-revision, packet,
+subtitle-payload, semantic-output, atomic-commit, and reopened-output audits.
+The accepted review enables immediate execution or queue authoring through the
+same compiled workflow representation. Private queue state binds the sidecar
+review and canonical source-audio language map; repeated reviews append distinct
+waiting jobs, including while the scheduler is executing an earlier job, and
+automatic admission must recompile the identical semantic plan. Authoring this
+next reviewed queue item does not enable a concurrent immediate execution path.
 
 Schema v8 adds five standalone **Convert all audio** actions. The editor permits
 one without a video card and keeps it when a video card is removed or disabled.
@@ -853,14 +903,16 @@ For one final output:
 8. If replacement is enabled, move the source to macOS Trash using a recoverable API.
 9. Never permanently delete a source as part of normal operation.
 
-The default destination mode saves a collision-safe output beside each source
-without opening a save panel. Settings may instead retain one app-scoped,
-read/write directory bookmark and save there automatically, or require a save
-panel for every output. Automatic naming never overwrites: if the proposed name
-exists, MKV Magic adds the first available numeric suffix. Batch review uses the
-same default directory policy while retaining its per-file verification and
-failure isolation. Export-only documents such as support reports, workflow
-recipes, and manually exported chapter XML remain explicit save operations.
+The preferred destination mode saves a collision-safe output beside its source
+only when macOS grants access to that directory. Otherwise MKV Magic obtains a
+writable destination through the save panel before execution starts. Settings
+may instead retain one app-scoped, read/write directory bookmark and save there
+automatically, or require a save panel for every output. Automatic naming never
+overwrites: if the proposed name exists, MKV Magic adds the first available
+numeric suffix. Batch review requires one explicitly selected or remembered
+output directory while retaining per-file verification and failure isolation.
+Export-only documents such as support reports, workflow recipes, and manually
+exported chapter XML remain explicit save operations.
 
 Because `mkvpropedit` edits a file in place, safe metadata-only jobs operate on an APFS clone when available, then verify and commit the clone. On filesystems without clone support, MKV Magic creates a normal temporary copy or asks the user to choose an explicitly less-safe direct-edit mode. The default never edits the only source copy before verification.
 
@@ -896,7 +948,9 @@ Trash-after-success requires at least Standard verification. Any failed required
 - AVFoundation for lightweight playback, thumbnail extraction, and time presentation when compatible.
 - Swift Package Manager for modular source organization and tests.
 - Foundation `Process` with explicit arguments and pipes for bundled tools.
-- System SQLite for durable queue/history state; versioned JSON for portable workflows.
+- Durable versioned JSON queue/history stores behind narrow actor-backed
+  protocols; versioned JSON for portable workflows. SQLite was the original
+  proposal, not the currently shipped persistence implementation.
 - Structured concurrency with bounded task groups and cancellable subprocess supervision.
 
 AppKit is chosen over a web wrapper to minimize baseline resource use and retain predictable behavior on Intel systems. SwiftUI may be used only for isolated components if measurement shows no regression; it is not the architectural center.
@@ -927,7 +981,9 @@ MKVMagic
 
 ### 8.3 Main-window structure
 
-- Sidebar: Quick Actions, Workflows, Queue, History.
+- Sidebar: explicit Create, Tools, and Jobs groups. Quick Actions returns to the
+  main intake; Workflows, Join Files, Encoding Test, Queue, and History are real
+  destination buttons whose disabled state reflects an actual prerequisite.
 - Center: dropped files, joined groups, workflow cards, or jobs depending on selection.
 - Inspector: media tracks, properties, warnings, and advanced settings.
 - Persistent bottom summary: output, `0/1 video encodes`, estimated time/size, Verify & Run.
@@ -987,12 +1043,12 @@ HandBrake is a UX, preset, and benchmark reference. HandBrakeCLI/libhb is not bu
 - No arbitrary shell execution.
 - No implicit network upload.
 - File access begins with explicit drag/drop or open-panel selection.
-- The app is sandboxed with user-selected read/write access and app-scoped security bookmarks. Persist only access needed for user-saved workflows and queued jobs.
+- The app is sandboxed with user-selected read/write access and app-scoped security bookmarks. Persist only access needed for user-saved workflows, queued jobs, and explicitly authorized output folders (bounded cache).
 - The main app has no client or server network entitlement. Manual updates use only the reviewed, bundle-scoped Sparkle Mach-service exceptions; bundled media tools inherit the app sandbox under their own reviewed entitlements.
 - All process launches use an absolute bundled executable, an argument array, a sanitized environment, bounded concurrently drained stdout/stderr pipes, a timeout policy, cancellation escalation, and no shell.
 - Canonicalize and contain temporary, destination, workflow-import, attachment, and runtime paths. Reject traversal, unsafe identifiers, escaping/dangling symlinks, special files, and unexpected manifest fields.
 - Create private temporary directories with restrictive permissions. Refuse broad destructive targets, unresolved globs, root paths, and silent overwrite of existing release or user output.
-- Logs record commands and tool output locally.
+- Diagnostic logs use bounded typed events, not raw command arguments, filenames, or tool output. Reviewed public support submissions use the isolated service described in ADR 0003.
 - The first support export is built only from allowlisted coarse facts; it never receives media filenames, personal paths, media/track/chapter titles, subtitle text, custom workflow names, raw tool output, persistent job/input identifiers, or exact timestamps.
 - The app displays tool versions, license texts, source links, configure flags, and checksums.
 - Secret scanning, dependency review, CodeQL, locked-dependency checks, entitlement-policy tests, and a local-only source guard run in CI.
@@ -1009,7 +1065,7 @@ HandBrake is a UX, preset, and benchmark reference. HandBrakeCLI/libhb is not bu
 
 ### 9.2 Diagnostics boundary
 
-Diagnostics remain local unless the user explicitly exports them. The current privacy-safe beta report includes allowlisted app/tool versions, architecture, workflow class, coarse input facts, planned encode counts, lifecycle state, result, last active stage, and elapsed-time bucket. It is capped at the 500 newest jobs and one megabyte, writes with owner-only permissions, and excludes media payloads, all filenames and paths, media/track/chapter titles, subtitle text, custom workflow names, raw tool output, security bookmarks, credentials, persistent identifiers, exact timestamps, tool source URLs, license text, and update keys. A future detailed diagnostic bundle may add a bounded sanitized tail only after its redaction boundary has equivalent adversarial tests. Logs are size-bounded and old logs are purged by a documented retention policy.
+Diagnostics remain local unless the user explicitly exports them or reviews and sends a bounded issue projection through the reporting service. The full local support export is never uploaded automatically. The current privacy-safe beta report includes allowlisted app/tool versions, architecture, workflow class, coarse input facts, planned encode counts, lifecycle state, result, last active stage, elapsed-time bucket, and fixed failure categories that distinguish unavailable destinations, existing outputs, denied commit permission, unsupported no-overwrite commits, other commit failures, and History-write failures without exporting paths or raw errors. It also includes bounded production-queue state, attempt count, resource class, input count, last event reason, and the same shared failure category/stage, capped at the 500 newest queue entries. The overall report is capped at one megabyte, writes with owner-only permissions, and excludes media payloads, all filenames and paths, media/track/chapter titles, subtitle text, custom workflow names, raw tool output, security bookmarks, credentials, persistent identifiers, exact timestamps, tool source URLs, license text, and update keys. A future detailed diagnostic bundle may add a bounded sanitized tail only after its redaction boundary has equivalent adversarial tests. Logs are size-bounded and old logs are purged by a documented retention policy.
 
 ## 10. Licensing and release
 
@@ -1154,7 +1210,28 @@ the focused unit, planner, integration, fault, accessibility, and release gates.
 - Establish app, ZIP, DMG, and Sparkle-delta size budgets from the first representative M0/M1 release artifact; CI then rejects unexplained growth above the recorded budget.
 - Before public v1, run at least one hour-long mixed-media queue and a multi-hour single-file transcode with memory sampling, thermal/battery observations, cancellation/recovery, output verification, and no unbounded growth. Store only anonymized measurements and synthetic/redistributable fixture references.
 
-### 11.7 Hardware acceptance matrix
+### 11.7 Development-only semantic workflow evaluation
+
+The default local development entry point is `python3 scripts/test.py`. It calls
+the existing deterministic source/test/Universal gate and then evaluates bounded
+public synthetic workflow evidence with Jev through Cloudflare. Existing tests
+project measured facts and actual presentation text; they retain their original
+assertions and executors. This adds no app dependency, permission, or network path.
+
+Calibration uses labeled good/bad examples and a separate validation set. Judge
+questions and policy stay fixed during product comparisons; changed models and
+low-margin results require review. Missing or skipped mandatory evidence is not
+a pass, and a semantic pass cannot override a failed deterministic check.
+Private media, custom fixtures, file paths, logs, and support reports are never
+Jev inputs. Local evidence records source and output hashes.
+
+`--offline` explicitly runs the deterministic subset; hosted CI continues to use
+`scripts/ci/validate.sh` without Jev credentials. `--dry-run` validates locally and
+previews requests without network access. Neither mode establishes semantic,
+rendered-UI, physical-hardware, playback, or release acceptance. See
+`docs/testing/JEV_EVALUATION.md` for the registered scenarios and setup.
+
+### 11.8 Hardware acceptance matrix
 
 At minimum test:
 
@@ -1210,6 +1287,16 @@ Deliverables:
 
 Gate: metadata edits and track removals pass planner tests with zero video encode; fault tests preserve originals.
 
+The reviewed bulk-track slice now applies only explicitly chosen name, language,
+and flag fields to all tracks of a selected type, preserving each track's own
+other values. Inclusion review lists per-track changes for every output file.
+Embedded text-subtitle extraction and relative beginning/end Fast Trim batches
+share the same private reviewed-edit queue and original-preserving executors.
+Trims disclose actual keyframe-aligned ranges and never silently request an
+encode. File revisions and metadata/chapter/output hashes bind these reviews;
+changed sources require fresh approval rather than reuse of old track identities
+or ranges. See `docs/testing/BATCH_ACTION_AUDIT.md` for bounds and remaining work.
+
 ### M3 — Subtitle pipeline
 
 Deliverables:
@@ -1251,7 +1338,13 @@ Gate: compatible joins and fast trims use zero video encode; incompatible joins 
 Current implementation: complete full-file, gap-free `losslessCandidate` joins
 have a native include/order/chapter-edition/track-lane review, deterministic MKV
 output naming, cancellable pre-commit progress, multi-input History, and exact
-post-reopen verification. A pure common-format planner now previews packet-copy
+post-reopen verification. A narrow explicitly reviewed exception repairs H.264
+codec-initialization-only mismatches by remuxing copied video packets with each
+source's own decoder headers and original packet cadence. It
+remains zero-encode and can commit only after the same strict boundary decode
+plus exact packet, track, chapter, duration, source-revision, and reopen audits;
+Common Format remains available as the one-generation fallback. A pure
+common-format planner now previews packet-copy
 lanes, one-generation video normalization, per-lane AAC conversion,
 largest-layout audio preservation, silent missing audio sections, text-subtitle
 normalization, and explicit format decisions. A bounded active FFmpeg probe now
@@ -1347,7 +1440,11 @@ the verified normalized stream bundle only in private temporary storage; and
 persists one final-output History lifecycle through final assembly, verification,
 commit, and reopen. Both lossless and common-format final outputs now decode a
 bounded window spanning every source boundary before commit and again after
-reopen. Direct packet-copy lanes also receive streaming ordered payload
+reopen. Before a direct join, known FFprobe SHA-256 hashes of each lane's codec
+initialization bytes must also agree unless the user explicitly chooses the
+narrow verified lossless repair described above. Any other technical
+mismatch routes the lane into the reviewed one-generation common-format planner.
+Direct packet-copy lanes also receive streaming ordered payload
 fingerprints: audio, subtitles, and other codecs use exact FFprobe packet hashes;
 H.264/HEVC video removes only muxer-managed parameter-set units before hashing
 the retained encoded packet bodies. Exact packet lanes in one stream family now
@@ -1481,7 +1578,9 @@ conditions remain open.
 The production-queue persistence and scheduling foundation is implemented as a
 separate contract from sanitized History. A private versioned document stores
 only reviewed workflow intent, plan impact, ordered state events, bounded opaque
-security-scoped bookmarks, display names, destination policy, and attempt count.
+security-scoped bookmarks, display names, destination policy, attempt count,
+and a fixed privacy-safe failure category plus last active coarse stage for a
+failed attempt.
 It rejects unsafe paths, symlinks, missing or oversized bookmarks, duplicate
 identities, forged state histories, stale timestamps, and resource-class claims
 that disagree with the reviewed plan. Relaunch recovery moves running or
@@ -1515,7 +1614,8 @@ and pass the plan review again before retry. A retry atomically replaces stale
 bookmarks, destination, workflow snapshot, and reviewed plan while preserving
 the job identity and attempt history. Queue recovery runs once per app launch,
 so opening or refreshing the window cannot reclassify current work as
-interrupted.
+interrupted. Selecting a failed job shows an actionable, selectable explanation
+derived from that fixed category and stage rather than exposing raw tool output.
 
 The first production automatic-execution subset is connected. After the user
 reviews a supported saved workflow, **Add to Queue** persists it in **Waiting**
@@ -1557,7 +1657,8 @@ either video or audio conversion, one shared exact original-file revision guard
 continues across the private intermediate, final generation, pre-commit check,
 and committed reopen audit.
 
-Portable common-media remux uses that automatic boundary as lightweight work.
+Portable common-media remux, including the reviewed direct common-media plus one
+text-sidecar route, uses that automatic boundary as lightweight work.
 The queued recipe persists only current portable intent; each admission resolves fresh
 stream and chapter facts, requires the same reviewed zero-encode plan, binds the
 exact original revision, and invokes the verified MKV remux executor directly.
@@ -1569,7 +1670,7 @@ stage, and retain the `.mkv` destination before execution. A condition that
 skips video conversion on common-container input moves back to interactive review
 instead of creating a misleading unchanged non-MKV copy.
 
-Built-in quick-action queueing, multiple or image-based external subtitles,
+Other built-in quick-action queueing, multiple or image-based external subtitles,
 automatic sidecar discovery, watched folders, scheduled wakes, a background
 helper/daemon, continuous
 power-state monitoring, long queue soak, and physical-Intel acceptance remain
@@ -1909,6 +2010,13 @@ Drop MKV → Inspect → Edit one property → Preview zero-transcode plan
 That slice establishes the safety and planning architecture every later feature depends on.
 
 ## 14. Source-analysis mapping
+
+The [September 2026 UX/product review](docs/testing/UX_PRODUCT_REVIEW_2026-09-05.md)
+maps this specification to implemented, partial, and deferred user flows. Broad
+capability lists above remain intended scope, not a claim that every feature is
+already available. Appearance uses one application-level System (default),
+Light, or Dark preference and a shared high-contrast neutral palette; native
+accessibility, selection, focus, and explicit macOS accent choices are preserved.
 
 | Source | Capability or lesson carried into MKV Magic |
 |---|---|

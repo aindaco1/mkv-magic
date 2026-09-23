@@ -18,7 +18,10 @@ framework="$app_path/Contents/Frameworks/Sparkle.framework"
 required_files=(
     "$executable"
     "$app_path/Contents/Info.plist"
+    "$app_path/Contents/XPCServices/MKVMagicReportService.xpc/Contents/Info.plist"
+    "$app_path/Contents/XPCServices/MKVMagicReportService.xpc/Contents/MacOS/MKVMagicReportService"
     "$app_path/Contents/Resources/MKVMagic.icns"
+    "$app_path/Contents/Resources/Assets.car"
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
     "$app_path/Contents/Resources/SUPPORTED_SYSTEMS.md"
     "$app_path/Contents/Resources/TROUBLESHOOTING.md"
@@ -31,6 +34,12 @@ for file_path in "${required_files[@]}"; do
         exit 1
     fi
 done
+reporter_plist="$app_path/Contents/XPCServices/MKVMagicReportService.xpc/Contents/Info.plist"
+if [[ "$(plutil -extract CFBundleIdentifier raw -o - "$reporter_plist")" != com.dustwave.mkvmagic.reporter || \
+      "$(plutil -extract CFBundleExecutable raw -o - "$reporter_plist")" != MKVMagicReportService ]]; then
+    echo "unexpected report service identity" >&2
+    exit 1
+fi
 if [[ ! -x "$executable" || ! -d "$framework" || -L "$framework" ]]; then
     echo "app executable or Sparkle framework is missing or unsafe" >&2
     exit 1
