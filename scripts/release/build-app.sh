@@ -84,6 +84,8 @@ xcrun actool "$repo_root/Assets/Appearance.xcassets" \
     --compile "$app_path/Contents/Resources" --platform macosx \
     --minimum-deployment-target 13.0 --accent-color AccentColor \
     --output-partial-info-plist "$release_root/appearance-assets.plist"
+# This is actool's intermediate output, not a downloadable release asset.
+rm -f -- "$release_root/appearance-assets.plist"
 install -m 0644 THIRD_PARTY_NOTICES.md \
     "$app_path/Contents/Resources/THIRD_PARTY_NOTICES.md"
 install -m 0644 docs/SUPPORTED_SYSTEMS.md \

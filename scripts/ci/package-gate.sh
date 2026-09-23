@@ -25,6 +25,11 @@ MKV_MAGIC_VERSION=0.0.0 \
 MKV_MAGIC_BUILD_NUMBER="$fixture_release_build" \
     ./scripts/release/build-app.sh >/dev/null
 app_path="$release_root/MKV Magic.app"
+if [[ -e "$release_root/appearance-assets.plist" || \
+      -L "$release_root/appearance-assets.plist" ]]; then
+    echo "appearance build metadata leaked into release assets" >&2
+    exit 1
+fi
 
 # Use a disposable matching update key so the complete feed generator is
 # tested without production key material.
