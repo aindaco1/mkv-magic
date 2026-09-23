@@ -61,7 +61,7 @@ case "$architecture" in
 esac
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-tool_root="${MKV_MAGIC_TOOL_ROOT:-$repo_root/.build/tool-runtime-m0-5}"
+tool_root="${MKV_MAGIC_TOOL_ROOT:-$repo_root/.build/tool-runtime}"
 runtime_root="$tool_root/universal"
 ffprobe="$runtime_root/ffprobe"
 manifest="$runtime_root/manifest.json"

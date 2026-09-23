@@ -24,7 +24,8 @@ keep generated signed test bundles outside cloud-synced source folders. An
 absolute `MKV_MAGIC_SWIFT_SCRATCH_PATH` overrides that location.
 
 Configure `MKV_MAGIC_TOOL_ROOT` with an absolute path to a verified bundled
-runtime. The real-media scenario is mandatory: an absent runtime, skipped
+runtime. `.build/tool-runtime` is the shared local runtime location, also used
+by the packet-audit benchmark. The real-media scenario is mandatory: an absent runtime, skipped
 exporter, missing result, or changed source stops full evaluation. There is no
 fallback to Homebrew media tools. `--offline` can run without a runtime, but any
 skipped tool tests remain unverified.
@@ -168,3 +169,10 @@ confidence threshold was changed to obtain the final result.
 
 No physical Intel, installed-app, private playback, or release acceptance is
 implied. Source and generated test evidence cannot substitute for those gates.
+
+After reconciling the published macOS 27 fixes on September 23, the full
+development check passed again: 893 Swift tests with one optional private-media
+skip, 19 evaluator regressions, all 48 labeled examples, and all 12 workflows.
+The Universal build and source/security checks passed. The source-bound report
+is retained locally in `.build/jev/release-0.3.0/`; the rubric, model policy,
+and calibration labels are unchanged.

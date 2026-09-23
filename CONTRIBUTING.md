@@ -39,8 +39,9 @@ acceptance or updater testing is still pending.
 
 Old compiler intermediates, obsolete Swift build symlinks, superseded runtimes,
 and redundant request previews may be removed after checking that no command
-uses them. The packet-audit benchmark still defaults to `tool-runtime-m0-5`;
-retain it unless the benchmark is explicitly pointed at another verified runtime.
+uses them. Keep the active Universal runtime in `.build/tool-runtime` and point
+the development configuration at that directory. The packet-audit benchmark
+uses the same directory by default; `MKV_MAGIC_TOOL_ROOT` overrides it.
 Move conflicting source copies to a checksum-verified recovery archive instead
 of treating them as disposable build output. Never use an indiscriminate
 `git clean` on a development checkout.
