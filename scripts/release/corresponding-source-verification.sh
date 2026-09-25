@@ -230,7 +230,9 @@ validate_mkv_magic_corresponding_source() (
         for required_source in \
             LICENSE desktop/Package.swift desktop/VERSION \
             desktop/Sources/DustWaveUpdates/AppUpdateController.swift \
-            desktop/Sources/DustWaveDiagnostics/BoundedReportTransport.swift
+            desktop/Sources/DustWaveDiagnostics/Support.swift \
+            support/Package.swift support/VERSION \
+            support/Sources/DustWaveSupport/BoundedReportTransport.swift
         do
             if [[ ! -s "$source_root/shared/dust-wave-platform/$required_source" ]]; then
                 echo "corresponding source is missing Platform $required_source" >&2
