@@ -25,8 +25,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          submodules: recursive
           persist-credentials: false
 
+      - name: Verify shared desktop dependency contract
+        run: node shared/dust-wave-platform/scripts/check-desktop-consumer.mjs
       - name: Install source-gate dependencies
         run: brew install actionlint ripgrep shellcheck
 
@@ -61,7 +64,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          submodules: recursive
           persist-credentials: false
+      - name: Verify shared desktop dependency contract
+        run: node shared/dust-wave-platform/scripts/check-desktop-consumer.mjs
       - name: Collect coverage
         run: ./scripts/ci/coverage.sh
 
@@ -72,7 +78,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          submodules: recursive
           persist-credentials: false
+      - name: Verify shared desktop dependency contract
+        run: node shared/dust-wave-platform/scripts/check-desktop-consumer.mjs
       - name: Run sanitizers
         run: ./scripts/ci/sanitizers.sh
 
@@ -87,8 +96,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          submodules: recursive
           persist-credentials: false
 
+      - name: Verify shared desktop dependency contract
+        run: node shared/dust-wave-platform/scripts/check-desktop-consumer.mjs
       - name: Select pinned runtime-build Xcode
         run: |
           sudo xcode-select --switch /Applications/Xcode_26.3.app/Contents/Developer
@@ -173,7 +185,10 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
+          submodules: recursive
           persist-credentials: false
+      - name: Verify shared desktop dependency contract
+        run: node shared/dust-wave-platform/scripts/check-desktop-consumer.mjs
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294
         with:
           fail-on-severity: moderate

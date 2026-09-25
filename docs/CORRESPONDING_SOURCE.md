@@ -3,6 +3,8 @@
 This archive accompanies a binary MKV Magic release. It contains:
 
 - the complete MKV Magic source tree for the exact release commit;
+- the complete pinned Dust Wave Platform tree under `shared/dust-wave-platform`,
+  including the desktop Swift sources and MIT license notices;
 - checksum-pinned FFmpeg, SVT-AV1, dav1d, libopus, zimg, MKVToolNix, and Qt
   source archives corresponding to the distributed media runtime;
 - the pinned NASM source used as a build-only dependency for x86_64 FFmpeg;

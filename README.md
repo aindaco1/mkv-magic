@@ -869,8 +869,12 @@ Requirements:
 Run the default local development gate:
 
 ```sh
+git submodule update --init --recursive
 python3 scripts/test.py
 ```
+
+The [shared desktop migration](docs/SHARED_DESKTOP_MIGRATION.md) records the
+immutable Platform dependency, validation and independent rollback.
 
 This runs the existing source, Swift-test, and Universal-build checks, then
 checks Jev calibration and reviews evidence from registered synthetic workflow

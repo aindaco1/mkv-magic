@@ -3,6 +3,10 @@
 All notable changes to MKV Magic will be documented here. Versions follow
 semantic versioning; public release tags are immutable and signed.
 
+## Unreleased
+
+- Share sparkle controller and bounded transport in the reporting xpc service through the pinned Dust Wave Platform dependency. Preserve existing update consent and product-specific diagnostics behavior. See the [migration record](docs/SHARED_DESKTOP_MIGRATION.md).
+
 ## 0.3.0 - 2026-09-23
 
 Published as a signed, notarized beta. Native Apple Silicon and prior-version
