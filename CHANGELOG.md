@@ -3,9 +3,9 @@
 All notable changes to MKV Magic will be documented here. Versions follow
 semantic versioning; public release tags are immutable and signed.
 
-## Unreleased
+## 0.3.1 - 2026-09-25
 
-- Share sparkle controller and bounded transport in the reporting xpc service through the pinned Dust Wave Platform dependency. Preserve existing update consent and product-specific diagnostics behavior. See the [migration record](docs/SHARED_DESKTOP_MIGRATION.md).
+- Share Sparkle controller and bounded transport in the reporting XPC service through the pinned Dust Wave Platform dependency. Preserve existing update consent and product-specific diagnostics behavior. See the [migration record](docs/SHARED_DESKTOP_MIGRATION.md).
 
 ## 0.3.0 - 2026-09-23
 
