@@ -93,6 +93,9 @@ install -m 0644 docs/SUPPORTED_SYSTEMS.md \
 install -m 0644 docs/TROUBLESHOOTING.md \
     "$app_path/Contents/Resources/TROUBLESHOOTING.md"
 install -m 0644 LICENSE "$app_path/Contents/Resources/Licenses/MKV-Magic-GPL-3.0.txt"
+install -m 0644 shared/dust-wave-platform/LICENSE \
+    "$app_path/Contents/Resources/Licenses/DustWavePlatform-MIT.txt"
+cp shared/dust-wave-platform/desktop/LICENSE.* "$app_path/Contents/Resources/Licenses/"
 install -m 0644 .build/checkouts/Sparkle/LICENSE \
     "$app_path/Contents/Resources/Licenses/Sparkle-MIT.txt"
 install -m 0644 Package.resolved "$release_root/Package.resolved"

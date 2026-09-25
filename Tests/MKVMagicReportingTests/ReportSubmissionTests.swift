@@ -2,6 +2,8 @@ import Foundation
 import MKVMagicSystem
 import XCTest
 
+import class DustWaveDiagnostics.BoundedReportTransport
+
 @testable import MKVMagicReportService
 @testable import MKVMagicReporting
 
@@ -104,7 +106,7 @@ final class ReportSubmissionTests: XCTestCase {
     }
 
     func testRedirectIsNeverFollowed() async {
-        let transport = ReportTransport()
+        let transport = DustWaveDiagnostics.BoundedReportTransport()
         let session = URLSession(configuration: .ephemeral)
         defer { session.invalidateAndCancel() }
         let request = URLRequest(url: ReportTransport.endpoint)

@@ -7,6 +7,7 @@ if [[ $# -ne 1 || "$1" != /* ]]; then
 fi
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "$repo_root/scripts/release/corresponding-source-verification.sh"
+source "$repo_root/scripts/release/archive-source.sh"
 source "$repo_root/scripts/ci/tool-source-cache.sh"
 tool_root="$1"
 release_root="${MKV_MAGIC_RELEASE_ROOT:-$repo_root/.build/release-artifacts}"
@@ -56,9 +57,8 @@ done < <(mkv_magic_tool_source_cache_entries "$sources")
 
 git -C "$repo_root" diff --quiet -- .
 git -C "$repo_root" diff --cached --quiet -- .
-git -C "$repo_root" archive --format=tar.gz \
-    --prefix="mkv-magic-$version/" HEAD \
-    > "$bundle_root/MKV-Magic-$version-source.tar.gz"
+mkv_magic_archive_source "$repo_root" "$version" \
+    "$bundle_root/MKV-Magic-$version-source.tar.gz"
 install -m 0644 "$repo_root/docs/CORRESPONDING_SOURCE.md" \
     "$bundle_root/README.md"
 

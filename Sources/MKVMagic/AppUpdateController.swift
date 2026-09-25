@@ -1,25 +1,19 @@
-import Sparkle
+import DustWaveUpdates
 
 @MainActor
 protocol UpdateChecking: AnyObject {
     func checkForUpdates()
 }
 
-/// Owns the user-initiated signed update flow. Sparkle's separately sandboxed
-/// services own network and installation work; MKV Magic has no network entitlement.
+/// Product adapter; Sparkle lifecycle and launch policy are shared in Platform.
 @MainActor
 final class AppUpdateController: UpdateChecking {
-    private let updaterController: SPUStandardUpdaterController
+    private let updates: DustWaveUpdates.AppUpdateController
 
     init(startingUpdater: Bool = true) {
-        updaterController = SPUStandardUpdaterController(
-            startingUpdater: startingUpdater,
-            updaterDelegate: nil,
-            userDriverDelegate: nil
-        )
+        updates = DustWaveUpdates.AppUpdateController(
+            startingUpdater: startingUpdater, checkingOnLaunch: false)
     }
 
-    func checkForUpdates() {
-        updaterController.checkForUpdates(nil)
-    }
+    func checkForUpdates() { updates.checkForUpdates() }
 }

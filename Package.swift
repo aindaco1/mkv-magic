@@ -22,17 +22,25 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5")
+        .package(path: "shared/dust-wave-platform/desktop"),
+        .package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.9.5"),
     ],
     targets: [
         .target(name: "MKVMagicCore"),
         .target(
             name: "MKVMagicReporting", dependencies: ["MKVMagicSystem"],
             linkerSettings: [.linkedFramework("Security")]),
-        .executableTarget(name: "MKVMagicReportService", dependencies: ["MKVMagicReporting"]),
+        .executableTarget(
+            name: "MKVMagicReportService",
+            dependencies: [
+                "MKVMagicReporting", .product(name: "DustWaveDiagnostics", package: "desktop"),
+            ]),
         .testTarget(
             name: "MKVMagicReportingTests",
-            dependencies: ["MKVMagicReporting", "MKVMagicReportService"]),
+            dependencies: [
+                "MKVMagicReporting", "MKVMagicReportService",
+                .product(name: "DustWaveDiagnostics", package: "desktop"),
+            ]),
         .target(
             name: "MKVMagicSystem",
             dependencies: ["MKVMagicCore"],
@@ -73,7 +81,7 @@ let package = Package(
                 "MKVMagicPlanning",
                 "MKVMagicSystem",
                 "MKVMagicReporting",
-                .product(name: "Sparkle", package: "Sparkle"),
+                .product(name: "DustWaveUpdates", package: "desktop"),
             ],
             exclude: ["Info.plist"],
             linkerSettings: [

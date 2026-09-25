@@ -224,6 +224,20 @@ validate_mkv_magic_corresponding_source() (
         echo "corresponding-source README does not match the archived source" >&2
         return 1
     fi
+    # Older release fixtures have no Platform dependency. New releases must be
+    # independently buildable from the included immutable desktop sources.
+    if grep -Fq 'shared/dust-wave-platform/desktop' "$source_root/Package.swift"; then
+        for required_source in \
+            LICENSE desktop/Package.swift desktop/VERSION \
+            desktop/Sources/DustWaveUpdates/AppUpdateController.swift \
+            desktop/Sources/DustWaveDiagnostics/BoundedReportTransport.swift
+        do
+            if [[ ! -s "$source_root/shared/dust-wave-platform/$required_source" ]]; then
+                echo "corresponding source is missing Platform $required_source" >&2
+                return 1
+            fi
+        done
+    fi
     local build_script="$source_root/scripts/tools/build-runtime.sh"
     local pinned_value
     while IFS= read -r pinned_value; do
